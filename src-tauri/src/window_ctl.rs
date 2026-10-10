@@ -354,7 +354,7 @@ pub fn open_media_preview(app: &AppHandle, name: &str) -> Result<(), AppError> {
         let _ = window.set_focus();
         return Ok(());
     }
-    let window = tauri::WebviewWindowBuilder::new(
+    let builder = tauri::WebviewWindowBuilder::new(
         app,
         PREVIEW,
         tauri::WebviewUrl::App("index.html".into()),
@@ -367,9 +367,14 @@ pub fn open_media_preview(app: &AppHandle, name: &str) -> Result<(), AppError> {
     .skip_taskbar(true)
     .shadow(false)
     .center()
-    .initialization_script("document.documentElement.classList.add('lightbox-window')")
-    .build()
-    .map_err(|err| AppError::Message(err.to_string()))?;
+    .initialization_script("document.documentElement.classList.add('lightbox-window')");
+    #[cfg(target_os = "windows")]
+    let builder = builder
+        .no_redirection_bitmap(true)
+        .background_color(tauri::window::Color(0, 0, 0, 0));
+    let window = builder
+        .build()
+        .map_err(|err| AppError::Message(err.to_string()))?;
     let handle = app.clone();
     window.on_window_event(move |event| match event {
         WindowEvent::Focused(false) => {
@@ -681,6 +686,23 @@ fn hide_pinned(app: &AppHandle) {
 }
 
 fn open_pin(app: &AppHandle, id: &str) {
+    // Building a WebView2 window pumps the Windows message loop. Doing that
+    // inside the click that requested the pin re-enters the webview and
+    // crashes the process. Post the creation onto the UI thread instead.
+    #[cfg(target_os = "windows")]
+    {
+        let app = app.clone();
+        let id = id.to_string();
+        std::thread::spawn(move || {
+            let _ = app.run_on_main_thread(move || open_pin_window(&app, &id));
+        });
+        return;
+    }
+    #[cfg(not(target_os = "windows"))]
+    open_pin_window(app, id);
+}
+
+fn open_pin_window(app: &AppHandle, id: &str) {
     let label = pin_label(id);
     if let Some(window) = app.get_webview_window(&label) {
         place_pin(app, id, &window);
@@ -692,7 +714,7 @@ fn open_pin(app: &AppHandle, id: &str) {
     let script = format!(
         "document.documentElement.dataset.noteId={id:?};document.documentElement.classList.add('pin-window');"
     );
-    let Ok(window) = tauri::WebviewWindowBuilder::new(app, &label, tauri::WebviewUrl::App("index.html".into()))
+    let builder = tauri::WebviewWindowBuilder::new(app, &label, tauri::WebviewUrl::App("index.html".into()))
         .title("Memose")
         .inner_size(CARD_WIDTH, CARD_HEIGHT)
         .decorations(false)
@@ -701,11 +723,19 @@ fn open_pin(app: &AppHandle, id: &str) {
         .skip_taskbar(true)
         .shadow(false)
         .visible(false)
-        .initialization_script(&script)
-        .build()
-    else {
-        eprintln!("memose: could not open pinned note");
-        return;
+        .initialization_script(&script);
+    #[cfg(target_os = "windows")]
+    // A second DwmEnableBlurBehindWindow call aborts the process. This flag
+    // keeps the window transparent without that call.
+    let builder = builder
+        .no_redirection_bitmap(true)
+        .background_color(tauri::window::Color(0, 0, 0, 0));
+    let window = match builder.build() {
+        Ok(window) => window,
+        Err(err) => {
+            eprintln!("memose: could not open pinned note: {err}");
+            return;
+        }
     };
     place_pin(app, id, &window);
     let _ = window.show();
