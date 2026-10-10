@@ -1,0 +1,56 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <style>
+      html.lightbox-window #card { display: none; }
+      html.lightbox-window #lightbox { display: flex !important; }
+    </style>
+    <link rel="stylesheet" href="/src/styles.css" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Memose</title>
+    <script type="module" src="/src/main.ts" defer></script>
+  </head>
+  <body>
+    <div id="frame">
+    <main id="card">
+      <header>
+        <div class="brand">
+          <span>Memose</span>
+          <button id="pin-toggle" class="icon-button" type="button" aria-label="Pin" aria-pressed="false">
+            <span class="pin-glyph" aria-hidden="true"></span>
+          </button>
+        </div>
+        <div class="header-actions">
+          <button id="mode-toggle" type="button" aria-label="Preview" aria-pressed="false">Preview</button>
+          <button id="theme-toggle" class="icon-button" type="button" aria-label="Dark theme">
+            <svg id="theme-icon" viewBox="0 0 16 16" width="14" height="14" aria-hidden="true"></svg>
+          </button>
+        </div>
+      </header>
+
+      <section id="composer-view">
+        <div id="note-pane">
+          <div id="conflict" hidden>
+            <p>This memo changed here and in useMemos.</p>
+            <div>
+              <button id="conflict-local" type="button">Keep this</button>
+              <button id="conflict-remote" type="button">Use server</button>
+            </div>
+          </div>
+          <div id="blocks"></div>
+          <div id="preview" hidden></div>
+        </div>
+        <div id="memo-list">
+          <input id="recent-search" type="search" placeholder="Search" aria-label="Search memos" autocomplete="off" hidden />
+          <ul id="recent"></ul>
+        </div>
+        <button id="recent-more" type="button" hidden>More</button>
+      </section>
+    </main>
+    </div>
+    <div id="lightbox">
+      <img id="lightbox-image" alt="" />
+    </div>
+  </body>
+</html>
