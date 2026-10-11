@@ -3,13 +3,14 @@ mod commands;
 mod error;
 mod media;
 mod notes;
+mod shortcuts;
 mod state;
 mod tray;
 mod window_ctl;
 
-use tauri::{AppHandle, Manager};
+use tauri::Manager;
 use tauri_plugin_autostart::MacosLauncher;
-use tauri_plugin_global_shortcut::{Code, GlobalShortcutExt, Modifiers, Shortcut, ShortcutState};
+use tauri_plugin_global_shortcut::ShortcutState;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -27,10 +28,19 @@ pub fn run() {
                     if event.state != ShortcutState::Pressed {
                         return;
                     }
-                    match shortcut.key {
-                        Code::KeyN => window_ctl::show_fresh_memo(app),
-                        Code::KeyP => window_ctl::toggle_pinned(app),
-                        _ => {}
+                    let Some(state) = app.try_state::<state::AppState>() else {
+                        return;
+                    };
+                    let binds = state
+                        .shortcuts
+                        .lock()
+                        .unwrap_or_else(|poisoned| poisoned.into_inner())
+                        .clone();
+                    drop(state);
+                    if shortcuts::same(shortcut, &binds.new_memo) {
+                        window_ctl::show_fresh_memo(app);
+                    } else if shortcuts::same(shortcut, &binds.toggle_pinned) {
+                        window_ctl::toggle_pinned(app);
                     }
                 })
                 .build(),
@@ -47,7 +57,14 @@ pub fn run() {
             app.manage(state::AppState::new(db, media_dir)?);
             window_ctl::attach(app.handle());
             tray::attach(app)?;
-            register_shortcut(app.handle());
+            let binds = shortcuts::load(&app.state::<state::AppState>().db);
+            *app.state::<state::AppState>()
+                .shortcuts
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner()) = binds.clone();
+            if let Err(err) = shortcuts::install(app.handle(), &binds) {
+                eprintln!("memose: shortcuts unavailable ({err})");
+            }
             notes::start_worker(app.handle().clone());
             notes::request_sync(app.handle());
             Ok(())
@@ -66,11 +83,14 @@ pub fn run() {
             commands::list_recent,
             commands::get_settings,
             commands::save_settings,
+            commands::get_shortcuts,
+            commands::save_shortcut,
             commands::clear_memos,
             commands::test_memos,
             commands::get_theme,
             commands::set_theme,
             commands::save_look,
+            commands::set_pinned_opacity,
             commands::publish_note,
             commands::get_note,
             commands::resolve_conflict,
@@ -81,17 +101,4 @@ pub fn run() {
         ])
         .run(tauri::generate_context!())
         .expect("error while running memose");
-}
-
-fn register_shortcut(app: &AppHandle) {
-    #[cfg(target_os = "macos")]
-    let modifiers = Modifiers::SUPER | Modifiers::ALT;
-    #[cfg(not(target_os = "macos"))]
-    let modifiers = Modifiers::CONTROL | Modifiers::ALT;
-    for code in [Code::KeyN, Code::KeyP] {
-        let shortcut = Shortcut::new(Some(modifiers), code);
-        if let Err(err) = app.global_shortcut().register(shortcut) {
-            eprintln!("memose: global shortcut unavailable ({err}); use the tray icon");
-        }
-    }
 }

@@ -4,6 +4,7 @@ use tauri_plugin_autostart::ManagerExt;
 
 use crate::error::AppError;
 use crate::notes::{self, request_sync, Note};
+use crate::shortcuts::{self, ShortcutBinds};
 use crate::state::AppState;
 use crate::tray;
 use crate::window_ctl;
@@ -123,6 +124,44 @@ pub fn save_settings(
 }
 
 #[tauri::command]
+pub fn get_shortcuts(state: State<AppState>) -> ShortcutBinds {
+    state
+        .shortcuts
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .clone()
+}
+
+#[tauri::command]
+pub fn save_shortcut(
+    app: AppHandle,
+    state: State<AppState>,
+    id: String,
+    binding: String,
+) -> Result<ShortcutBinds, AppError> {
+    let previous = state
+        .shortcuts
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .clone();
+    let mut next = previous.clone();
+    next.assign(&id, &binding)?;
+    let next = shortcuts::normalize(&next)?;
+    if let Err(err) = shortcuts::install(&app, &next) {
+        let _ = shortcuts::install(&app, &previous);
+        return Err(err);
+    }
+    let stored = serde_json::to_string(&next).map_err(|err| AppError::Message(err.to_string()))?;
+    state.db.set_meta(shortcuts::KEY, &stored)?;
+    *state
+        .shortcuts
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner()) = next.clone();
+    shortcuts::publish(&app, &next);
+    Ok(next)
+}
+
+#[tauri::command]
 pub fn clear_memos(state: State<AppState>) -> Result<(), AppError> {
     state.db.set_base_url("")?;
     state.db.clear_access_token()?;
@@ -171,6 +210,14 @@ pub fn save_look(
     state
         .db
         .save_look(&id, opacity, hue_light, hue_dark, &swatches)
+}
+
+#[tauri::command]
+pub fn set_pinned_opacity(app: AppHandle, state: State<AppState>, opacity: u8) -> Result<(), AppError> {
+    let opacity = opacity.min(100);
+    state.db.set_pinned_opacity(opacity)?;
+    let _ = app.emit("pinned-opacity", opacity);
+    Ok(())
 }
 
 #[tauri::command]

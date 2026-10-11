@@ -12,10 +12,16 @@ main {
   padding: 20px;
 }
 
-h1 {
+h1,
+h2 {
   margin: 0;
   font-size: 18px;
   font-weight: 650;
+}
+
+h2 {
+  margin-top: 8px;
+  font-size: 15px;
 }
 
 label {
@@ -26,7 +32,8 @@ label {
 }
 
 input[type="url"],
-input[type="password"] {
+input[type="password"],
+select {
   border: 1px solid #d9d3c6;
   border-radius: 8px;
   background: #fff;
@@ -61,9 +68,32 @@ button:hover {
 }
 
 #token-hint,
-#settings-status {
+#settings-status,
+.hint {
   margin: 0;
   min-height: 1.2em;
   color: #6d6456;
   font-size: 13px;
+}
+
+#shortcuts {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.shortcut {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  font-size: 13px;
+}
+
+.shortcut button {
+  min-width: 132px;
+}
+
+.shortcut button.recording {
+  outline: 2px solid #241f16;
 }

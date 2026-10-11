@@ -251,6 +251,17 @@ impl Db {
         })
     }
 
+    pub fn set_pinned_opacity(&self, opacity: u8) -> Result<(), AppError> {
+        let opacity = opacity.min(100);
+        self.with(|conn| {
+            conn.execute(
+                "UPDATE notes SET opacity = ?1 WHERE pinned = 1 AND sync_state != ?2",
+                params![opacity, DRAFT],
+            )?;
+            Ok(())
+        })
+    }
+
     pub fn list_pinned(&self) -> Result<Vec<Note>, AppError> {
         self.with(|conn| {
             let mut stmt = conn.prepare(LIST_PINNED)?;
@@ -851,6 +862,26 @@ mod tests {
         assert_eq!(note.hue_light, Some(200));
         assert!(note.hue_dark.is_none());
         assert_eq!(note.swatches, vec![12, 200]);
+    }
+
+    #[test]
+    fn pinned_opacity_sets_the_same_value_on_every_pin() {
+        let db = db();
+        let first = db.upsert_draft("one").unwrap().unwrap();
+        db.finalize_content("one").unwrap();
+        let second = db.upsert_draft("two").unwrap().unwrap();
+        db.finalize_content("two").unwrap();
+        let loose = db.upsert_draft("loose").unwrap().unwrap();
+        db.finalize_content("loose").unwrap();
+        db.set_pinned(&first.id, true).unwrap();
+        db.set_pinned(&second.id, true).unwrap();
+        db.save_look(&first.id, 80, Some(12), None, &[]).unwrap();
+        db.set_pinned_opacity(25).unwrap();
+        let first = db.get(&first.id).unwrap().unwrap();
+        assert_eq!(first.opacity, 25);
+        assert_eq!(first.hue_light, Some(12));
+        assert_eq!(db.get(&second.id).unwrap().unwrap().opacity, 25);
+        assert_eq!(db.get(&loose.id).unwrap().unwrap().opacity, 100);
     }
 
     #[test]

@@ -18,6 +18,12 @@ const WINDOW: &str = "main";
 const SETTINGS: &str = "settings";
 const CARD_WIDTH: f64 = 408.0;
 const CARD_HEIGHT: f64 = 476.0;
+// Shadow gutter on `body` in styles.css. Auto-organize overlaps this so the
+// visible notes sit a few pixels apart.
+const CARD_PAD_X: f64 = 24.0;
+const CARD_PAD_TOP: f64 = 24.0;
+const CARD_PAD_BOTTOM: f64 = 32.0;
+const ORGANIZE_GAP: f64 = 4.0;
 const FOCUS_GRACE: Duration = Duration::from_millis(200);
 const RESIGN_GRACE: Duration = Duration::from_millis(140);
 const FLUSH_TIMEOUT: Duration = Duration::from_millis(500);
@@ -86,6 +92,10 @@ pub fn show_composer(app: &AppHandle) {
 }
 
 pub fn show_fresh_memo(app: &AppHandle) {
+    if composer_open(app) {
+        cycle_composer(app);
+        return;
+    }
     app.state::<AppState>()
         .shown
         .store(true, Ordering::SeqCst);
@@ -131,7 +141,7 @@ pub fn show_settings(app: &AppHandle) {
         tauri::WebviewUrl::App("settings.html".into()),
     )
     .title("Settings")
-    .inner_size(420.0, 480.0)
+    .inner_size(420.0, 600.0)
     .resizable(true)
     .decorations(true)
     .always_on_top(true)
@@ -315,6 +325,26 @@ fn hide_window(app: &AppHandle) {
     }
     state.shown.store(false, Ordering::SeqCst);
     state.hiding.store(false, Ordering::SeqCst);
+}
+
+fn cycle_composer(app: &AppHandle) {
+    let state = app.state::<AppState>();
+    let generation = state.generation.fetch_add(1, Ordering::SeqCst) + 1;
+    state.hiding.store(false, Ordering::SeqCst);
+    state.suppress_blur.store(true, Ordering::SeqCst);
+    state.shown.store(true, Ordering::SeqCst);
+    if let Some(window) = app.get_webview_window(WINDOW) {
+        let _ = window.show();
+        let _ = window.set_focus();
+        let _ = window.emit("composer-cycle", generation);
+    }
+    let app = app.clone();
+    tauri::async_runtime::spawn(async move {
+        tokio::time::sleep(FOCUS_GRACE).await;
+        app.state::<AppState>()
+            .suppress_blur
+            .store(false, Ordering::SeqCst);
+    });
 }
 
 fn present(app: &AppHandle, fresh: bool) {
@@ -549,6 +579,7 @@ fn pin_label(id: &str) -> String {
     format!("pin-{id}")
 }
 
+#[allow(dead_code)]
 pub fn free_slot(
     occupied: &[(i32, i32, i32, i32)],
     area_x: i32,
@@ -603,6 +634,92 @@ fn rects_overlap(
         && x.saturating_add(w).saturating_add(pad) > ox
         && y < oy.saturating_add(oh).saturating_add(pad)
         && y.saturating_add(h).saturating_add(pad) > oy
+}
+
+struct OrganizeGrid {
+    origin_x: i32,
+    origin_y: i32,
+    step_x: i32,
+    step_y: i32,
+    columns: usize,
+    rows: usize,
+}
+
+fn organize_grid(
+    area_x: i32,
+    area_y: i32,
+    area_w: i32,
+    area_h: i32,
+    win_w: i32,
+    win_h: i32,
+    pad_x: i32,
+    pad_top: i32,
+    pad_bottom: i32,
+    gap: i32,
+) -> OrganizeGrid {
+    let gap = gap.max(0);
+    let card_w = (win_w - pad_x.saturating_mul(2)).max(1);
+    let card_h = (win_h - pad_top - pad_bottom).max(1);
+    let step_x = card_w + gap;
+    let step_y = card_h + gap;
+    let columns = ((area_w.saturating_sub(gap)) / step_x).max(1) as usize;
+    let rows = ((area_h.saturating_sub(gap)) / step_y).max(1) as usize;
+    OrganizeGrid {
+        origin_x: area_x + gap - pad_x,
+        origin_y: area_y + gap - pad_top,
+        step_x,
+        step_y,
+        columns,
+        rows,
+    }
+}
+
+fn visual_card(
+    x: i32,
+    y: i32,
+    w: i32,
+    h: i32,
+    pad_x: i32,
+    pad_top: i32,
+    pad_bottom: i32,
+) -> (i32, i32, i32, i32) {
+    (
+        x + pad_x,
+        y + pad_top,
+        (w - pad_x.saturating_mul(2)).max(1),
+        (h - pad_top - pad_bottom).max(1),
+    )
+}
+
+fn first_open_tile(
+    occupied: &[(i32, i32, i32, i32)],
+    origin_x: i32,
+    origin_y: i32,
+    step_x: i32,
+    step_y: i32,
+    pad_x: i32,
+    pad_top: i32,
+    card_w: i32,
+    card_h: i32,
+    columns: usize,
+    rows: usize,
+    gap: i32,
+) -> (i32, i32) {
+    let columns = columns.max(1);
+    let rows = rows.max(1);
+    for row in 0..rows {
+        for col in 0..columns {
+            let x = origin_x + col as i32 * step_x;
+            let y = origin_y + row as i32 * step_y;
+            let blocked = occupied.iter().any(|&(ox, oy, ow, oh)| {
+                rects_overlap(x + pad_x, y + pad_top, card_w, card_h, ox, oy, ow, oh, gap)
+            });
+            if !blocked {
+                return (x, y);
+            }
+        }
+    }
+    (origin_x, origin_y)
 }
 
 pub fn grid_slot(
@@ -718,24 +835,34 @@ pub fn organize_pinned(app: &AppHandle) {
     };
     let area = monitor.work_area();
     let scale = monitor.scale_factor();
-    let cell_w = (CARD_WIDTH * scale).round() as i32;
-    let cell_h = (CARD_HEIGHT * scale).round() as i32;
-    let gap = (16.0 * scale).round() as i32;
-    let columns = ((area.size.width as i32) / (cell_w + gap)).max(1) as usize;
+    let layout = organize_grid(
+        area.position.x,
+        area.position.y,
+        area.size.width as i32,
+        area.size.height as i32,
+        (CARD_WIDTH * scale).round() as i32,
+        (CARD_HEIGHT * scale).round() as i32,
+        (CARD_PAD_X * scale).round() as i32,
+        (CARD_PAD_TOP * scale).round() as i32,
+        (CARD_PAD_BOTTOM * scale).round() as i32,
+        (ORGANIZE_GAP * scale).round() as i32,
+    );
+    let win_w = (CARD_WIDTH * scale).round() as i32;
+    let win_h = (CARD_HEIGHT * scale).round() as i32;
     for (index, note) in notes.iter().enumerate() {
         let (x, y) = grid_slot(
             index,
-            columns,
-            area.position.x + gap,
-            area.position.y + gap,
-            cell_w,
-            cell_h,
-            gap,
+            layout.columns,
+            layout.origin_x,
+            layout.origin_y,
+            layout.step_x,
+            layout.step_y,
+            0,
         );
         let _ = app
             .state::<AppState>()
             .db
-            .save_frame(&note.id, x, y, cell_w, cell_h);
+            .save_frame(&note.id, x, y, win_w, win_h);
         open_pin(app, &note.id);
     }
 }
@@ -746,23 +873,47 @@ pub fn place_in_free_space(app: &AppHandle, id: &str) {
     };
     let area = monitor.work_area();
     let scale = monitor.scale_factor();
-    let cell_w = (CARD_WIDTH * scale).round() as i32;
-    let cell_h = (CARD_HEIGHT * scale).round() as i32;
-    let gap = (16.0 * scale).round() as i32;
-    let (x, y) = free_slot(
-        &occupied_rects(app, id),
+    let pad_x = (CARD_PAD_X * scale).round() as i32;
+    let pad_top = (CARD_PAD_TOP * scale).round() as i32;
+    let pad_bottom = (CARD_PAD_BOTTOM * scale).round() as i32;
+    let gap = (ORGANIZE_GAP * scale).round() as i32;
+    let win_w = (CARD_WIDTH * scale).round() as i32;
+    let win_h = (CARD_HEIGHT * scale).round() as i32;
+    let layout = organize_grid(
         area.position.x,
         area.position.y,
         area.size.width as i32,
         area.size.height as i32,
-        cell_w,
-        cell_h,
+        win_w,
+        win_h,
+        pad_x,
+        pad_top,
+        pad_bottom,
+        gap,
+    );
+    let occupied: Vec<(i32, i32, i32, i32)> = occupied_rects(app, id)
+        .into_iter()
+        .map(|(x, y, w, h)| visual_card(x, y, w, h, pad_x, pad_top, pad_bottom))
+        .collect();
+    let card = visual_card(0, 0, win_w, win_h, pad_x, pad_top, pad_bottom);
+    let (x, y) = first_open_tile(
+        &occupied,
+        layout.origin_x,
+        layout.origin_y,
+        layout.step_x,
+        layout.step_y,
+        pad_x,
+        pad_top,
+        card.2,
+        card.3,
+        layout.columns,
+        layout.rows,
         gap,
     );
     let _ = app
         .state::<AppState>()
         .db
-        .save_frame(id, x, y, cell_w, cell_h);
+        .save_frame(id, x, y, win_w, win_h);
 }
 
 pub fn dismiss_composer(app: &AppHandle) {
@@ -874,7 +1025,7 @@ fn open_pin_window(app: &AppHandle, id: &str) {
         place_pin(app, id, &window);
         let _ = window.show();
         let _ = window.set_always_on_top(true);
-        let _ = window.emit("show-pin", id);
+        let _ = window.emit_to(&label, "show-pin", id);
         return;
     }
     let script = format!(
@@ -907,7 +1058,7 @@ fn open_pin_window(app: &AppHandle, id: &str) {
     place_pin(app, id, &window);
     let _ = window.show();
     let _ = window.set_always_on_top(true);
-    let _ = window.emit("show-pin", id);
+    let _ = window.emit_to(&label, "show-pin", id);
     let note_id = id.to_string();
     let handle = app.clone();
     let accept_moves_at = Instant::now() + Duration::from_millis(250);
@@ -1133,6 +1284,46 @@ mod tests {
         assert_eq!(y, 1080 - 440);
         let (x, y) = clamp_position(12, 20, 380, 440, 0, 0, 1920, 1080);
         assert_eq!((x, y), (12, 20));
+    }
+
+    #[test]
+    fn organized_notes_leave_a_few_pixels_between_cards() {
+        let layout = organize_grid(0, 0, 1400, 900, 408, 476, 24, 24, 32, 4);
+        assert_eq!(layout.step_x, 364);
+        assert_eq!(layout.step_y, 424);
+        let first = visual_card(layout.origin_x, layout.origin_y, 408, 476, 24, 24, 32);
+        let second = visual_card(
+            layout.origin_x + layout.step_x,
+            layout.origin_y,
+            408,
+            476,
+            24,
+            24,
+            32,
+        );
+        assert_eq!(first.0, 4);
+        assert_eq!(second.0 - (first.0 + first.2), 4);
+        let below = visual_card(
+            layout.origin_x,
+            layout.origin_y + layout.step_y,
+            408,
+            476,
+            24,
+            24,
+            32,
+        );
+        assert_eq!(below.1 - (first.1 + first.3), 4);
+        let last_col = (layout.columns - 1) as i32;
+        let last = visual_card(
+            layout.origin_x + last_col * layout.step_x,
+            layout.origin_y,
+            408,
+            476,
+            24,
+            24,
+            32,
+        );
+        assert!(last.0 + last.2 <= 1400 - 4);
     }
 
     #[test]

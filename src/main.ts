@@ -4,6 +4,8 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import DOMPurify from "dompurify";
 import { marked } from "marked";
 
+import { defaultBinds, formatBind, isModifierKey, matchBind, modifierDown, type ShortcutBinds } from "./shortcuts";
+
 type Note = {
   id: string;
   content: string;
@@ -37,6 +39,7 @@ const colorPop = document.querySelector<HTMLDivElement>("#color-pop");
 const hueSlider = document.querySelector<HTMLInputElement>("#hue-slider");
 const hueAdd = document.querySelector<HTMLButtonElement>("#hue-add");
 const pinToggle = document.querySelector<HTMLButtonElement>("#pin-toggle");
+const editedAt = document.querySelector<HTMLElement>("#edited-at");
 const memoList = document.querySelector<HTMLElement>("#memo-list");
 const recent = document.querySelector<HTMLUListElement>("#recent");
 const recentSearch = document.querySelector<HTMLInputElement>("#recent-search");
@@ -53,8 +56,10 @@ let recentExpanded = false;
 let listHidden = false;
 let memoQuery = "";
 let editingId: string | null = null;
+let binds: ShortcutBinds = defaultBinds();
 let draftId: string | null = null;
 let altHeld = false;
+let gestureHeld = false;
 let showingPreview = false;
 let previewGen = 0;
 const pinnedNoteId = document.documentElement.dataset.noteId ?? "";
@@ -88,6 +93,7 @@ const hueSliderEl = requireEl(hueSlider, "hue slider");
 const hueAddEl = requireEl(hueAdd, "save hue");
 const hueSlots = [...document.querySelectorAll<HTMLButtonElement>(".hue-slot")];
 const pinToggleEl = requireEl(pinToggle, "pin toggle");
+const editedAtEl = requireEl(editedAt, "edited at");
 const memoListEl = requireEl(memoList, "memo list");
 const recentEl = requireEl(recent, "recent");
 const recentSearchEl = requireEl(recentSearch, "recent search");
@@ -187,8 +193,12 @@ async function mediaSrc(name: string): Promise<string> {
   return convertFileSrc(path);
 }
 
+function previewShortcut(): string {
+  return formatBind(binds.preview);
+}
+
 function renderSurface(focusName?: string) {
-  const shortcut = /Mac|iPhone|iPad/.test(navigator.platform) ? "⌘↩" : "Ctrl+Enter";
+  const shortcut = previewShortcut();
   modeToggleEl.setAttribute("aria-pressed", String(showingPreview));
   if (showingPreview) {
     blocksEl.hidden = true;
@@ -329,6 +339,7 @@ function renderBlocks(focusName?: string) {
       area.addEventListener("input", () => {
         block.text = area.value;
         noteContent = serializeBlocks(noteBlocks);
+        dismissList();
         scheduleDraft();
       });
       blocksEl.append(area);
@@ -465,6 +476,7 @@ async function persistDraft() {
   const noteId = editingId || pinnedNoteId || null;
   if (noteId) {
     await invoke("save_edit", { id: noteId, content: noteContent });
+    setEditedAt(Date.now());
     if (lookUnsaved || lookTimer !== undefined) {
       await flushLook();
     }
@@ -473,8 +485,10 @@ async function persistDraft() {
   const saved = await invoke<Note | null>("upsert_draft", { content: noteContent });
   if (!saved) {
     draftId = null;
+    setEditedAt(null);
     return;
   }
+  setEditedAt(saved.updatedAt);
   const idChanged = draftId !== saved.id;
   draftId = saved.id;
   if (idChanged || lookUnsaved || lookTimer !== undefined) {
@@ -514,6 +528,8 @@ async function openRecent(item: Note) {
   adoptLook(lookFromNote(opened));
   setConflict(opened.syncState === "conflict" ? opened.id : null);
   setPinPressed(opened.pinned);
+  setEditedAt(opened.updatedAt);
+  markSelectedNote();
   focusNote();
   if (savingNewMemo || opened.syncState !== item.syncState) {
     await refreshRecent();
@@ -596,6 +612,18 @@ function setConflict(id: string | null) {
 
 function setPinPressed(on: boolean) {
   pinToggleEl.setAttribute("aria-pressed", String(on));
+}
+
+function setEditedAt(ms: number | null) {
+  if (ms == null || ms <= 0) {
+    editedAtEl.hidden = true;
+    editedAtEl.textContent = "";
+    editedAtEl.removeAttribute("title");
+    return;
+  }
+  editedAtEl.hidden = false;
+  editedAtEl.textContent = relativeTime(ms);
+  editedAtEl.title = exactStamp(ms);
 }
 
 function clearMemoQuery() {
@@ -697,6 +725,10 @@ async function refreshRecentNow() {
   }
   for (const item of visible) {
     const row = document.createElement("li");
+    row.dataset.id = item.id;
+    if (item.id === editingId) {
+      row.classList.add("selected");
+    }
     const title = document.createElement("button");
     title.type = "button";
     title.className = "title";
@@ -743,6 +775,7 @@ async function loadDraft() {
   draftId = draft?.id ?? null;
   showStored(draft?.content ?? "");
   editingId = null;
+  setEditedAt(draft?.updatedAt ?? null);
   adoptLook(draft ? lookFromNote(draft) : defaultLook());
 }
 
@@ -945,6 +978,22 @@ function enqueueLook(id: string): Promise<void> {
   return lookWrite;
 }
 
+let pinnedOpacityTimer: ReturnType<typeof setTimeout> | undefined;
+
+function showingPinned(): boolean {
+  return pinnedNoteId !== "" || pinToggleEl.getAttribute("aria-pressed") === "true";
+}
+
+function schedulePinnedOpacity(opacity: number) {
+  clearTimeout(pinnedOpacityTimer);
+  pinnedOpacityTimer = setTimeout(() => {
+    pinnedOpacityTimer = undefined;
+    void invoke("set_pinned_opacity", { opacity }).catch((error: unknown) => {
+      console.error(error);
+    });
+  }, 40);
+}
+
 function scheduleLook() {
   clearTimeout(lookTimer);
   const id = currentLookId();
@@ -981,6 +1030,21 @@ async function attachPendingLook() {
   await flushLook();
 }
 
+function markSelectedNote() {
+  for (const row of recentEl.querySelectorAll<HTMLElement>("li[data-id]")) {
+    row.classList.toggle("selected", row.dataset.id === editingId);
+  }
+}
+
+function randomHue() {
+  const current = themeHue() ?? activeHue();
+  let hue = Math.floor(Math.random() * 360);
+  if (hue === current) {
+    hue = (hue + 137) % 360;
+  }
+  setThemeHue(hue);
+}
+
 function setThemeHue(hue: number) {
   if (currentTheme() === "dark") {
     look.hueDark = hue;
@@ -1010,6 +1074,53 @@ async function focusComposer(generation: number) {
   focusNote();
 }
 
+async function cycleComposer(generation: number) {
+  openGen = generation;
+  if (editingId === null) {
+    await openLastModified();
+    return;
+  }
+  await returnToNewMemo(generation);
+}
+
+async function openLastModified() {
+  clearTimeout(draftTimer);
+  const notes = await invoke<Note[]>("list_recent", { limit: 1 });
+  const latest = notes.find((note) => note.id !== draftId);
+  if (!latest) {
+    focusNote();
+    return;
+  }
+  const typed = noteContent;
+  if (typed.trim().length > 0) {
+    await attachPendingLook();
+    await invoke("commit_note", { content: typed });
+    showStored("");
+  }
+  await openRecent(latest);
+}
+
+async function returnToNewMemo(generation: number) {
+  openGen = generation;
+  setConflict(null);
+  listHidden = false;
+  recentExpanded = false;
+  clearTimeout(draftTimer);
+  const noteId = editingId;
+  if (noteId && noteContent.trim().length > 0) {
+    await invoke("save_edit", { id: noteId, content: noteContent });
+  }
+  await flushLook();
+  editingId = null;
+  draftId = null;
+  showStored("");
+  adoptLook(defaultLook());
+  setPinPressed(false);
+  setEditedAt(null);
+  await refreshRecent();
+  focusNote();
+}
+
 async function startFresh(generation: number) {
   openGen = generation;
   setConflict(null);
@@ -1024,6 +1135,7 @@ async function startFresh(generation: number) {
   showStored("");
   adoptLook(defaultLook());
   setPinPressed(false);
+  setEditedAt(null);
   await refreshRecent();
   focusNote();
 }
@@ -1055,7 +1167,7 @@ cardEl.addEventListener("mousedown", (event) => {
     return;
   }
   const target = event.target;
-  if (event.altKey) {
+  if (gestureHeld || modifierDown(binds.gesture, event)) {
     if (target instanceof Element && target.closest("#theme-toggle, #color-pop")) {
       return;
     }
@@ -1175,6 +1287,7 @@ pinToggleEl.addEventListener("click", () => {
       await invoke("hide_composer");
     } else {
       setPinPressed(true);
+      setEditedAt(note.updatedAt);
     }
     await refreshRecent();
   })().catch((error: unknown) => {
@@ -1271,7 +1384,7 @@ document.addEventListener("mousedown", (event) => {
 cardEl.addEventListener(
   "wheel",
   (event) => {
-    if ((!event.altKey && !altHeld) || isPreviewWindow()) {
+    if ((!gestureHeld && !modifierDown(binds.gesture, event)) || isPreviewWindow()) {
       return;
     }
     const target = event.target;
@@ -1291,6 +1404,13 @@ cardEl.addEventListener(
     }
     look.opacity = next;
     paintLook();
+    if (event.metaKey) {
+      schedulePinnedOpacity(next);
+      if (!showingPinned()) {
+        scheduleLook();
+      }
+      return;
+    }
     scheduleLook();
   },
   { passive: false, capture: true },
@@ -1355,6 +1475,14 @@ if (!isPreviewWindow()) {
           paintThemeIcon();
         }
         event.preventDefault();
+      }
+      if (isModifierKey(binds.gesture, event.key)) {
+        if (!event.repeat) {
+          gestureHeld = true;
+        }
+        return;
+      }
+      if (event.key === "Alt") {
         return;
       }
       if (event.key === "Escape" && !colorPopEl.hidden) {
@@ -1363,12 +1491,17 @@ if (!isPreviewWindow()) {
         event.stopPropagation();
         return;
       }
-      if ((event.metaKey || event.ctrlKey) && event.key === "Enter") {
+      if (matchBind(event, binds.randomHue)) {
+        event.preventDefault();
+        randomHue();
+        return;
+      }
+      if (matchBind(event, binds.preview)) {
         event.preventDefault();
         togglePreview();
         return;
       }
-      if (!inTauri() || event.key !== "Escape") {
+      if (!inTauri() || !matchBind(event, binds.hide)) {
         return;
       }
       event.preventDefault();
@@ -1379,25 +1512,52 @@ if (!isPreviewWindow()) {
     true,
   );
   window.addEventListener("keyup", (event) => {
-    if (event.key !== "Alt") {
-      return;
+    if (event.key === "Alt") {
+      altHeld = false;
+      paintThemeIcon();
     }
-    altHeld = false;
-    paintThemeIcon();
+    if (isModifierKey(binds.gesture, event.key)) {
+      gestureHeld = false;
+    }
   });
   window.addEventListener("blur", () => {
+    gestureHeld = false;
     if (!altHeld) {
       return;
     }
     altHeld = false;
     paintThemeIcon();
   });
+  if (inTauri()) {
+    const applyBinds = (next: ShortcutBinds) => {
+      binds = next;
+      const shortcut = previewShortcut();
+      modeToggleEl.title = showingPreview ? `Edit (${shortcut})` : `Preview (${shortcut})`;
+    };
+    void invoke<ShortcutBinds>("get_shortcuts")
+      .then(applyBinds)
+      .catch((error: unknown) => {
+        console.error(error);
+      });
+    void listen<ShortcutBinds>("shortcuts-changed", (event) => {
+      applyBinds(event.payload);
+    });
+  }
 }
 
 renderSurface();
 
+let pinLoad = 0;
+
 async function loadPinned(id: string) {
-  const note = await invoke<Note>("get_note", { id });
+  if (id !== pinnedNoteId) {
+    return;
+  }
+  const ticket = ++pinLoad;
+  const note = await invoke<Note>("get_note", { id: pinnedNoteId });
+  if (ticket !== pinLoad || note.id !== pinnedNoteId) {
+    return;
+  }
   const dirty = loadedContent.length > 0 && noteContent !== loadedContent;
   if (!dirty && (editingId !== note.id || loadedContent !== note.content)) {
     editingId = note.id;
@@ -1406,6 +1566,7 @@ async function loadPinned(id: string) {
   }
   setConflict(note.syncState === "conflict" ? note.id : null);
   setPinPressed(note.pinned);
+  setEditedAt(note.updatedAt);
   if (lookTimer === undefined) {
     adoptLook(lookFromNote(note));
   }
@@ -1434,11 +1595,27 @@ async function resolveConflict(id: string, choice: "local" | "remote") {
       showStored(note.content);
       setConflict(null);
       setPinPressed(note.pinned);
+      setEditedAt(note.updatedAt);
     }
     await refreshRecent();
   } catch (error) {
     console.error(error);
   }
+}
+
+if (inTauri() && !isPreviewWindow()) {
+  void listen<number>("pinned-opacity", (event) => {
+    if (pinnedOpacityTimer !== undefined || !showingPinned()) {
+      return;
+    }
+    const next = Math.min(100, Math.max(0, Math.round(event.payload)));
+    if (next === look.opacity) {
+      return;
+    }
+    look.opacity = next;
+    opacityCarry = next;
+    paintLook();
+  });
 }
 
 if (isPreviewWindow()) {
@@ -1449,8 +1626,11 @@ if (isPreviewWindow()) {
   void loadPinned(pinnedNoteId).catch((error: unknown) => {
     console.error(error);
   });
-  void listen<string>("show-pin", (event) => {
-    void loadPinned(event.payload).catch((error: unknown) => {
+  void getCurrentWindow().listen<string>("show-pin", (event) => {
+    if (event.payload !== pinnedNoteId) {
+      return;
+    }
+    void loadPinned(pinnedNoteId).catch((error: unknown) => {
       console.error(error);
     });
   });
@@ -1474,6 +1654,12 @@ if (isPreviewWindow()) {
     });
   });
 
+  void listen<number>("composer-cycle", (event) => {
+    void cycleComposer(event.payload).catch((error: unknown) => {
+      console.error(error);
+    });
+  });
+
   void listen<number>("composer-flush", (event) => {
     clearTimeout(draftTimer);
     const generation = event.payload;
@@ -1485,6 +1671,7 @@ if (isPreviewWindow()) {
       showStored("");
       editingId = null;
       setPinPressed(false);
+      setEditedAt(null);
     }
     void invoke("finalize_composer", { generation, content, noteId })
       .then(() => refreshRecent())

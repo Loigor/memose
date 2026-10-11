@@ -8,6 +8,7 @@ use tauri::Wry;
 
 use crate::notes::Job;
 use crate::notes::Db;
+use crate::shortcuts::ShortcutBinds;
 
 pub struct AppState {
     pub db: Db,
@@ -30,6 +31,7 @@ pub struct AppState {
     pub preview_open: AtomicBool,
     pub preview_name: Mutex<Option<String>>,
     pub preview_opened_at: Mutex<Option<Instant>>,
+    pub shortcuts: Mutex<ShortcutBinds>,
 }
 
 impl AppState {
@@ -58,6 +60,7 @@ impl AppState {
             preview_open: AtomicBool::new(false),
             preview_name: Mutex::new(None),
             preview_opened_at: Mutex::new(None),
+            shortcuts: Mutex::new(ShortcutBinds::defaults()),
         })
     }
 }
