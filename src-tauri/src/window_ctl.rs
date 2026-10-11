@@ -19,6 +19,7 @@ const SETTINGS: &str = "settings";
 const CARD_WIDTH: f64 = 408.0;
 const CARD_HEIGHT: f64 = 476.0;
 const FOCUS_GRACE: Duration = Duration::from_millis(200);
+const RESIGN_GRACE: Duration = Duration::from_millis(140);
 const FLUSH_TIMEOUT: Duration = Duration::from_millis(500);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -45,7 +46,7 @@ pub fn transition(state: Visibility, gesture: Gesture) -> (Visibility, Action) {
         (_, Gesture::FocusLost { suppress_blur: true }) => (state, Action::Ignore),
         (Visibility::Hidden, Gesture::FocusLost { .. }) => (Visibility::Hidden, Action::Ignore),
         (Visibility::Shown, Gesture::FocusLost { suppress_blur: false }) => {
-            (Visibility::Shown, Action::Ignore)
+            (Visibility::Hidden, Action::HideAndSave)
         }
         (Visibility::Hidden, Gesture::HotkeyOrTray { .. }) => {
             (Visibility::Shown, Action::ShowAtCursor)
@@ -63,13 +64,16 @@ pub fn attach(app: &AppHandle) {
     let Some(window) = app.get_webview_window(WINDOW) else {
         return;
     };
+    // The window is created at a parked spot. Keep it hidden until present()
+    // has moved it to the cursor, so the first frame is not the screen center.
+    let _ = window.hide();
     let handle = app.clone();
     window.on_window_event(move |event| match event {
         WindowEvent::CloseRequested { api, .. } => {
             api.prevent_close();
             hide_and_save(&handle, true);
         }
-        WindowEvent::Focused(false) => on_blur(&handle),
+        WindowEvent::Focused(false) => schedule_resign(&handle),
         _ => {}
     });
 }
@@ -95,6 +99,9 @@ pub fn hide_composer(app: &AppHandle) {
 }
 
 pub fn hide_memos(app: &AppHandle) {
+    app.state::<AppState>()
+        .pinned_mode
+        .store(false, Ordering::SeqCst);
     hide_pinned(app);
     let shown = app.state::<AppState>().shown.load(Ordering::SeqCst);
     let visible = app
@@ -132,15 +139,60 @@ pub fn show_settings(app: &AppHandle) {
     .build()
     {
         Ok(window) => {
+            let handle = app.clone();
+            window.on_window_event(move |event| {
+                if let WindowEvent::Focused(false) = event {
+                    schedule_resign(&handle);
+                }
+            });
             let _ = window.set_focus();
         }
         Err(err) => eprintln!("memose: settings window failed: {err}"),
     }
 }
 
-fn on_blur(app: &AppHandle) {
-    if let Some(window) = app.get_webview_window(WINDOW) {
-        let _ = window.set_always_on_top(true);
+fn schedule_resign(app: &AppHandle) {
+    let app = app.clone();
+    tauri::async_runtime::spawn(async move {
+        tokio::time::sleep(RESIGN_GRACE).await;
+        for _ in 0..4 {
+            if !app.state::<AppState>().suppress_blur.load(Ordering::SeqCst) {
+                break;
+            }
+            tokio::time::sleep(FOCUS_GRACE).await;
+        }
+        if app.state::<AppState>().suppress_blur.load(Ordering::SeqCst) {
+            return;
+        }
+        if any_window_focused(&app) {
+            return;
+        }
+        hide_on_resign(&app);
+    });
+}
+
+fn any_window_focused(app: &AppHandle) -> bool {
+    app.webview_windows()
+        .values()
+        .any(|window| window.is_focused().unwrap_or(false))
+}
+
+fn hide_on_resign(app: &AppHandle) {
+    if app.state::<AppState>().pinned_mode.load(Ordering::SeqCst) {
+        hide_composer(app);
+        return;
+    }
+    hide_pinned(app);
+    let shown = app.state::<AppState>().shown.load(Ordering::SeqCst);
+    let visible = app
+        .get_webview_window(WINDOW)
+        .and_then(|window| window.is_visible().ok())
+        .unwrap_or(false);
+    if shown || visible {
+        hide_and_save(app, true);
+    } else {
+        #[cfg(target_os = "macos")]
+        let _ = app.set_activation_policy(tauri::ActivationPolicy::Accessory);
     }
 }
 
@@ -266,6 +318,10 @@ fn hide_window(app: &AppHandle) {
 }
 
 fn present(app: &AppHandle, fresh: bool) {
+    present_at(app, fresh, None);
+}
+
+fn present_at(app: &AppHandle, fresh: bool, anchor: Option<TrayAnchor>) {
     let state = app.state::<AppState>();
     let generation = state.generation.fetch_add(1, Ordering::SeqCst) + 1;
     state.hiding.store(false, Ordering::SeqCst);
@@ -275,12 +331,18 @@ fn present(app: &AppHandle, fresh: bool) {
         .blur_hidden_at
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner()) = None;
-    #[cfg(target_os = "macos")]
-    let _ = app.set_activation_policy(tauri::ActivationPolicy::Regular);
     if let Some(window) = app.get_webview_window(WINDOW) {
         let _ = window.set_size(LogicalSize::new(CARD_WIDTH, CARD_HEIGHT));
-        let _ = place_at_cursor(app, &window);
+        let placed = match anchor {
+            Some(anchor) => place_near_tray(app, &window, anchor).is_ok(),
+            None => false,
+        };
+        if !placed {
+            let _ = place_at_cursor(app, &window);
+        }
         let _ = window.set_always_on_top(true);
+        #[cfg(target_os = "macos")]
+        let _ = app.set_activation_policy(tauri::ActivationPolicy::Regular);
         let _ = window.show();
         let _ = window.set_focus();
         let _ = window.emit(
@@ -299,6 +361,70 @@ fn present(app: &AppHandle, fresh: bool) {
             .suppress_blur
             .store(false, Ordering::SeqCst);
     });
+}
+
+fn place_near_tray(
+    app: &AppHandle,
+    window: &WebviewWindow,
+    anchor: TrayAnchor,
+) -> tauri::Result<()> {
+    let point = PhysicalPosition::new(anchor.x as f64 + 1.0, anchor.y as f64 + 1.0);
+    let monitors = app.available_monitors()?;
+    let monitor = monitors
+        .iter()
+        .find(|monitor| contains(monitor, point))
+        .cloned()
+        .or(window.current_monitor()?)
+        .or(app.primary_monitor()?);
+    let Some(monitor) = monitor else {
+        return Ok(());
+    };
+    let area = monitor.work_area();
+    let scale = window.scale_factor()?;
+    let (x, y) = tray_card_origin(
+        anchor.x,
+        anchor.y,
+        anchor.width.max(1),
+        anchor.height.max(1),
+        (CARD_WIDTH * scale).round() as i32,
+        (CARD_HEIGHT * scale).round() as i32,
+        area.position.x,
+        area.position.y,
+        area.size.width as i32,
+        area.size.height as i32,
+        (8.0 * scale).round() as i32,
+    );
+    window.set_position(PhysicalPosition::new(x, y))
+}
+
+pub fn tray_card_origin(
+    icon_x: i32,
+    icon_y: i32,
+    icon_w: i32,
+    icon_h: i32,
+    win_w: i32,
+    win_h: i32,
+    area_x: i32,
+    area_y: i32,
+    area_w: i32,
+    area_h: i32,
+    gap: i32,
+) -> (i32, i32) {
+    let icon_mid_x = icon_x.saturating_add(icon_w / 2);
+    let icon_mid_y = icon_y.saturating_add(icon_h / 2);
+    let area_mid_x = area_x.saturating_add(area_w / 2);
+    let area_mid_y = area_y.saturating_add(area_h / 2);
+    let x = if icon_mid_x > area_mid_x {
+        icon_x.saturating_add(icon_w).saturating_sub(win_w)
+    } else {
+        icon_x
+    };
+    let y = if icon_mid_y < area_mid_y {
+        icon_y.saturating_add(icon_h).saturating_add(gap)
+    } else {
+        icon_y.saturating_sub(gap).saturating_sub(win_h)
+    };
+    clamp_position(x, y, win_w, win_h, area_x, area_y, area_w, area_h)
 }
 
 fn place_at_cursor(app: &AppHandle, window: &WebviewWindow) -> tauri::Result<()> {
@@ -385,10 +511,11 @@ pub fn open_media_preview(app: &AppHandle, name: &str) -> Result<(), AppError> {
                 .unwrap_or_else(|poisoned| poisoned.into_inner())
                 .is_some_and(|opened| opened.elapsed() < PREVIEW_GRACE);
             if !too_soon {
-                let handle = handle.clone();
+                let closing = handle.clone();
                 tauri::async_runtime::spawn(async move {
-                    close_media_preview(&handle);
+                    close_media_preview(&closing);
                 });
+                schedule_resign(&handle);
             }
         }
         WindowEvent::CloseRequested { .. } => {
@@ -497,7 +624,9 @@ pub fn grid_slot(
 }
 
 pub fn toggle_pinned(app: &AppHandle) {
-    if pin_windows_visible(app) {
+    let state = app.state::<AppState>();
+    if state.pinned_mode.load(Ordering::SeqCst) {
+        state.pinned_mode.store(false, Ordering::SeqCst);
         hide_pinned(app);
         if !composer_open(app) {
             #[cfg(target_os = "macos")]
@@ -505,10 +634,49 @@ pub fn toggle_pinned(app: &AppHandle) {
         }
         return;
     }
-    show_pinned(app);
+    state.pinned_mode.store(true, Ordering::SeqCst);
+    open_pinned_windows(app);
+    dismiss_composer(app);
+    request_sync(app);
 }
 
-pub fn show_pinned(app: &AppHandle) {
+#[derive(Clone, Copy)]
+pub struct TrayAnchor {
+    pub x: i32,
+    pub y: i32,
+    pub width: i32,
+    pub height: i32,
+}
+
+impl TrayAnchor {
+    pub fn from_rect(rect: tauri::Rect) -> Self {
+        let position = rect.position.to_physical(1.0);
+        let size = rect.size.to_physical(1.0);
+        Self {
+            x: position.x,
+            y: position.y,
+            width: size.width,
+            height: size.height,
+        }
+    }
+}
+
+pub fn show_from_tray(app: &AppHandle, anchor: Option<TrayAnchor>) {
+    let anchor = anchor.or_else(|| tray_anchor(app));
+    open_pinned_windows(app);
+    app.state::<AppState>()
+        .shown
+        .store(true, Ordering::SeqCst);
+    present_at(app, true, anchor);
+    request_sync(app);
+}
+
+fn tray_anchor(app: &AppHandle) -> Option<TrayAnchor> {
+    let tray = app.tray_by_id("main")?;
+    tray.rect().ok().flatten().map(TrayAnchor::from_rect)
+}
+
+fn open_pinned_windows(app: &AppHandle) {
     let notes = match app.state::<AppState>().db.list_pinned() {
         Ok(notes) => notes,
         Err(err) => {
@@ -521,8 +689,6 @@ pub fn show_pinned(app: &AppHandle) {
     for note in notes {
         open_pin(app, &note.id);
     }
-    dismiss_composer(app);
-    request_sync(app);
 }
 
 pub fn organize_pinned(app: &AppHandle) {
@@ -717,6 +883,7 @@ fn open_pin_window(app: &AppHandle, id: &str) {
     let builder = tauri::WebviewWindowBuilder::new(app, &label, tauri::WebviewUrl::App("index.html".into()))
         .title("Memose")
         .inner_size(CARD_WIDTH, CARD_HEIGHT)
+        .position(-10000.0, -10000.0)
         .decorations(false)
         .transparent(true)
         .always_on_top(true)
@@ -745,6 +912,7 @@ fn open_pin_window(app: &AppHandle, id: &str) {
     let handle = app.clone();
     let accept_moves_at = Instant::now() + Duration::from_millis(250);
     window.on_window_event(move |event| match event {
+        WindowEvent::Focused(false) => schedule_resign(&handle),
         WindowEvent::Moved(_) | WindowEvent::Resized(_) => {
             if Instant::now() < accept_moves_at {
                 return;
@@ -913,13 +1081,27 @@ mod tests {
     }
 
     #[test]
-    fn blur_leaves_the_card_visible() {
+    fn blur_hides_the_card() {
         let (state, action) = transition(
             Visibility::Shown,
             Gesture::FocusLost { suppress_blur: false },
         );
-        assert_eq!(state, Visibility::Shown);
-        assert_eq!(action, Action::Ignore);
+        assert_eq!(state, Visibility::Hidden);
+        assert_eq!(action, Action::HideAndSave);
+    }
+
+    #[test]
+    fn tray_card_sits_under_a_top_right_icon() {
+        let (x, y) = tray_card_origin(1800, 0, 40, 24, 400, 500, 0, 28, 1920, 1052, 8);
+        assert_eq!(x, 1440);
+        assert_eq!(y, 32);
+    }
+
+    #[test]
+    fn tray_card_sits_above_a_bottom_right_icon() {
+        let (x, y) = tray_card_origin(1800, 1040, 40, 40, 400, 500, 0, 0, 1920, 1000, 8);
+        assert_eq!(x, 1440);
+        assert_eq!(y, 500);
     }
 
     #[test]

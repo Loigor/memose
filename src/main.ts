@@ -13,6 +13,10 @@ type Note = {
   remoteName: string | null;
   lastError: string | null;
   pinned: boolean;
+  opacity: number;
+  hueLight: number | null;
+  hueDark: number | null;
+  swatches: number[];
 };
 
 type ThemeName = "light" | "dark";
@@ -29,6 +33,9 @@ const lightboxImage = document.querySelector<HTMLImageElement>("#lightbox-image"
 const modeToggle = document.querySelector<HTMLButtonElement>("#mode-toggle");
 const themeToggle = document.querySelector<HTMLButtonElement>("#theme-toggle");
 const themeIcon = document.querySelector<SVGElement>("#theme-icon");
+const colorPop = document.querySelector<HTMLDivElement>("#color-pop");
+const hueSlider = document.querySelector<HTMLInputElement>("#hue-slider");
+const hueAdd = document.querySelector<HTMLButtonElement>("#hue-add");
 const pinToggle = document.querySelector<HTMLButtonElement>("#pin-toggle");
 const memoList = document.querySelector<HTMLElement>("#memo-list");
 const recent = document.querySelector<HTMLUListElement>("#recent");
@@ -46,6 +53,8 @@ let recentExpanded = false;
 let listHidden = false;
 let memoQuery = "";
 let editingId: string | null = null;
+let draftId: string | null = null;
+let altHeld = false;
 let showingPreview = false;
 let previewGen = 0;
 const pinnedNoteId = document.documentElement.dataset.noteId ?? "";
@@ -74,6 +83,10 @@ const lightboxImageEl = requireEl(lightboxImage, "lightbox image");
 const modeToggleEl = requireEl(modeToggle, "mode toggle");
 const themeToggleEl = requireEl(themeToggle, "theme toggle");
 const themeIconEl = requireEl(themeIcon, "theme icon");
+const colorPopEl = requireEl(colorPop, "color pop");
+const hueSliderEl = requireEl(hueSlider, "hue slider");
+const hueAddEl = requireEl(hueAdd, "save hue");
+const hueSlots = [...document.querySelectorAll<HTMLButtonElement>(".hue-slot")];
 const pinToggleEl = requireEl(pinToggle, "pin toggle");
 const memoListEl = requireEl(memoList, "memo list");
 const recentEl = requireEl(recent, "recent");
@@ -442,14 +455,34 @@ function scheduleDraft() {
   }
   clearTimeout(draftTimer);
   draftTimer = setTimeout(() => {
-    const noteId = editingId || pinnedNoteId || null;
-    const save = noteId
-      ? invoke("save_edit", { id: noteId, content: noteContent })
-      : invoke("upsert_draft", { content: noteContent });
-    void save.catch((error: unknown) => {
+    void persistDraft().catch((error: unknown) => {
       console.error(error);
     });
   }, 300);
+}
+
+async function persistDraft() {
+  const noteId = editingId || pinnedNoteId || null;
+  if (noteId) {
+    await invoke("save_edit", { id: noteId, content: noteContent });
+    if (lookUnsaved || lookTimer !== undefined) {
+      await flushLook();
+    }
+    return;
+  }
+  const saved = await invoke<Note | null>("upsert_draft", { content: noteContent });
+  if (!saved) {
+    draftId = null;
+    return;
+  }
+  const idChanged = draftId !== saved.id;
+  draftId = saved.id;
+  if (idChanged || lookUnsaved || lookTimer !== undefined) {
+    clearTimeout(lookTimer);
+    lookTimer = undefined;
+    lookUnsaved = false;
+    await enqueueLook(saved.id);
+  }
 }
 
 async function openRecent(item: Note) {
@@ -461,7 +494,10 @@ async function openRecent(item: Note) {
   const typed = noteContent;
   const savingNewMemo = editingId === null && typed.trim().length > 0;
   if (inTauri() && savingNewMemo) {
+    await attachPendingLook();
     await invoke("commit_note", { content: typed });
+  } else {
+    await flushLook();
   }
   let opened = item;
   if (inTauri() && (item.syncState === "remote" || item.syncState === "conflict")) {
@@ -473,7 +509,9 @@ async function openRecent(item: Note) {
     }
   }
   editingId = opened.id;
+  draftId = null;
   showStored(opened.content);
+  adoptLook(lookFromNote(opened));
   setConflict(opened.syncState === "conflict" ? opened.id : null);
   setPinPressed(opened.pinned);
   focusNote();
@@ -700,18 +738,258 @@ async function refreshRecentNow() {
 }
 
 async function loadDraft() {
+  await flushLook();
   const draft = await invoke<Note | null>("load_draft");
+  draftId = draft?.id ?? null;
   showStored(draft?.content ?? "");
   editingId = null;
+  adoptLook(draft ? lookFromNote(draft) : defaultLook());
+}
+
+type Look = {
+  opacity: number;
+  hueLight: number | null;
+  hueDark: number | null;
+  swatches: number[];
+};
+
+const lightHue = 48;
+const darkHue = 32;
+const tinted = [
+  "--paper",
+  "--ink",
+  "--muted",
+  "--button",
+  "--button-hover",
+  "--line",
+  "--rule",
+  "--shadow",
+  "--field",
+  "--pin-on",
+];
+
+let look: Look = { opacity: 100, hueLight: null, hueDark: null, swatches: [] };
+let lookTimer: ReturnType<typeof setTimeout> | undefined;
+let lookWrite: Promise<void> = Promise.resolve();
+let lookUnsaved = false;
+let opacityCarry = 100;
+
+function currentTheme(): ThemeName {
+  return document.documentElement.dataset.theme === "dark" ? "dark" : "light";
+}
+
+function currentLookId(): string | null {
+  if (pinnedNoteId) {
+    return pinnedNoteId;
+  }
+  return editingId || draftId;
+}
+
+function defaultLook(): Look {
+  return { opacity: 100, hueLight: null, hueDark: null, swatches: [] };
+}
+
+function lookFromNote(note: Note): Look {
+  const swatches = Array.isArray(note.swatches) ? note.swatches : [];
+  return {
+    opacity: Math.min(100, Math.max(0, Math.round(note.opacity ?? 100))),
+    hueLight: note.hueLight ?? null,
+    hueDark: note.hueDark ?? null,
+    swatches: swatches.filter((hue) => hue >= 0 && hue <= 359).slice(0, 6),
+  };
+}
+
+function adoptLook(next: Look) {
+  look = {
+    opacity: next.opacity,
+    hueLight: next.hueLight,
+    hueDark: next.hueDark,
+    swatches: [...next.swatches],
+  };
+  opacityCarry = look.opacity;
+  lookUnsaved = false;
+  paintLook();
+  syncSlider();
+}
+
+function themeHue(): number | null {
+  return currentTheme() === "dark" ? look.hueDark : look.hueLight;
+}
+
+function activeHue(): number {
+  return themeHue() ?? (currentTheme() === "dark" ? darkHue : lightHue);
+}
+
+function paperAt(theme: ThemeName, hue: number): string {
+  return theme === "dark" ? `hsl(${hue} 22% 16%)` : `hsl(${hue} 100% 86%)`;
+}
+
+function chipColor(): string {
+  const theme = currentTheme();
+  const hue = theme === "dark" ? look.hueDark : look.hueLight;
+  if (hue == null) {
+    return theme === "dark" ? "#23211f" : "#fff4b8";
+  }
+  return paperAt(theme, hue);
+}
+
+function palette(theme: ThemeName, hue: number): Record<string, string> {
+  if (theme === "dark") {
+    return {
+      "--paper": paperAt(theme, hue),
+      "--ink": `hsl(${hue} 28% 93%)`,
+      "--muted": `hsl(${hue} 14% 70%)`,
+      "--button": `hsl(${hue} 30% 93% / 0.12)`,
+      "--button-hover": `hsl(${hue} 30% 93% / 0.2)`,
+      "--line": `hsl(${hue} 30% 93% / 0.14)`,
+      "--rule": `hsl(${hue} 18% 90% / 0.42)`,
+      "--shadow": "hsl(0 0% 0% / 0.55)",
+      "--field": "hsl(0 0% 100% / 0.06)",
+      "--pin-on": `hsl(${hue} 40% 96%)`,
+    };
+  }
+  return {
+    "--paper": paperAt(theme, hue),
+    "--ink": `hsl(${hue} 34% 18%)`,
+    "--muted": `hsl(${hue} 32% 36%)`,
+    "--button": `hsl(${hue} 50% 18% / 0.08)`,
+    "--button-hover": `hsl(${hue} 50% 18% / 0.16)`,
+    "--line": `hsl(${hue} 50% 18% / 0.12)`,
+    "--rule": `hsl(${hue} 40% 24% / 0.38)`,
+    "--shadow": `hsl(${hue} 70% 14% / 0.34)`,
+    "--field": "hsl(0 0% 100% / 0.65)",
+    "--pin-on": `hsl(${hue} 18% 14%)`,
+  };
+}
+
+function paintThemeIcon() {
+  const dark = currentTheme() === "dark";
+  if (altHeld) {
+    themeIconEl.innerHTML = `<circle cx="8" cy="8" r="5" fill="${chipColor()}" stroke="currentColor" stroke-width="1.2"/>`;
+    themeToggleEl.setAttribute("aria-label", "Memo color");
+    themeToggleEl.title = "Memo color";
+    return;
+  }
+  themeToggleEl.setAttribute("aria-label", dark ? "Light theme" : "Dark theme");
+  themeToggleEl.title = dark ? "Light theme" : "Dark theme";
+  themeIconEl.innerHTML = dark
+    ? `<circle cx="8" cy="8" r="2.4" fill="currentColor"/><path stroke="currentColor" stroke-width="1.3" d="M8 1.4v1.8M8 12.8v1.8M1.4 8h1.8M12.8 8h1.8M3.2 3.2l1.3 1.3M11.5 11.5l1.3 1.3M12.8 3.2l-1.3 1.3M4.5 11.5l-1.3 1.3"/>`
+    : `<path fill="currentColor" d="M8 1.6a6.2 6.2 0 1 0 5.6 8.7A4.7 4.7 0 0 1 8 1.6z"/>`;
+}
+
+function paintLook() {
+  const theme = currentTheme();
+  const hue = theme === "dark" ? look.hueDark : look.hueLight;
+  const root = document.documentElement;
+  root.style.setProperty("--paper-alpha", `${look.opacity}%`);
+  const colors = hue == null ? null : palette(theme, hue);
+  for (const name of tinted) {
+    if (colors) {
+      root.style.setProperty(name, colors[name]);
+    } else {
+      root.style.removeProperty(name);
+    }
+  }
+  if (altHeld) {
+    paintThemeIcon();
+  }
+}
+
+function paintSlots() {
+  const theme = currentTheme();
+  const current = themeHue();
+  hueSlots.forEach((slot, index) => {
+    const hue = look.swatches[index];
+    if (hue == null) {
+      slot.style.background = "";
+      delete slot.dataset.hue;
+      slot.setAttribute("aria-pressed", "false");
+      return;
+    }
+    slot.dataset.hue = String(hue);
+    slot.style.background = paperAt(theme, hue);
+    slot.setAttribute("aria-pressed", String(hue === current));
+  });
+  const hue = Number(hueSliderEl.value);
+  hueAddEl.disabled = look.swatches.length >= 6 || look.swatches.includes(hue);
+}
+
+function syncSlider() {
+  const hue = activeHue();
+  hueSliderEl.value = String(hue);
+  hueSliderEl.style.setProperty("--thumb", paperAt(currentTheme(), hue));
+  paintSlots();
 }
 
 function applyTheme(theme: ThemeName) {
   document.documentElement.dataset.theme = theme;
-  const dark = theme === "dark";
-  themeToggleEl.setAttribute("aria-label", dark ? "Light theme" : "Dark theme");
-  themeIconEl.innerHTML = dark
-    ? `<circle cx="8" cy="8" r="2.4" fill="currentColor"/><path stroke="currentColor" stroke-width="1.3" d="M8 1.4v1.8M8 12.8v1.8M1.4 8h1.8M12.8 8h1.8M3.2 3.2l1.3 1.3M11.5 11.5l1.3 1.3M12.8 3.2l-1.3 1.3M4.5 11.5l-1.3 1.3"/>`
-    : `<path fill="currentColor" d="M8 1.6a6.2 6.2 0 1 0 5.6 8.7A4.7 4.7 0 0 1 8 1.6z"/>`;
+  paintThemeIcon();
+  paintLook();
+  syncSlider();
+}
+
+function enqueueLook(id: string): Promise<void> {
+  const payload = {
+    id,
+    opacity: look.opacity,
+    hueLight: look.hueLight,
+    hueDark: look.hueDark,
+    swatches: [...look.swatches],
+  };
+  lookWrite = lookWrite
+    .then(() => invoke("save_look", payload))
+    .then(() => undefined)
+    .catch((error: unknown) => {
+      console.error(error);
+    });
+  return lookWrite;
+}
+
+function scheduleLook() {
+  clearTimeout(lookTimer);
+  const id = currentLookId();
+  if (!id || !inTauri()) {
+    lookUnsaved = true;
+    return;
+  }
+  lookUnsaved = false;
+  lookTimer = setTimeout(() => {
+    lookTimer = undefined;
+    void enqueueLook(id);
+  }, 80);
+}
+
+function flushLook(): Promise<void> {
+  const pending = lookTimer !== undefined || lookUnsaved;
+  clearTimeout(lookTimer);
+  lookTimer = undefined;
+  const id = currentLookId();
+  if (!pending || !id || !inTauri()) {
+    return Promise.resolve();
+  }
+  lookUnsaved = false;
+  return enqueueLook(id);
+}
+
+async function attachPendingLook() {
+  if (!pinnedNoteId && !editingId && (lookUnsaved || lookTimer !== undefined) && !draftId && noteContent.trim()) {
+    const saved = await invoke<Note | null>("upsert_draft", { content: noteContent });
+    if (saved) {
+      draftId = saved.id;
+    }
+  }
+  await flushLook();
+}
+
+function setThemeHue(hue: number) {
+  if (currentTheme() === "dark") {
+    look.hueDark = hue;
+  } else {
+    look.hueLight = hue;
+  }
+  paintLook();
+  syncSlider();
+  scheduleLook();
 }
 
 async function loadTheme() {
@@ -737,11 +1015,14 @@ async function startFresh(generation: number) {
   setConflict(null);
   listHidden = false;
   recentExpanded = false;
+  await attachPendingLook();
   if (noteContent.trim().length > 0 && !pinnedNoteId) {
     await invoke("commit_note", { content: noteContent });
   }
   editingId = null;
+  draftId = null;
   showStored("");
+  adoptLook(defaultLook());
   setPinPressed(false);
   await refreshRecent();
   focusNote();
@@ -773,16 +1054,19 @@ cardEl.addEventListener("mousedown", (event) => {
   if (event.button !== 0 || !inTauri() || isPreviewWindow()) {
     return;
   }
+  const target = event.target;
   if (event.altKey) {
+    if (target instanceof Element && target.closest("#theme-toggle, #color-pop")) {
+      return;
+    }
     event.preventDefault();
     void getCurrentWindow().startDragging();
     return;
   }
-  const target = event.target;
   if (!(target instanceof Element)) {
     return;
   }
-  if (target.closest("button, a, input, textarea, img, video, .media, label")) {
+  if (target.closest("button, a, input, textarea, img, video, .media, label, #color-pop")) {
     return;
   }
   event.preventDefault();
@@ -879,6 +1163,10 @@ pinToggleEl.addEventListener("click", () => {
       return;
     }
     const note = await invoke<Note>("publish_note", { id: editingId || null, content: noteContent });
+    clearTimeout(lookTimer);
+    lookTimer = undefined;
+    lookUnsaved = false;
+    await enqueueLook(note.id);
     await invoke("set_pinned", { id: note.id, pinned: true, fromComposer: !pinnedNoteId });
     if (!pinnedNoteId) {
       editingId = null;
@@ -894,8 +1182,15 @@ pinToggleEl.addEventListener("click", () => {
   });
 });
 
-themeToggleEl.addEventListener("click", () => {
-  const next: ThemeName = document.documentElement.dataset.theme === "dark" ? "light" : "dark";
+themeToggleEl.addEventListener("click", (event) => {
+  if (event.altKey || altHeld) {
+    colorPopEl.hidden = !colorPopEl.hidden;
+    if (!colorPopEl.hidden) {
+      syncSlider();
+    }
+    return;
+  }
+  const next: ThemeName = currentTheme() === "dark" ? "light" : "dark";
   applyTheme(next);
   if (!inTauri()) {
     return;
@@ -904,6 +1199,102 @@ themeToggleEl.addEventListener("click", () => {
     console.error(error);
   });
 });
+
+hueSliderEl.addEventListener("input", () => {
+  setThemeHue(Number(hueSliderEl.value));
+});
+
+function pointIn(rect: DOMRect, x: number, y: number): boolean {
+  return x >= rect.left && x <= rect.right && y >= rect.top && y <= rect.bottom;
+}
+
+function saveHue() {
+  const hue = Number(hueSliderEl.value);
+  if (look.swatches.includes(hue) || look.swatches.length >= 6) {
+    return;
+  }
+  look.swatches.push(hue);
+  setThemeHue(hue);
+}
+
+for (const slot of hueSlots) {
+  slot.addEventListener("click", () => {
+    const raw = slot.dataset.hue;
+    if (raw == null || raw === "") {
+      return;
+    }
+    setThemeHue(Number(raw));
+  });
+}
+
+colorPopEl.addEventListener(
+  "mousedown",
+  (event) => {
+    const slot = hueSlots.find((item) => pointIn(item.getBoundingClientRect(), event.clientX, event.clientY));
+    const overAdd = pointIn(hueAddEl.getBoundingClientRect(), event.clientX, event.clientY);
+    if (!slot && !overAdd) {
+      return;
+    }
+    event.preventDefault();
+    event.stopPropagation();
+    if (slot) {
+      const raw = slot.dataset.hue;
+      if (raw == null || raw === "") {
+        return;
+      }
+      setThemeHue(Number(raw));
+      return;
+    }
+    saveHue();
+  },
+  true,
+);
+
+hueAddEl.addEventListener("click", () => {
+  saveHue();
+});
+
+document.addEventListener("mousedown", (event) => {
+  if (colorPopEl.hidden) {
+    return;
+  }
+  const target = event.target;
+  if (!(target instanceof Node)) {
+    return;
+  }
+  if (colorPopEl.contains(target) || themeToggleEl.contains(target)) {
+    return;
+  }
+  colorPopEl.hidden = true;
+});
+
+cardEl.addEventListener(
+  "wheel",
+  (event) => {
+    if ((!event.altKey && !altHeld) || isPreviewWindow()) {
+      return;
+    }
+    const target = event.target;
+    if (target instanceof Element && target.closest("#color-pop")) {
+      return;
+    }
+    event.preventDefault();
+    const pixels =
+      event.deltaMode === 1 ? event.deltaY * 16 : event.deltaMode === 2 ? event.deltaY * 120 : event.deltaY;
+    if (pixels === 0) {
+      return;
+    }
+    opacityCarry = Math.min(100, Math.max(0, opacityCarry - pixels * 0.1));
+    const next = Math.round(opacityCarry);
+    if (next === look.opacity) {
+      return;
+    }
+    look.opacity = next;
+    paintLook();
+    scheduleLook();
+  },
+  { passive: false, capture: true },
+);
 
 function inTauri(): boolean {
   return "__TAURI_INTERNALS__" in window;
@@ -958,6 +1349,20 @@ if (!isPreviewWindow()) {
   window.addEventListener(
     "keydown",
     (event) => {
+      if (event.key === "Alt") {
+        if (!event.repeat) {
+          altHeld = true;
+          paintThemeIcon();
+        }
+        event.preventDefault();
+        return;
+      }
+      if (event.key === "Escape" && !colorPopEl.hidden) {
+        colorPopEl.hidden = true;
+        event.preventDefault();
+        event.stopPropagation();
+        return;
+      }
       if ((event.metaKey || event.ctrlKey) && event.key === "Enter") {
         event.preventDefault();
         togglePreview();
@@ -973,6 +1378,20 @@ if (!isPreviewWindow()) {
     },
     true,
   );
+  window.addEventListener("keyup", (event) => {
+    if (event.key !== "Alt") {
+      return;
+    }
+    altHeld = false;
+    paintThemeIcon();
+  });
+  window.addEventListener("blur", () => {
+    if (!altHeld) {
+      return;
+    }
+    altHeld = false;
+    paintThemeIcon();
+  });
 }
 
 renderSurface();
@@ -987,6 +1406,9 @@ async function loadPinned(id: string) {
   }
   setConflict(note.syncState === "conflict" ? note.id : null);
   setPinPressed(note.pinned);
+  if (lookTimer === undefined) {
+    adoptLook(lookFromNote(note));
+  }
   await loadTheme();
 }
 

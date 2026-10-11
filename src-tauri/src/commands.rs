@@ -160,6 +160,20 @@ pub fn set_theme(state: State<AppState>, theme: String) -> Result<(), AppError> 
 }
 
 #[tauri::command]
+pub fn save_look(
+    state: State<AppState>,
+    id: String,
+    opacity: u8,
+    hue_light: Option<u16>,
+    hue_dark: Option<u16>,
+    swatches: Vec<u16>,
+) -> Result<(), AppError> {
+    state
+        .db
+        .save_look(&id, opacity, hue_light, hue_dark, &swatches)
+}
+
+#[tauri::command]
 pub fn publish_note(
     state: State<'_, AppState>,
     id: Option<String>,

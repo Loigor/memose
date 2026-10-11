@@ -18,6 +18,8 @@
         "title": "Memose",
         "width": 408,
         "height": 476,
+        "x": -10000,
+        "y": -10000,
         "resizable": true,
         "decorations": false,
         "transparent": true,

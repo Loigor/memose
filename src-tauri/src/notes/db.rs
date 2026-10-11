@@ -46,6 +46,7 @@ impl Db {
         )?;
         ensure_pin_columns(&conn)?;
         ensure_sync_columns(&conn)?;
+        ensure_look_columns(&conn)?;
         Ok(Self {
             conn: Arc::new(Mutex::new(conn)),
         })
@@ -164,13 +165,7 @@ impl Db {
     pub fn list_recent(&self, limit: u32) -> Result<Vec<Note>, AppError> {
         let limit = limit.clamp(1, 200);
         self.with(|conn| {
-            let mut stmt = conn.prepare(
-                "SELECT id, content, created_at, updated_at, sync_state, remote_name, last_error, pinned, win_x, win_y, win_w, win_h
-                 FROM notes
-                 WHERE sync_state != ?1
-                 ORDER BY updated_at DESC, created_at DESC
-                 LIMIT ?2",
-            )?;
+            let mut stmt = conn.prepare(LIST_RECENT)?;
             let rows = stmt.query_map(params![DRAFT, limit], map_note)?;
             rows.collect::<Result<Vec<_>, _>>().map_err(AppError::from)
         })
@@ -178,12 +173,7 @@ impl Db {
 
     pub fn pending_and_errors(&self) -> Result<Vec<Note>, AppError> {
         self.with(|conn| {
-            let mut stmt = conn.prepare(
-                "SELECT id, content, created_at, updated_at, sync_state, remote_name, last_error, pinned, win_x, win_y, win_w, win_h
-                 FROM notes
-                 WHERE sync_state IN (?1, ?2)
-                 ORDER BY created_at ASC",
-            )?;
+            let mut stmt = conn.prepare(LIST_PENDING)?;
             let rows = stmt.query_map(params![PENDING, ERROR], map_note)?;
             rows.collect::<Result<Vec<_>, _>>().map_err(AppError::from)
         })
@@ -238,14 +228,32 @@ impl Db {
         })
     }
 
+    pub fn save_look(
+        &self,
+        id: &str,
+        opacity: u8,
+        hue_light: Option<u16>,
+        hue_dark: Option<u16>,
+        swatches: &[u16],
+    ) -> Result<(), AppError> {
+        let opacity = opacity.min(100);
+        let hue_light = hue_light.filter(|hue| *hue <= 359);
+        let hue_dark = hue_dark.filter(|hue| *hue <= 359);
+        let stored = encode_swatches(swatches);
+        self.with(|conn| {
+            conn.execute(
+                "UPDATE notes
+                 SET opacity = ?1, hue_light = ?2, hue_dark = ?3, swatches = ?4
+                 WHERE id = ?5",
+                params![opacity, hue_light, hue_dark, stored, id],
+            )?;
+            Ok(())
+        })
+    }
+
     pub fn list_pinned(&self) -> Result<Vec<Note>, AppError> {
         self.with(|conn| {
-            let mut stmt = conn.prepare(
-                "SELECT id, content, created_at, updated_at, sync_state, remote_name, last_error, pinned, win_x, win_y, win_w, win_h
-                 FROM notes
-                 WHERE pinned = 1 AND sync_state != ?1
-                 ORDER BY updated_at DESC",
-            )?;
+            let mut stmt = conn.prepare(LIST_PINNED)?;
             let rows = stmt.query_map(params![DRAFT], map_note)?;
             rows.collect::<Result<Vec<_>, _>>().map_err(AppError::from)
         })
@@ -543,11 +551,27 @@ fn get_meta(conn: &Connection, key: &str) -> Result<Option<String>, AppError> {
     }
 }
 
+macro_rules! note_sql {
+    ($tail:literal) => {
+        concat!(
+            "SELECT id, content, created_at, updated_at, sync_state, remote_name, last_error, pinned, win_x, win_y, win_w, win_h, opacity, hue_light, hue_dark, swatches ",
+            $tail
+        )
+    };
+}
+
+const LIST_RECENT: &str = note_sql!(
+    "FROM notes WHERE sync_state != ?1 ORDER BY updated_at DESC, created_at DESC LIMIT ?2"
+);
+const LIST_PENDING: &str =
+    note_sql!("FROM notes WHERE sync_state IN (?1, ?2) ORDER BY created_at ASC");
+const LIST_PINNED: &str =
+    note_sql!("FROM notes WHERE pinned = 1 AND sync_state != ?1 ORDER BY updated_at DESC");
+const LOAD_DRAFT: &str = note_sql!("FROM notes WHERE sync_state = ?1 LIMIT 1");
+const LOAD_NOTE: &str = note_sql!("FROM notes WHERE id = ?1");
+
 fn draft(conn: &Connection) -> Result<Option<Note>, AppError> {
-    let mut stmt = conn.prepare(
-        "SELECT id, content, created_at, updated_at, sync_state, remote_name, last_error, pinned, win_x, win_y, win_w, win_h
-         FROM notes WHERE sync_state = ?1 LIMIT 1",
-    )?;
+    let mut stmt = conn.prepare(LOAD_DRAFT)?;
     let mut rows = stmt.query(params![DRAFT])?;
     if let Some(row) = rows.next()? {
         Ok(Some(map_note(row)?))
@@ -557,10 +581,7 @@ fn draft(conn: &Connection) -> Result<Option<Note>, AppError> {
 }
 
 fn note_by_id(conn: &Connection, id: &str) -> Result<Option<Note>, AppError> {
-    let mut stmt = conn.prepare(
-        "SELECT id, content, created_at, updated_at, sync_state, remote_name, last_error, pinned, win_x, win_y, win_w, win_h
-         FROM notes WHERE id = ?1",
-    )?;
+    let mut stmt = conn.prepare(LOAD_NOTE)?;
     let mut rows = stmt.query(params![id])?;
     if let Some(row) = rows.next()? {
         Ok(Some(map_note(row)?))
@@ -611,8 +632,64 @@ fn ensure_sync_columns(conn: &Connection) -> Result<(), AppError> {
     Ok(())
 }
 
+fn ensure_look_columns(conn: &Connection) -> Result<(), AppError> {
+    let mut stmt = conn.prepare("PRAGMA table_info(notes)")?;
+    let names = stmt
+        .query_map([], |row| row.get::<_, String>(1))?
+        .collect::<Result<Vec<_>, _>>()?;
+    for (name, ddl) in [
+        (
+            "opacity",
+            "ALTER TABLE notes ADD COLUMN opacity INTEGER NOT NULL DEFAULT 100",
+        ),
+        ("hue_light", "ALTER TABLE notes ADD COLUMN hue_light INTEGER"),
+        ("hue_dark", "ALTER TABLE notes ADD COLUMN hue_dark INTEGER"),
+        ("swatches", "ALTER TABLE notes ADD COLUMN swatches TEXT"),
+    ] {
+        if !names.iter().any(|existing| existing == name) {
+            conn.execute(ddl, [])?;
+        }
+    }
+    Ok(())
+}
+
+fn encode_swatches(swatches: &[u16]) -> Option<String> {
+    let hues: Vec<u16> = swatches
+        .iter()
+        .copied()
+        .filter(|hue| *hue <= 359)
+        .take(6)
+        .collect();
+    if hues.is_empty() {
+        None
+    } else {
+        Some(
+            hues.iter()
+                .map(|hue| hue.to_string())
+                .collect::<Vec<_>>()
+                .join(","),
+        )
+    }
+}
+
+fn parse_swatches(raw: Option<String>) -> Vec<u16> {
+    let Some(raw) = raw else {
+        return Vec::new();
+    };
+    raw.split(',')
+        .filter_map(|part| part.trim().parse::<u16>().ok())
+        .filter(|hue| *hue <= 359)
+        .take(6)
+        .collect()
+}
+
+fn hue_column(value: Option<i64>) -> Option<u16> {
+    value.and_then(|hue| u16::try_from(hue).ok()).filter(|hue| *hue <= 359)
+}
+
 fn map_note(row: &rusqlite::Row<'_>) -> rusqlite::Result<Note> {
     let pinned: i64 = row.get(7)?;
+    let opacity: i64 = row.get(12)?;
     Ok(Note {
         id: row.get(0)?,
         content: row.get(1)?,
@@ -626,6 +703,10 @@ fn map_note(row: &rusqlite::Row<'_>) -> rusqlite::Result<Note> {
         win_y: row.get(9)?,
         win_w: row.get(10)?,
         win_h: row.get(11)?,
+        opacity: opacity.clamp(0, 100) as u8,
+        hue_light: hue_column(row.get(13)?),
+        hue_dark: hue_column(row.get(14)?),
+        swatches: parse_swatches(row.get(15)?),
     })
 }
 
@@ -752,6 +833,24 @@ mod tests {
         assert_eq!(db.access_token().unwrap().as_deref(), Some("secret"));
         db.clear_access_token().unwrap();
         assert!(db.access_token().unwrap().is_none());
+    }
+
+    #[test]
+    fn look_stays_on_the_note() {
+        let db = db();
+        let draft = db.upsert_draft("colored").unwrap().unwrap();
+        assert_eq!(draft.opacity, 100);
+        assert!(draft.hue_light.is_none());
+        assert!(draft.swatches.is_empty());
+        db.save_look(&draft.id, 40, Some(200), Some(400), &[12, 200, 400])
+            .unwrap();
+        db.finalize_content("colored").unwrap();
+        db.save_edit(&draft.id, "colored more").unwrap();
+        let note = db.get(&draft.id).unwrap().unwrap();
+        assert_eq!(note.opacity, 40);
+        assert_eq!(note.hue_light, Some(200));
+        assert!(note.hue_dark.is_none());
+        assert_eq!(note.swatches, vec![12, 200]);
     }
 
     #[test]

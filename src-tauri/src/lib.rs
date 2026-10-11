@@ -70,6 +70,7 @@ pub fn run() {
             commands::test_memos,
             commands::get_theme,
             commands::set_theme,
+            commands::save_look,
             commands::publish_note,
             commands::get_note,
             commands::resolve_conflict,

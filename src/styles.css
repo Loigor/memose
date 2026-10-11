@@ -11,6 +11,7 @@
   --field: rgba(255, 255, 255, 0.65);
   --pin: var(--muted);
   --pin-on: #2c261c;
+  --paper-alpha: 100%;
 }
 
 html[data-theme="dark"] {
@@ -26,6 +27,7 @@ html[data-theme="dark"] {
   --field: rgba(255, 255, 255, 0.06);
   --pin: var(--muted);
   --pin-on: #fff8ee;
+  --paper-alpha: 100%;
 }
 
 html,
@@ -44,20 +46,23 @@ body {
 
 #frame {
   height: 100%;
-  filter: drop-shadow(0 12px 16px var(--shadow));
+  border-radius: 16px;
+  box-shadow: 0 12px 16px var(--shadow);
 }
 
 #card {
   height: 100%;
   display: flex;
   flex-direction: column;
-  background: var(--paper);
+  background: color-mix(in srgb, var(--paper) var(--paper-alpha), transparent);
   border-radius: 16px;
   overflow: hidden;
   transform: translateZ(0);
 }
 
 header {
+  position: relative;
+  z-index: 2;
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -76,6 +81,101 @@ header {
   display: flex;
   align-items: center;
   gap: 6px;
+}
+
+.theme-anchor {
+  position: relative;
+}
+
+#color-pop {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  z-index: 3;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: max-content;
+  padding: 8px;
+  border-radius: 12px;
+  background: var(--paper);
+  box-shadow: 0 8px 16px var(--shadow);
+}
+
+#color-pop[hidden] {
+  display: none;
+}
+
+.hue-track {
+  position: relative;
+  z-index: 0;
+  height: 14px;
+  overflow: hidden;
+  display: flex;
+  align-items: center;
+}
+
+#hue-slider {
+  -webkit-appearance: none;
+  appearance: none;
+  position: relative;
+  z-index: 0;
+  display: block;
+  width: 100%;
+  height: 14px;
+  margin: 0;
+  border-radius: 999px;
+  background: linear-gradient(90deg, #f00 0%, #ff0 17%, #0f0 33%, #0ff 50%, #00f 67%, #f0f 83%, #f00 100%);
+}
+
+#hue-slider::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 14px;
+  height: 14px;
+  border: 2px solid var(--ink);
+  border-radius: 50%;
+  background: var(--thumb, #fff);
+}
+
+#hue-slider::-moz-range-thumb {
+  width: 14px;
+  height: 14px;
+  border: 2px solid var(--ink);
+  border-radius: 50%;
+  background: var(--thumb, #fff);
+}
+
+#hue-slots {
+  position: relative;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  background: var(--paper);
+}
+
+.hue-slot,
+#hue-add {
+  flex: none;
+  width: 16px;
+  height: 16px;
+  padding: 0;
+  border-radius: 50%;
+  line-height: 14px;
+  font-size: 13px;
+}
+
+.hue-slot {
+  background: transparent;
+  box-shadow: inset 0 0 0 1px var(--rule);
+}
+
+.hue-slot[aria-pressed="true"] {
+  box-shadow: 0 0 0 1px var(--ink);
+}
+
+#hue-add:disabled {
+  opacity: 0.35;
 }
 
 .icon-button {

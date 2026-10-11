@@ -32,7 +32,7 @@ pub fn attach(app: &tauri::App) -> tauri::Result<()> {
         .show_menu_on_left_click(false)
         .on_menu_event(|app, event| match event.id.as_ref() {
             "show" => {
-                window_ctl::show_pinned(app);
+                window_ctl::show_from_tray(app, None);
             }
             "organize" => window_ctl::organize_pinned(app),
             "settings" => window_ctl::show_settings(app),
@@ -48,10 +48,14 @@ pub fn attach(app: &tauri::App) -> tauri::Result<()> {
             if let TrayIconEvent::Click {
                 button: MouseButton::Left,
                 button_state: MouseButtonState::Up,
+                rect,
                 ..
             } = event
             {
-                window_ctl::show_pinned(tray.app_handle());
+                window_ctl::show_from_tray(
+                    tray.app_handle(),
+                    Some(window_ctl::TrayAnchor::from_rect(rect)),
+                );
             }
         });
     if let Some(icon) = icon.take() {

@@ -25,6 +25,10 @@ pub struct Note {
     pub win_y: Option<i32>,
     pub win_w: Option<i32>,
     pub win_h: Option<i32>,
+    pub opacity: u8,
+    pub hue_light: Option<u16>,
+    pub hue_dark: Option<u16>,
+    pub swatches: Vec<u16>,
 }
 
 pub fn commit_state(has_server: bool) -> &'static str {

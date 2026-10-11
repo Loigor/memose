@@ -17,6 +17,8 @@ pub struct AppState {
     pub flush_content: Mutex<Option<String>>,
     pub flush_note_id: Mutex<Option<String>>,
     pub shown: AtomicBool,
+    /// Pins stay up across app switches. Tray-shown pins do not set this.
+    pub pinned_mode: AtomicBool,
     pub suppress_blur: AtomicBool,
     pub hiding: AtomicBool,
     pub generation: AtomicU64,
@@ -44,6 +46,7 @@ impl AppState {
             flush_content: Mutex::new(None),
             flush_note_id: Mutex::new(None),
             shown: AtomicBool::new(false),
+            pinned_mode: AtomicBool::new(false),
             suppress_blur: AtomicBool::new(true),
             hiding: AtomicBool::new(false),
             generation: AtomicU64::new(0),
