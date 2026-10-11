@@ -19,6 +19,8 @@ type Note = {
   hueLight: number | null;
   hueDark: number | null;
   swatches: number[];
+  visibility?: string | null;
+  space?: string | null;
 };
 
 type ThemeName = "light" | "dark";
@@ -39,6 +41,15 @@ const colorPop = document.querySelector<HTMLDivElement>("#color-pop");
 const hueSlider = document.querySelector<HTMLInputElement>("#hue-slider");
 const hueAdd = document.querySelector<HTMLButtonElement>("#hue-add");
 const pinToggle = document.querySelector<HTMLButtonElement>("#pin-toggle");
+const visibilityLabel = document.querySelector<HTMLButtonElement>("#visibility-label");
+const audiencePop = document.querySelector<HTMLDivElement>("#audience-pop");
+const visibilityChoices = document.querySelector<HTMLDivElement>("#visibility-choices");
+const spaceChoices = document.querySelector<HTMLDivElement>("#space-choices");
+const editedSep = document.querySelector<HTMLElement>("#edited-sep");
+const deleteConfirm = document.querySelector<HTMLDivElement>("#delete-confirm");
+const deleteNote = document.querySelector<HTMLButtonElement>("#delete-note");
+const deleteYes = document.querySelector<HTMLButtonElement>("#delete-yes");
+const deleteNo = document.querySelector<HTMLButtonElement>("#delete-no");
 const editedAt = document.querySelector<HTMLElement>("#edited-at");
 const memoList = document.querySelector<HTMLElement>("#memo-list");
 const recent = document.querySelector<HTMLUListElement>("#recent");
@@ -102,6 +113,15 @@ const hueSliderEl = requireEl(hueSlider, "hue slider");
 const hueAddEl = requireEl(hueAdd, "save hue");
 const hueSlots = [...document.querySelectorAll<HTMLButtonElement>(".hue-slot")];
 const pinToggleEl = requireEl(pinToggle, "pin toggle");
+const visibilityLabelEl = requireEl(visibilityLabel, "visibility label");
+const audiencePopEl = requireEl(audiencePop, "audience pop");
+const visibilityChoicesEl = requireEl(visibilityChoices, "visibility choices");
+const spaceChoicesEl = requireEl(spaceChoices, "space choices");
+const editedSepEl = requireEl(editedSep, "edited separator");
+const deleteConfirmEl = requireEl(deleteConfirm, "delete confirm");
+const deleteNoteEl = requireEl(deleteNote, "delete note");
+const deleteYesEl = requireEl(deleteYes, "delete yes");
+const deleteNoEl = requireEl(deleteNo, "delete no");
 const editedAtEl = requireEl(editedAt, "edited at");
 const memoListEl = requireEl(memoList, "memo list");
 const recentEl = requireEl(recent, "recent");
@@ -498,6 +518,9 @@ async function persistDraft() {
     return;
   }
   setEditedAt(saved.updatedAt);
+  if (audienceDirty) {
+    await saveNoteAudience(saved.id);
+  }
   const idChanged = draftId !== saved.id;
   draftId = saved.id;
   if (idChanged || lookUnsaved || lookTimer !== undefined) {
@@ -538,6 +561,7 @@ async function openRecent(item: Note) {
   setConflict(opened.syncState === "conflict" ? opened.id : null);
   setPinPressed(opened.pinned);
   setEditedAt(opened.updatedAt);
+  paintAudience(opened);
   markSelectedNote();
   focusNote();
   if (savingNewMemo || opened.syncState !== item.syncState) {
@@ -623,16 +647,177 @@ function setPinPressed(on: boolean) {
   pinToggleEl.setAttribute("aria-pressed", String(on));
 }
 
+type MemoSpace = { name: string; title: string };
+
+let syncEnabled = false;
+let defaultVisibility = "PRIVATE";
+let defaultSpace = "";
+let knownSpaces: MemoSpace[] = [];
+let audienceDirty = false;
+let audiencePainted = false;
+let chosenVisibility = "PRIVATE";
+let chosenSpace = "";
+
+const visibilityOptions = [
+  { value: "PRIVATE", label: "Private", short: "Private" },
+  { value: "PROTECTED", label: "Signed-in users", short: "Signed-in" },
+  { value: "PUBLIC", label: "Public", short: "Public" },
+  { value: "SPACE", label: "Space members", short: "Space" },
+];
+
+function visibilityShort(value: string, space: string): string {
+  if (value === "SPACE") {
+    return knownSpaces.find((item) => item.name === space)?.title || "Space";
+  }
+  return visibilityOptions.find((item) => item.value === value)?.short ?? "Private";
+}
+
+function refreshMetaSep() {
+  editedSepEl.hidden = visibilityLabelEl.hidden || editedAtEl.hidden;
+}
+
+function paintAudienceMenu() {
+  visibilityChoicesEl.replaceChildren();
+  for (const option of visibilityOptions) {
+    if (option.value === "SPACE" && knownSpaces.length === 0) {
+      continue;
+    }
+    const button = document.createElement("button");
+    button.type = "button";
+    button.textContent = option.label;
+    button.setAttribute("aria-pressed", String(chosenVisibility === option.value));
+    button.addEventListener("click", () => {
+      chooseVisibility(option.value);
+    });
+    visibilityChoicesEl.append(button);
+  }
+  spaceChoicesEl.replaceChildren();
+  spaceChoicesEl.hidden = knownSpaces.length === 0;
+  if (knownSpaces.length === 0) {
+    return;
+  }
+  const caption = document.createElement("p");
+  caption.className = "pop-label";
+  caption.textContent = "Space";
+  spaceChoicesEl.append(caption);
+  const unassigned = document.createElement("button");
+  unassigned.type = "button";
+  unassigned.textContent = "Unassigned";
+  unassigned.setAttribute("aria-pressed", String(chosenSpace === ""));
+  unassigned.addEventListener("click", () => {
+    chooseSpace("");
+  });
+  spaceChoicesEl.append(unassigned);
+  for (const space of knownSpaces) {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.textContent = space.title;
+    button.setAttribute("aria-pressed", String(chosenSpace === space.name));
+    button.addEventListener("click", () => {
+      chooseSpace(space.name);
+    });
+    spaceChoicesEl.append(button);
+  }
+}
+
+function paintAudience(note: { visibility?: string | null; space?: string | null } | null) {
+  audiencePainted = true;
+  let visibility = note?.visibility || defaultVisibility || "PRIVATE";
+  if (!visibilityOptions.some((option) => option.value === visibility)) {
+    visibility = "PRIVATE";
+  }
+  if (visibility === "SPACE" && knownSpaces.length === 0 && !note?.visibility) {
+    visibility = "PRIVATE";
+  }
+  chosenVisibility = visibility;
+  chosenSpace = note?.space ?? (note?.visibility ? "" : defaultSpace);
+  if (chosenSpace && !knownSpaces.some((space) => space.name === chosenSpace)) {
+    chosenSpace = "";
+  }
+  visibilityLabelEl.hidden = !syncEnabled;
+  visibilityLabelEl.textContent = visibilityShort(chosenVisibility, chosenSpace);
+  paintAudienceMenu();
+  refreshMetaSep();
+  audienceDirty = false;
+}
+
+function chooseVisibility(value: string) {
+  chosenVisibility = value;
+  if (value === "SPACE" && chosenSpace === "" && knownSpaces[0]) {
+    chosenSpace = knownSpaces[0].name;
+  }
+  visibilityLabelEl.textContent = visibilityShort(chosenVisibility, chosenSpace);
+  paintAudienceMenu();
+  persistAudience();
+}
+
+function chooseSpace(value: string) {
+  chosenSpace = value;
+  if (value === "" && chosenVisibility === "SPACE") {
+    chosenVisibility = "PRIVATE";
+  }
+  visibilityLabelEl.textContent = visibilityShort(chosenVisibility, chosenSpace);
+  paintAudienceMenu();
+  persistAudience();
+}
+
+function persistAudience() {
+  audienceDirty = true;
+  const id = currentNoteId();
+  if (!id) {
+    return;
+  }
+  void saveNoteAudience(id).catch((error: unknown) => {
+    console.error(error);
+  });
+}
+
+async function loadAudience() {
+  if (!inTauri()) {
+    return;
+  }
+  try {
+    const settings = await invoke<{ baseUrl: string; visibility: string; space: string }>("get_settings");
+    syncEnabled = settings.baseUrl.trim() !== "";
+    defaultVisibility = settings.visibility || "PRIVATE";
+    defaultSpace = settings.space || "";
+    knownSpaces = syncEnabled ? await invoke<MemoSpace[]>("list_memo_spaces") : [];
+  } catch (error) {
+    console.error(error);
+    syncEnabled = false;
+    knownSpaces = [];
+  }
+  if (!audiencePainted) {
+    paintAudience(null);
+    return;
+  }
+  visibilityLabelEl.hidden = !syncEnabled;
+  visibilityLabelEl.textContent = visibilityShort(chosenVisibility, chosenSpace);
+  paintAudienceMenu();
+  refreshMetaSep();
+}
+
+async function saveNoteAudience(id: string) {
+  audienceDirty = false;
+  await invoke("set_note_audience", {
+    id,
+    visibility: chosenVisibility,
+    space: chosenSpace,
+  });
+}
+
 function setEditedAt(ms: number | null) {
   if (ms == null || ms <= 0) {
     editedAtEl.hidden = true;
     editedAtEl.textContent = "";
     editedAtEl.removeAttribute("title");
+    refreshMetaSep();
     return;
   }
   editedAtEl.hidden = false;
   editedAtEl.textContent = relativeTime(ms);
   editedAtEl.title = exactStamp(ms);
+  refreshMetaSep();
 }
 
 function clearMemoQuery() {
@@ -770,7 +955,10 @@ async function refreshRecentNow() {
           console.error(error);
         });
     });
-    row.append(title, when, sync, pin);
+    const label = document.createElement("div");
+    label.className = "label";
+    label.append(title, when);
+    row.append(label, sync, pin);
     recentEl.append(row);
   }
   recentMoreEl.hidden = notes.length <= collapsedCount;
@@ -785,6 +973,7 @@ async function loadDraft() {
   showStored(draft?.content ?? "");
   editingId = null;
   setEditedAt(draft?.updatedAt ?? null);
+  paintAudience(draft);
   adoptLook(draft ? lookFromNote(draft) : defaultLook());
 }
 
@@ -1139,6 +1328,7 @@ async function returnToNewMemo(generation: number) {
   adoptLook(defaultLook());
   setPinPressed(false);
   setEditedAt(null);
+  paintAudience(null);
   await refreshRecent();
   focusNote();
 }
@@ -1158,6 +1348,7 @@ async function startFresh(generation: number) {
   adoptLook(defaultLook());
   setPinPressed(false);
   setEditedAt(null);
+  paintAudience(null);
   await refreshRecent();
   focusNote();
 }
@@ -1190,7 +1381,7 @@ cardEl.addEventListener("mousedown", (event) => {
   }
   const target = event.target;
   if (gestureHeld || modifierDown(binds.gesture, event)) {
-    if (target instanceof Element && target.closest("#theme-toggle, #color-pop")) {
+    if (target instanceof Element && target.closest("#theme-toggle, #color-pop, #audience-pop, #visibility-label")) {
       return;
     }
     event.preventDefault();
@@ -1200,7 +1391,7 @@ cardEl.addEventListener("mousedown", (event) => {
   if (!(target instanceof Element)) {
     return;
   }
-  if (target.closest("button, a, input, textarea, img, video, .media, label, #color-pop")) {
+  if (target.closest("button, a, input, textarea, select, img, video, .media, label, #color-pop, #audience-pop")) {
     return;
   }
   event.preventDefault();
@@ -1278,6 +1469,73 @@ cardEl.addEventListener("drop", (event) => {
 
 modeToggleEl.addEventListener("click", () => {
   togglePreview();
+});
+
+function currentNoteId(): string | null {
+  return pinnedNoteId || editingId || draftId;
+}
+
+function resetDeleteConfirm() {
+  deleteNoteEl.hidden = false;
+  deleteConfirmEl.hidden = true;
+  deleteYesEl.textContent = "Yes";
+}
+
+function closeAudiencePop() {
+  audiencePopEl.hidden = true;
+  visibilityLabelEl.setAttribute("aria-expanded", "false");
+  resetDeleteConfirm();
+}
+
+visibilityLabelEl.addEventListener("click", () => {
+  if (audiencePopEl.hidden) {
+    resetDeleteConfirm();
+    audiencePopEl.hidden = false;
+    visibilityLabelEl.setAttribute("aria-expanded", "true");
+    return;
+  }
+  closeAudiencePop();
+});
+
+deleteNoteEl.addEventListener("click", () => {
+  if (!currentNoteId() && !noteContent.trim()) {
+    return;
+  }
+  deleteNoteEl.hidden = true;
+  deleteConfirmEl.hidden = false;
+});
+
+deleteNoEl.addEventListener("click", () => {
+  resetDeleteConfirm();
+});
+
+deleteYesEl.addEventListener("click", () => {
+  void (async () => {
+    const id = currentNoteId();
+    if (!id && !noteContent.trim()) {
+      closeAudiencePop();
+      return;
+    }
+    clearTimeout(draftTimer);
+    deleteYesEl.textContent = "Deleting…";
+    if (id && inTauri()) {
+      await invoke("delete_note", { id });
+    }
+    closeAudiencePop();
+    if (pinnedNoteId) {
+      return;
+    }
+    editingId = null;
+    draftId = null;
+    showStored("");
+    setPinPressed(false);
+    setEditedAt(null);
+    paintAudience(null);
+    await refreshRecent();
+  })().catch((error: unknown) => {
+    deleteYesEl.textContent = "Could not delete";
+    console.error(error);
+  });
 });
 
 pinToggleEl.addEventListener("click", () => {
@@ -1403,6 +1661,20 @@ document.addEventListener("mousedown", (event) => {
   colorPopEl.hidden = true;
 });
 
+document.addEventListener("mousedown", (event) => {
+  if (audiencePopEl.hidden) {
+    return;
+  }
+  const target = event.target;
+  if (!(target instanceof Node)) {
+    return;
+  }
+  if (audiencePopEl.contains(target) || visibilityLabelEl.contains(target)) {
+    return;
+  }
+  closeAudiencePop();
+});
+
 cardEl.addEventListener(
   "wheel",
   (event) => {
@@ -1410,7 +1682,7 @@ cardEl.addEventListener(
       return;
     }
     const target = event.target;
-    if (target instanceof Element && target.closest("#color-pop")) {
+    if (target instanceof Element && target.closest("#color-pop, #audience-pop")) {
       return;
     }
     event.preventDefault();
@@ -1507,8 +1779,9 @@ if (!isPreviewWindow()) {
       if (event.key === "Alt") {
         return;
       }
-      if (event.key === "Escape" && !colorPopEl.hidden) {
+      if (event.key === "Escape" && (!colorPopEl.hidden || !audiencePopEl.hidden)) {
         colorPopEl.hidden = true;
+        closeAudiencePop();
         event.preventDefault();
         event.stopPropagation();
         return;
@@ -1581,6 +1854,7 @@ function applyPinned(note: Note) {
   setConflict(note.syncState === "conflict" ? note.id : null);
   setPinPressed(note.pinned);
   setEditedAt(note.updatedAt);
+  paintAudience(note);
   if (lookTimer === undefined) {
     adoptLook(lookFromNote(note));
   }
@@ -1657,6 +1931,9 @@ if (isPreviewWindow()) {
     console.error(error);
   });
 } else if (pinnedNoteId && inTauri()) {
+  void loadAudience().catch((error: unknown) => {
+    console.error(error);
+  });
   void loadPinned(pinnedNoteId).catch((error: unknown) => {
     console.error(error);
   });
@@ -1715,6 +1992,9 @@ if (isPreviewWindow()) {
   });
 
   void loadTheme().catch((error: unknown) => {
+    console.error(error);
+  });
+  void loadAudience().catch((error: unknown) => {
     console.error(error);
   });
 }

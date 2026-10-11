@@ -13,6 +13,13 @@ type Settings = {
   baseUrl: string;
   hasToken: boolean;
   launchAtLogin: boolean;
+  visibility: string;
+  space: string;
+};
+
+type MemoSpace = {
+  name: string;
+  title: string;
 };
 
 const baseUrl = document.querySelector<HTMLInputElement>("#base-url");
@@ -20,11 +27,28 @@ const token = document.querySelector<HTMLInputElement>("#token");
 const tokenHint = document.querySelector<HTMLParagraphElement>("#token-hint");
 const status = document.querySelector<HTMLParagraphElement>("#settings-status");
 const autostart = document.querySelector<HTMLInputElement>("#autostart");
+const audience = document.querySelector<HTMLDivElement>("#memos-audience");
+const visibilityChoices = document.querySelector<HTMLDivElement>("#visibility-choices");
+const spaceChoices = document.querySelector<HTMLDivElement>("#space-choices");
+const memoSpaceField = document.querySelector<HTMLParagraphElement>("#memo-space-field");
 const shortcuts = document.querySelector<HTMLDivElement>("#shortcuts");
-const gesture = document.querySelector<HTMLSelectElement>("#gesture");
+const gesture = document.querySelector<HTMLDivElement>("#gesture");
 const gestureHint = document.querySelector<HTMLParagraphElement>("#gesture-hint");
 
-if (!baseUrl || !token || !tokenHint || !status || !autostart || !shortcuts || !gesture || !gestureHint) {
+if (
+  !baseUrl ||
+  !token ||
+  !tokenHint ||
+  !status ||
+  !autostart ||
+  !shortcuts ||
+  !gesture ||
+  !gestureHint ||
+  !audience ||
+  !visibilityChoices ||
+  !spaceChoices ||
+  !memoSpaceField
+) {
   throw new Error("settings form is incomplete");
 }
 
@@ -33,22 +57,48 @@ const tokenEl = token;
 const tokenHintEl = tokenHint;
 const statusEl = status;
 const autostartEl = autostart;
+const audienceEl = audience;
+const visibilityChoicesEl = visibilityChoices;
+const spaceChoicesEl = spaceChoices;
+const memoSpaceFieldEl = memoSpaceField;
 const shortcutsEl = shortcuts;
 const gestureEl = gesture;
 const gestureHintEl = gestureHint;
 let binds: ShortcutBinds | null = null;
 let recording: keyof ShortcutBinds | null = null;
+let chosenVisibility = "PRIVATE";
+let chosenSpace = "";
+let knownSpaces: MemoSpace[] = [];
 
-for (const choice of modifierChoices()) {
-  const option = document.createElement("option");
-  option.value = choice.value;
-  option.textContent = choice.label;
-  gestureEl.append(option);
-}
+const visibilityOptions = [
+  { value: "PRIVATE", label: "Private" },
+  { value: "PROTECTED", label: "Signed-in users" },
+  { value: "PUBLIC", label: "Public" },
+  { value: "SPACE", label: "Space members" },
+];
 
 function paintGesture() {
   const current = binds?.gesture ?? "Alt";
-  gestureEl.value = current;
+  gestureEl.replaceChildren();
+  for (const choice of modifierChoices()) {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.textContent = choice.label;
+    button.setAttribute("aria-pressed", String(choice.value === current));
+    button.addEventListener("click", () => {
+      void invoke<ShortcutBinds>("save_shortcut", { id: "gesture", binding: choice.value })
+        .then((next) => {
+          binds = next;
+          paintGesture();
+          statusEl.textContent = "Modifier saved.";
+        })
+        .catch((error: unknown) => {
+          paintGesture();
+          statusEl.textContent = String(error);
+        });
+    });
+    gestureEl.append(button);
+  }
   gestureHintEl.textContent = gestureSnippet(current);
 }
 
@@ -82,20 +132,6 @@ async function loadShortcuts() {
   paintShortcuts();
 }
 
-gestureEl.addEventListener("change", () => {
-  const binding = gestureEl.value;
-  void invoke<ShortcutBinds>("save_shortcut", { id: "gesture", binding })
-    .then((next) => {
-      binds = next;
-      paintGesture();
-      statusEl.textContent = "Modifier saved.";
-    })
-    .catch((error: unknown) => {
-      paintGesture();
-      statusEl.textContent = String(error);
-    });
-});
-
 function thisComputer(): string {
   const platform = navigator.platform;
   if (/Win/i.test(platform)) {
@@ -115,7 +151,92 @@ async function loadSettings() {
     ? `A token is saved on ${thisComputer()}.`
     : "No token saved.";
   autostartEl.checked = settings.launchAtLogin;
+  chosenVisibility = settings.visibility || "PRIVATE";
+  chosenSpace = settings.space || "";
+  audienceEl.hidden = settings.baseUrl.trim() === "";
+  await loadSpaces(chosenSpace);
   statusEl.textContent = "";
+}
+
+function paintAudienceChoices() {
+  visibilityChoicesEl.replaceChildren();
+  for (const option of visibilityOptions) {
+    if (option.value === "SPACE" && knownSpaces.length === 0) {
+      continue;
+    }
+    const button = document.createElement("button");
+    button.type = "button";
+    button.textContent = option.label;
+    button.setAttribute("aria-pressed", String(chosenVisibility === option.value));
+    button.addEventListener("click", () => {
+      chosenVisibility = option.value;
+      if (option.value === "SPACE" && chosenSpace === "" && knownSpaces[0]) {
+        chosenSpace = knownSpaces[0].name;
+      }
+      paintAudienceChoices();
+      void saveAudience();
+    });
+    visibilityChoicesEl.append(button);
+  }
+  spaceChoicesEl.replaceChildren();
+  memoSpaceFieldEl.hidden = knownSpaces.length === 0;
+  spaceChoicesEl.hidden = knownSpaces.length === 0;
+  const unassigned = document.createElement("button");
+  unassigned.type = "button";
+  unassigned.textContent = "Unassigned";
+  unassigned.setAttribute("aria-pressed", String(chosenSpace === ""));
+  unassigned.addEventListener("click", () => {
+    chosenSpace = "";
+    paintAudienceChoices();
+    void saveAudience();
+  });
+  spaceChoicesEl.append(unassigned);
+  for (const space of knownSpaces) {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.textContent = space.title;
+    button.setAttribute("aria-pressed", String(chosenSpace === space.name));
+    button.addEventListener("click", () => {
+      chosenSpace = space.name;
+      paintAudienceChoices();
+      void saveAudience();
+    });
+    spaceChoicesEl.append(button);
+  }
+}
+
+async function loadSpaces(selected: string) {
+  knownSpaces = [];
+  if (!audienceEl.hidden) {
+    try {
+      knownSpaces = await invoke<MemoSpace[]>("list_memo_spaces");
+    } catch (error) {
+      console.error(error);
+    }
+  }
+  chosenSpace = knownSpaces.some((space) => space.name === selected) ? selected : "";
+  if (knownSpaces.length === 0 && chosenVisibility === "SPACE") {
+    chosenVisibility = "PRIVATE";
+  }
+  paintAudienceChoices();
+}
+
+async function saveAudience() {
+  if (chosenVisibility === "SPACE" && chosenSpace === "") {
+    statusEl.textContent = "Choose a space for space members.";
+    return;
+  }
+  try {
+    await invoke("save_settings", {
+      baseUrl: baseUrlEl.value.trim(),
+      token: null,
+      visibility: chosenVisibility,
+      space: chosenSpace,
+    });
+    statusEl.textContent = "Audience saved.";
+  } catch (error) {
+    statusEl.textContent = String(error);
+  }
 }
 
 document.querySelector("#save-settings")?.addEventListener("click", () => {
@@ -126,6 +247,8 @@ document.querySelector("#save-settings")?.addEventListener("click", () => {
       await invoke("save_settings", {
         baseUrl: baseUrlEl.value.trim(),
         token: typed === "" ? null : typed,
+        visibility: chosenVisibility,
+        space: chosenSpace,
       });
       tokenEl.value = "";
       await loadSettings();
@@ -145,6 +268,8 @@ document.querySelector("#test-connection")?.addEventListener("click", () => {
         await invoke("save_settings", {
           baseUrl: baseUrlEl.value.trim(),
           token: typed === "" ? null : typed,
+          visibility: chosenVisibility,
+          space: chosenSpace,
         });
       }
       const flavor = await invoke<string>("test_memos");

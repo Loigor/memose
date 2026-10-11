@@ -971,7 +971,7 @@ pub fn open_pinned(app: &AppHandle, id: &str) {
 
 pub fn close_pinned(app: &AppHandle, id: &str) {
     if let Some(window) = app.get_webview_window(&pin_label(id)) {
-        let _ = window.hide();
+        let _ = window.destroy();
     }
 }
 

@@ -10,7 +10,7 @@ use crate::error::AppError;
 use crate::media;
 use crate::state::AppState;
 
-use super::db::{Db, RemoteLink, API_FLAVOR, BASE_URL};
+use super::db::{canonical_visibility, Db, RemoteLink, API_FLAVOR, BASE_URL, MEMO_SPACE, MEMO_VISIBILITY};
 use super::model::{Note, MEMOS_CONTENT_LIMIT, REMOTE};
 
 pub enum Job {
@@ -40,6 +40,13 @@ impl ApiFlavor {
         }
     }
 
+    pub fn spaces_path(self) -> &'static str {
+        match self {
+            Self::Latest => "/api/spaces",
+            Self::V1 => "/api/v1/spaces",
+        }
+    }
+
     pub fn parse(value: &str) -> Option<Self> {
         match value {
             "latest" => Some(Self::Latest),
@@ -49,11 +56,36 @@ impl ApiFlavor {
     }
 }
 
-pub fn create_body(content: &str) -> Value {
-    json!({
+pub fn create_body(content: &str, visibility: &str, space: &str) -> Value {
+    let mut body = json!({
         "content": content,
-        "visibility": "PRIVATE"
-    })
+        "visibility": canonical_visibility(visibility),
+    });
+    if !space.is_empty() {
+        body["space"] = json!(space);
+    }
+    body
+}
+
+pub fn push_audience(
+    visibility: Option<&str>,
+    space: Option<&str>,
+    default_visibility: &str,
+    default_space: &str,
+) -> (String, String) {
+    let visibility = match visibility.map(str::trim).filter(|value| !value.is_empty()) {
+        Some(value) => canonical_visibility(value),
+        None => canonical_visibility(default_visibility),
+    };
+    let space = match space {
+        Some(value) => value.trim().to_string(),
+        None => default_space.trim().to_string(),
+    };
+    if visibility == "SPACE" && space.is_empty() {
+        ("PRIVATE".into(), String::new())
+    } else {
+        (visibility, space)
+    }
 }
 
 pub fn start_worker(app: AppHandle) {
@@ -260,12 +292,25 @@ async fn drain(db: Db, http: &reqwest::Client, refresh: bool) -> Result<DrainRep
             .await?;
             continue;
         }
+        let (default_visibility, default_space) = db_call(db.clone(), |db| {
+            Ok((
+                db.get_meta(MEMO_VISIBILITY)?.unwrap_or_else(|| "PRIVATE".into()),
+                db.get_meta(MEMO_SPACE)?.unwrap_or_default(),
+            ))
+        })
+        .await?;
+        let (visibility, space) = push_audience(
+            note.visibility.as_deref(),
+            note.space.as_deref(),
+            &default_visibility,
+            &default_space,
+        );
         let pushed = if let Some(name) = note.remote_name.clone() {
-            update_memo(http, &base, flavor, &token, &name, &remote)
+            update_memo(http, &base, flavor, &token, &name, &remote, &visibility, &space)
                 .await
                 .map(|()| name)
         } else {
-            create_memo(http, &base, flavor, &token, &remote).await
+            create_memo(http, &base, flavor, &token, &remote, &visibility, &space).await
         };
         match pushed {
             Ok(name) => {
@@ -279,6 +324,12 @@ async fn drain(db: Db, http: &reqwest::Client, refresh: bool) -> Result<DrainRep
                 .await?;
                 if stored {
                     did_push = true;
+                    let visibility = visibility.clone();
+                    let space = space.clone();
+                    let _ = db_call(db.clone(), move |db| {
+                        db.remember_audience(&id, &visibility, &space)
+                    })
+                    .await;
                 } else {
                     db_call(db.clone(), move |db| db.remember_remote_name(&id, &name)).await?;
                     retry = true;
@@ -371,8 +422,10 @@ async fn apply_remote_memo(db: &Db, memo: RemoteMemo) -> Result<(), AppError> {
             let created = memo.created_at;
             let updated = memo.updated_at;
             let name = memo.name;
+            let visibility = memo.visibility.clone();
+            let space = memo.space.clone();
             db_call(db.clone(), move |db| {
-                db.insert_remote_stub(&name, &preview, created, updated)
+                db.insert_remote_stub(&name, &preview, created, updated, &visibility, &space)
             })
             .await
         }
@@ -382,8 +435,10 @@ async fn apply_remote_memo(db: &Db, memo: RemoteMemo) -> Result<(), AppError> {
             };
             let preview = preview_line(&memo.content);
             let updated = memo.updated_at;
+            let visibility = memo.visibility.clone();
+            let space = memo.space.clone();
             db_call(db.clone(), move |db| {
-                db.touch_remote_stub(&link.id, &preview, updated)
+                db.touch_remote_stub(&link.id, &preview, updated, &visibility, &space)
             })
             .await
         }
@@ -402,7 +457,12 @@ async fn apply_remote_memo(db: &Db, memo: RemoteMemo) -> Result<(), AppError> {
             if change == RemoteChange::Conflict || raw != local_text {
                 return db_call(db.clone(), move |db| db.store_conflict(&id, &server, updated)).await;
             }
-            db_call(db.clone(), move |db| db.apply_server_body(&id, &server, updated)).await
+            let visibility = memo.visibility.clone();
+            let space = memo.space.clone();
+            db_call(db.clone(), move |db| {
+                db.apply_server_body(&id, &server, updated, &visibility, &space)
+            })
+            .await
         }
     }
 }
@@ -423,9 +483,11 @@ pub async fn materialize_remote(db: &Db, http: &reqwest::Client, id: &str) -> Re
     let full = get_memo(http, &base, flavor, &token, &name).await?;
     let updated = full.updated_at;
     let content = full.content;
+    let visibility = full.visibility.clone();
+    let space = full.space.clone();
     let id_owned = note.id.clone();
     db_call(db.clone(), move |db| {
-        db.apply_server_body(&id_owned, &content, updated)
+        db.apply_server_body(&id_owned, &content, updated, &visibility, &space)
     })
     .await?;
     let id_owned = note.id;
@@ -449,7 +511,8 @@ pub async fn push_local_choice(db: &Db, http: &reqwest::Client, id: &str) -> Res
         .ok_or_else(|| AppError::Message("memo has no server copy".into()))?;
     let (base, token, flavor) = sync_context(db, http).await?;
     let remote = media::content_for_remote(&note.content);
-    update_memo(http, &base, flavor, &token, &name, &remote).await?;
+    let (visibility, space) = push_audience(note.visibility.as_deref(), note.space.as_deref(), "PRIVATE", "");
+    update_memo(http, &base, flavor, &token, &name, &remote, &visibility, &space).await?;
     let updated = now_ms();
     let id_owned = note.id.clone();
     db_call(db.clone(), move |db| db.resolve_local(&id_owned, updated)).await?;
@@ -533,15 +596,20 @@ pub async fn create_memo(
     flavor: ApiFlavor,
     token: &str,
     content: &str,
+    visibility: &str,
+    space: &str,
 ) -> Result<String, AppError> {
     let url = format!("{}{}", trim_base(base), flavor.path());
     let response = http
         .post(url)
         .bearer_auth(token)
-        .json(&create_body(content))
+        .json(&create_body(content, visibility, space))
         .send()
         .await?;
     let status = response.status();
+    if status == StatusCode::BAD_REQUEST && !space.is_empty() {
+        return Box::pin(create_memo(http, base, flavor, token, content, visibility, "")).await;
+    }
     if !status.is_success() {
         let body = response.text().await.unwrap_or_default();
         return Err(AppError::Memos {
@@ -563,6 +631,8 @@ struct RemoteMemo {
     content: String,
     created_at: i64,
     updated_at: i64,
+    visibility: String,
+    space: String,
 }
 
 struct MemoPage {
@@ -643,17 +713,141 @@ async fn update_memo(
     token: &str,
     name: &str,
     content: &str,
+    visibility: &str,
+    space: &str,
 ) -> Result<(), AppError> {
     let response = http
         .patch(memo_url(base, flavor, name))
         .bearer_auth(token)
-        .query(&[("updateMask", "content")])
-        .json(&json!({ "content": content }))
+        .query(&[("updateMask", "content,visibility,space")])
+        .json(&json!({
+            "content": content,
+            "visibility": canonical_visibility(visibility),
+            "space": if space.is_empty() { Value::Null } else { json!(space) },
+        }))
         .send()
         .await?;
     let status = response.status();
     if status.is_success() {
         return Ok(());
+    }
+    if status == StatusCode::BAD_REQUEST {
+        let response = http
+            .patch(memo_url(base, flavor, name))
+            .bearer_auth(token)
+            .query(&[("updateMask", "content,visibility")])
+            .json(&json!({
+                "content": content,
+                "visibility": canonical_visibility(visibility),
+            }))
+            .send()
+            .await?;
+        let retry_status = response.status();
+        if retry_status.is_success() {
+            return Ok(());
+        }
+        let body = response.text().await.unwrap_or_default();
+        return Err(AppError::Memos {
+            status: retry_status.as_u16(),
+            body: truncate(&body),
+        });
+    }
+    let body = response.text().await.unwrap_or_default();
+    Err(AppError::Memos {
+        status: status.as_u16(),
+        body: truncate(&body),
+    })
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MemoSpace {
+    pub name: String,
+    pub title: String,
+}
+
+pub async fn list_spaces(
+    http: &reqwest::Client,
+    base: &str,
+    flavor: ApiFlavor,
+    token: &str,
+) -> Result<Vec<MemoSpace>, AppError> {
+    let url = format!(
+        "{}{}?pageSize=100",
+        trim_base(base),
+        flavor.spaces_path()
+    );
+    let response = http.get(&url).bearer_auth(token).send().await?;
+    let status = response.status();
+    if status == StatusCode::NOT_FOUND || status == StatusCode::GONE {
+        return Ok(Vec::new());
+    }
+    if !status.is_success() {
+        let body = response.text().await.unwrap_or_default();
+        return Err(AppError::Memos {
+            status: status.as_u16(),
+            body: truncate(&body),
+        });
+    }
+    let body = response.text().await?;
+    let value: Value = serde_json::from_str(&body).unwrap_or(Value::Null);
+    let items = value
+        .get("spaces")
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+    Ok(items
+        .iter()
+        .filter_map(|item| {
+            let name = item.get("name").and_then(Value::as_str)?.trim();
+            if name.is_empty() {
+                return None;
+            }
+            let title = item
+                .get("title")
+                .and_then(Value::as_str)
+                .filter(|title| !title.is_empty())
+                .unwrap_or(name);
+            Some(MemoSpace {
+                name: name.to_string(),
+                title: title.to_string(),
+            })
+        })
+        .collect())
+}
+
+pub async fn delete_remote_memo(
+    http: &reqwest::Client,
+    base: &str,
+    flavor: ApiFlavor,
+    token: &str,
+    name: &str,
+) -> Result<(), AppError> {
+    let url = memo_url(base, flavor, name);
+    let forced = delete_once(http, token, &format!("{url}?force=true")).await?;
+    if forced.is_success() || forced == StatusCode::NOT_FOUND {
+        return Ok(());
+    }
+    if forced == StatusCode::BAD_REQUEST {
+        let plain = delete_once(http, token, &url).await?;
+        if plain.is_success() || plain == StatusCode::NOT_FOUND {
+            return Ok(());
+        }
+        return Err(AppError::Memos {
+            status: plain.as_u16(),
+            body: String::new(),
+        });
+    }
+    Err(AppError::Memos {
+        status: forced.as_u16(),
+        body: String::new(),
+    })
+}
+
+async fn delete_once(http: &reqwest::Client, token: &str, url: &str) -> Result<StatusCode, AppError> {
+    let response = http.delete(url).bearer_auth(token).send().await?;
+    let status = response.status();
+    if status.is_success() || status == StatusCode::NOT_FOUND || status == StatusCode::BAD_REQUEST {
+        return Ok(status);
     }
     let body = response.text().await.unwrap_or_default();
     Err(AppError::Memos {
@@ -736,11 +930,24 @@ fn parse_memo_object(value: &Value) -> Option<RemoteMemo> {
         .or_else(|| value.get("updatedAt"))
         .and_then(parse_time)
         .unwrap_or(created_at);
+    let visibility = value
+        .get("visibility")
+        .and_then(Value::as_str)
+        .map(canonical_visibility)
+        .unwrap_or_else(|| "PRIVATE".into());
+    let space = value
+        .get("space")
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .trim()
+        .to_string();
     Some(RemoteMemo {
         name,
         content,
         created_at,
         updated_at,
+        visibility,
+        space,
     })
 }
 
@@ -888,9 +1095,29 @@ mod tests {
 
     #[test]
     fn create_body_is_private_markdown() {
-        let body = create_body("hello **there**");
+        let body = create_body("hello **there**", "PRIVATE", "");
         assert_eq!(body["content"], "hello **there**");
         assert_eq!(body["visibility"], "PRIVATE");
+        assert!(body.get("space").is_none());
+        let placed = create_body("hello", "space", "spaces/team");
+        assert_eq!(placed["visibility"], "SPACE");
+        assert_eq!(placed["space"], "spaces/team");
+    }
+
+    #[test]
+    fn push_audience_prefers_the_note_then_the_default() {
+        assert_eq!(
+            push_audience(None, None, "PROTECTED", "spaces/team"),
+            ("PROTECTED".into(), "spaces/team".into())
+        );
+        assert_eq!(
+            push_audience(Some("PUBLIC"), Some(""), "PRIVATE", "spaces/team"),
+            ("PUBLIC".into(), String::new())
+        );
+        assert_eq!(
+            push_audience(Some("SPACE"), Some(""), "PRIVATE", ""),
+            ("PRIVATE".into(), String::new())
+        );
     }
 
     #[tokio::test]
@@ -908,6 +1135,18 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn delete_retries_without_force_when_the_server_rejects_it() {
+        let hits = Arc::new(Mutex::new(Vec::new()));
+        let base = spawn_server(vec![(400, "{}"), (200, "{}")], hits.clone());
+        delete_remote_memo(&test_client(), &base, ApiFlavor::V1, "memos_pat_test", "memos/abc")
+            .await
+            .unwrap();
+        let paths = hits.lock().unwrap().clone();
+        assert!(paths[0].contains("DELETE") && paths[0].contains("force=true"));
+        assert!(paths[1].contains("DELETE") && !paths[1].contains("force=true"));
+    }
+
+    #[tokio::test]
     async fn create_memo_posts_private_body_and_reads_name() {
         let hits = Arc::new(Mutex::new(Vec::new()));
         let bodies = Arc::new(Mutex::new(Vec::new()));
@@ -922,6 +1161,8 @@ mod tests {
             ApiFlavor::Latest,
             "memos_pat_test",
             "note body",
+            "PRIVATE",
+            "",
         )
         .await
         .unwrap();

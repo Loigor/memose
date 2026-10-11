@@ -20,7 +20,25 @@
           <button id="pin-toggle" class="icon-button" type="button" aria-label="Pin" aria-pressed="false">
             <span class="pin-glyph" aria-hidden="true"></span>
           </button>
-          <span id="edited-at" hidden></span>
+          <span class="note-meta">
+            <span class="audience-anchor">
+              <button id="visibility-label" type="button" hidden>Private</button>
+              <div id="audience-pop" hidden>
+                <div id="audience-options">
+                  <div id="visibility-choices"></div>
+                  <div id="space-choices" hidden></div>
+                  <button id="delete-note" type="button">Delete</button>
+                  <div id="delete-confirm" hidden>
+                    <span>Are you sure?</span>
+                    <button id="delete-yes" type="button">Yes</button>
+                    <button id="delete-no" type="button">No</button>
+                  </div>
+                </div>
+              </div>
+            </span>
+            <span id="edited-sep" hidden>|</span>
+            <span id="edited-at" hidden></span>
+          </span>
         </div>
         <div class="header-actions">
           <button id="mode-toggle" type="button" aria-label="Preview" aria-pressed="false">Preview</button>

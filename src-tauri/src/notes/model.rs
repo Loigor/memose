@@ -29,6 +29,10 @@ pub struct Note {
     pub hue_light: Option<u16>,
     pub hue_dark: Option<u16>,
     pub swatches: Vec<u16>,
+    /// useMemos audience. Empty until the note is placed.
+    pub visibility: Option<String>,
+    /// useMemos space resource name, such as `spaces/team`. Empty means unassigned.
+    pub space: Option<String>,
 }
 
 pub fn commit_state(has_server: bool) -> &'static str {

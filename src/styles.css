@@ -51,10 +51,12 @@ body {
 }
 
 #card {
+  box-sizing: border-box;
   height: 100%;
   display: flex;
   flex-direction: column;
   background: color-mix(in srgb, var(--paper) var(--paper-alpha), transparent);
+  border: 1px solid var(--rule);
   border-radius: 10px;
   overflow: hidden;
   transform: translateZ(0);
@@ -83,19 +85,129 @@ header {
   gap: 6px;
 }
 
-#edited-at {
-  max-width: 108px;
-  overflow: hidden;
+.brand {
+  min-width: 0;
+  flex: 1;
+}
+
+.note-meta {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+  color: var(--muted);
   font-size: 10px;
   letter-spacing: 0;
   line-height: 1.2;
   text-transform: none;
+}
+
+.audience-anchor {
+  position: relative;
+}
+
+#visibility-label {
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  padding: 0;
+  color: inherit;
+  font: inherit;
+  font-size: 10px;
+  letter-spacing: 0;
+  text-transform: none;
+}
+
+#visibility-label:hover,
+#visibility-label[aria-expanded="true"] {
+  background: transparent;
+  text-decoration: underline;
+}
+
+#visibility-label[hidden],
+#edited-sep[hidden],
+#edited-at[hidden],
+#audience-pop[hidden],
+#space-choices[hidden],
+#delete-note[hidden],
+#delete-confirm[hidden] {
+  display: none;
+}
+
+#edited-at {
+  max-width: 108px;
+  overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-#edited-at[hidden] {
-  display: none;
+#audience-pop {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  z-index: 3;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: max-content;
+  min-width: 168px;
+  padding: 8px;
+  border-radius: 12px;
+  background: var(--paper);
+  box-shadow: 0 8px 16px var(--shadow);
+}
+
+#audience-pop button,
+#visibility-choices button,
+#space-choices button {
+  display: block;
+  width: 100%;
+  border-radius: 8px;
+  padding: 4px 8px;
+  font-size: 12px;
+  letter-spacing: 0;
+  text-align: left;
+  text-transform: none;
+}
+
+#audience-pop button[aria-pressed="true"] {
+  background: var(--button-hover);
+}
+
+#audience-options {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+#delete-note {
+  color: var(--muted);
+}
+
+#delete-confirm {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+#delete-confirm span {
+  color: var(--ink);
+  font-size: 12px;
+  letter-spacing: 0;
+  text-transform: none;
+  white-space: nowrap;
+}
+
+#delete-confirm button {
+  width: auto;
+  padding: 4px 8px;
+  text-align: center;
+}
+
+.pop-label {
+  margin: 4px 8px 0;
+  color: var(--muted);
+  font-size: 10px;
 }
 
 .theme-anchor {
@@ -243,6 +355,7 @@ header {
   flex: none;
   color: var(--muted);
   font-size: 11px;
+  line-height: 1;
 }
 
 #recent .sync {
@@ -481,10 +594,19 @@ html.lightbox-window #lightbox {
 
 #recent li {
   display: flex;
+  align-items: center;
   justify-content: space-between;
   gap: 8px;
   padding: 6px 0;
   border-top: 1px solid var(--line);
+}
+
+#recent .label {
+  display: flex;
+  flex: 1;
+  align-items: baseline;
+  gap: 8px;
+  min-width: 0;
 }
 
 #recent li:first-child {
@@ -501,6 +623,7 @@ html.lightbox-window #lightbox {
   padding: 0;
   color: inherit;
   font: inherit;
+  line-height: 1.2;
   text-align: left;
   overflow: hidden;
   text-overflow: ellipsis;

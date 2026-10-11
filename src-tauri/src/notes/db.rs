@@ -47,6 +47,7 @@ impl Db {
         ensure_pin_columns(&conn)?;
         ensure_sync_columns(&conn)?;
         ensure_look_columns(&conn)?;
+        ensure_audience_columns(&conn)?;
         Ok(Self {
             conn: Arc::new(Mutex::new(conn)),
         })
@@ -206,6 +207,56 @@ impl Db {
         self.finalize_content(trimmed)?;
         self.get(&draft.id)?
             .ok_or_else(|| AppError::Message("note disappeared".into()))
+    }
+
+    pub fn remember_audience(&self, id: &str, visibility: &str, space: &str) -> Result<(), AppError> {
+        let visibility = canonical_visibility(visibility);
+        self.with(|conn| {
+            conn.execute(
+                "UPDATE notes SET visibility = ?1, remote_space = ?2 WHERE id = ?3",
+                params![visibility, space.trim(), id],
+            )?;
+            Ok(())
+        })
+    }
+
+    pub fn set_audience(&self, id: &str, visibility: &str, space: &str) -> Result<bool, AppError> {
+        let visibility = canonical_visibility(visibility);
+        let space = space.trim().to_string();
+        if visibility == "SPACE" && space.is_empty() {
+            return Err(AppError::Message(
+                "space members visibility needs a space".into(),
+            ));
+        }
+        self.with(|conn| {
+            let linked: Option<(String, Option<String>)> = conn
+                .query_row(
+                    "SELECT sync_state, remote_name FROM notes WHERE id = ?1",
+                    params![id],
+                    |row| Ok((row.get(0)?, row.get(1)?)),
+                )
+                .optional()?;
+            let Some((state, remote_name)) = linked else {
+                return Ok(false);
+            };
+            let push = (state == SYNCED || state == PENDING || state == ERROR) && remote_name.is_some();
+            conn.execute(
+                "UPDATE notes
+                 SET visibility = ?1,
+                     remote_space = ?2,
+                     sync_state = CASE WHEN ?3 THEN ?4 ELSE sync_state END
+                 WHERE id = ?5",
+                params![visibility, space, push && state == SYNCED, PENDING, id],
+            )?;
+            Ok(push)
+        })
+    }
+
+    pub fn delete_note(&self, id: &str) -> Result<(), AppError> {
+        self.with(|conn| {
+            conn.execute("DELETE FROM notes WHERE id = ?1", params![id])?;
+            Ok(())
+        })
     }
 
     pub fn set_pinned(&self, id: &str, pinned: bool) -> Result<(), AppError> {
@@ -425,32 +476,57 @@ impl Db {
         preview: &str,
         created_at: i64,
         updated_at: i64,
+        visibility: &str,
+        space: &str,
     ) -> Result<(), AppError> {
         let id = Uuid::new_v4().to_string();
         self.with(|conn| {
             conn.execute(
                 "INSERT INTO notes (
-                    id, content, created_at, updated_at, sync_state, remote_name, last_error, remote_updated_at
-                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, NULL, ?4)",
-                params![id, preview, created_at, updated_at, REMOTE, remote_name],
+                    id, content, created_at, updated_at, sync_state, remote_name, last_error, remote_updated_at, visibility, remote_space
+                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, NULL, ?4, ?7, ?8)",
+                params![
+                    id,
+                    preview,
+                    created_at,
+                    updated_at,
+                    REMOTE,
+                    remote_name,
+                    canonical_visibility(visibility),
+                    space
+                ],
             )?;
             Ok(())
         })
     }
 
-    pub fn touch_remote_stub(&self, id: &str, preview: &str, updated_at: i64) -> Result<(), AppError> {
+    pub fn touch_remote_stub(
+        &self,
+        id: &str,
+        preview: &str,
+        updated_at: i64,
+        visibility: &str,
+        space: &str,
+    ) -> Result<(), AppError> {
         self.with(|conn| {
             conn.execute(
                 "UPDATE notes
-                 SET content = ?1, updated_at = ?2, remote_updated_at = ?2
-                 WHERE id = ?3 AND sync_state = ?4",
-                params![preview, updated_at, id, REMOTE],
+                 SET content = ?1, updated_at = ?2, remote_updated_at = ?2, visibility = ?3, remote_space = ?4
+                 WHERE id = ?5 AND sync_state = ?6",
+                params![preview, updated_at, canonical_visibility(visibility), space, id, REMOTE],
             )?;
             Ok(())
         })
     }
 
-    pub fn apply_server_body(&self, id: &str, content: &str, updated_at: i64) -> Result<(), AppError> {
+    pub fn apply_server_body(
+        &self,
+        id: &str,
+        content: &str,
+        updated_at: i64,
+        visibility: &str,
+        space: &str,
+    ) -> Result<(), AppError> {
         self.with(|conn| {
             conn.execute(
                 "UPDATE notes
@@ -460,9 +536,11 @@ impl Db {
                      remote_updated_at = ?2,
                      sync_state = ?3,
                      last_error = NULL,
-                     updated_at = ?2
+                     updated_at = ?2,
+                     visibility = ?5,
+                     remote_space = ?6
                  WHERE id = ?4",
-                params![content, updated_at, SYNCED, id],
+                params![content, updated_at, SYNCED, id, canonical_visibility(visibility), space],
             )?;
             Ok(())
         })
@@ -534,6 +612,17 @@ pub struct RemoteLink {
 }
 
 pub const BASE_URL: &str = "base_url";
+pub const MEMO_VISIBILITY: &str = "memo_visibility";
+pub const MEMO_SPACE: &str = "memo_space";
+
+pub fn canonical_visibility(value: &str) -> String {
+    match value.trim().to_ascii_uppercase().as_str() {
+        "PROTECTED" => "PROTECTED".into(),
+        "PUBLIC" => "PUBLIC".into(),
+        "SPACE" => "SPACE".into(),
+        _ => "PRIVATE".into(),
+    }
+}
 pub const API_FLAVOR: &str = "api_flavor";
 pub const THEME: &str = "theme";
 pub const ACCESS_TOKEN: &str = "access_token";
@@ -565,7 +654,7 @@ fn get_meta(conn: &Connection, key: &str) -> Result<Option<String>, AppError> {
 macro_rules! note_sql {
     ($tail:literal) => {
         concat!(
-            "SELECT id, content, created_at, updated_at, sync_state, remote_name, last_error, pinned, win_x, win_y, win_w, win_h, opacity, hue_light, hue_dark, swatches ",
+            "SELECT id, content, created_at, updated_at, sync_state, remote_name, last_error, pinned, win_x, win_y, win_w, win_h, opacity, hue_light, hue_dark, swatches, visibility, remote_space ",
             $tail
         )
     };
@@ -718,7 +807,25 @@ fn map_note(row: &rusqlite::Row<'_>) -> rusqlite::Result<Note> {
         hue_light: hue_column(row.get(13)?),
         hue_dark: hue_column(row.get(14)?),
         swatches: parse_swatches(row.get(15)?),
+        visibility: row.get(16)?,
+        space: row.get(17)?,
     })
+}
+
+fn ensure_audience_columns(conn: &Connection) -> Result<(), AppError> {
+    let mut stmt = conn.prepare("PRAGMA table_info(notes)")?;
+    let names = stmt
+        .query_map([], |row| row.get::<_, String>(1))?
+        .collect::<Result<Vec<_>, _>>()?;
+    for (name, ddl) in [
+        ("visibility", "ALTER TABLE notes ADD COLUMN visibility TEXT"),
+        ("remote_space", "ALTER TABLE notes ADD COLUMN remote_space TEXT"),
+    ] {
+        if !names.iter().any(|existing| existing == name) {
+            conn.execute(ddl, [])?;
+        }
+    }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -937,5 +1044,21 @@ mod tests {
         db.set_base_url("https://two.example/").unwrap();
         assert_eq!(db.get_meta(BASE_URL).unwrap().as_deref(), Some("https://two.example"));
         assert!(db.get_meta(API_FLAVOR).unwrap().is_none());
+    }
+
+    #[test]
+    fn audience_change_on_a_synced_note_queues_it_and_delete_removes_it() {
+        let db = db();
+        let draft = db.upsert_draft("keep").unwrap().unwrap();
+        db.finalize_content("keep").unwrap();
+        db.mark_synced(&draft.id, "memos/abc").unwrap();
+        assert!(db.set_audience(&draft.id, "PUBLIC", "").unwrap());
+        let note = db.get(&draft.id).unwrap().unwrap();
+        assert_eq!(note.visibility.as_deref(), Some("PUBLIC"));
+        assert_eq!(note.space.as_deref(), Some(""));
+        assert_eq!(note.sync_state, PENDING);
+        assert!(db.set_audience(&draft.id, "SPACE", "").is_err());
+        db.delete_note(&draft.id).unwrap();
+        assert!(db.get(&draft.id).unwrap().is_none());
     }
 }

@@ -67,6 +67,29 @@ button:hover {
   gap: 8px;
 }
 
+.field-label {
+  margin: 0;
+  font-size: 13px;
+}
+
+.field-label[hidden] {
+  display: none;
+}
+
+.choices {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.choices[hidden] {
+  display: none;
+}
+
+.choices button[aria-pressed="true"] {
+  background: #d9d3c6;
+}
+
 #token-hint,
 #settings-status,
 .hint {

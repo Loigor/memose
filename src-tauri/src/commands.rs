@@ -15,6 +15,15 @@ pub(crate) struct SettingsView {
     base_url: String,
     has_token: bool,
     launch_at_login: bool,
+    visibility: String,
+    space: String,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct SpaceView {
+    name: String,
+    title: String,
 }
 
 #[tauri::command]
@@ -103,6 +112,13 @@ pub fn get_settings(app: AppHandle, state: State<AppState>) -> Result<SettingsVi
         base_url: state.db.get_meta(notes::BASE_URL)?.unwrap_or_default(),
         has_token: state.db.access_token()?.is_some(),
         launch_at_login: app.autolaunch().is_enabled().unwrap_or(false),
+        visibility: notes::canonical_visibility(
+            &state
+                .db
+                .get_meta(notes::MEMO_VISIBILITY)?
+                .unwrap_or_else(|| "PRIVATE".into()),
+        ),
+        space: state.db.get_meta(notes::MEMO_SPACE)?.unwrap_or_default(),
     })
 }
 
@@ -112,6 +128,8 @@ pub fn save_settings(
     state: State<AppState>,
     base_url: String,
     token: Option<String>,
+    visibility: Option<String>,
+    space: Option<String>,
 ) -> Result<(), AppError> {
     state.db.set_base_url(&base_url)?;
     match token.as_deref().map(str::trim) {
@@ -119,7 +137,84 @@ pub fn save_settings(
         Some(value) => state.db.set_access_token(value)?,
         None => {}
     }
+    if let Some(visibility) = visibility {
+        let visibility = notes::canonical_visibility(&visibility);
+        let space = space.unwrap_or_default();
+        if visibility == "SPACE" && space.trim().is_empty() {
+            return Err(AppError::Message(
+                "space members visibility needs a space".into(),
+            ));
+        }
+        state.db.set_meta(notes::MEMO_VISIBILITY, &visibility)?;
+        state.db.set_meta(notes::MEMO_SPACE, space.trim())?;
+    }
     request_sync(&app);
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn list_memo_spaces(state: State<'_, AppState>) -> Result<Vec<SpaceView>, AppError> {
+    let base = state.db.get_meta(notes::BASE_URL)?.unwrap_or_default();
+    let Some(token) = state.db.access_token()? else {
+        return Ok(Vec::new());
+    };
+    if base.is_empty() {
+        return Ok(Vec::new());
+    }
+    let flavor = state
+        .db
+        .get_meta(notes::API_FLAVOR)?
+        .as_deref()
+        .and_then(notes::ApiFlavor::parse)
+        .unwrap_or(notes::ApiFlavor::Latest);
+    let spaces = notes::list_spaces(&state.http, &base, flavor, &token).await?;
+    Ok(spaces
+        .into_iter()
+        .map(|space| SpaceView {
+            name: space.name,
+            title: space.title,
+        })
+        .collect())
+}
+
+#[tauri::command]
+pub fn set_note_audience(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    id: String,
+    visibility: String,
+    space: String,
+) -> Result<(), AppError> {
+    if state.db.set_audience(&id, &visibility, &space)? {
+        request_sync(&app);
+    }
+    let _ = app.emit("notes-changed", ());
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn delete_note(app: AppHandle, state: State<'_, AppState>, id: String) -> Result<(), AppError> {
+    let note = state.db.get(&id)?;
+    let Some(note) = note else {
+        return Ok(());
+    };
+    if let Some(name) = note.remote_name.as_deref() {
+        let base = state.db.get_meta(notes::BASE_URL)?.unwrap_or_default();
+        if let Some(token) = state.db.access_token()? {
+            if !base.is_empty() {
+                let flavor = state
+                    .db
+                    .get_meta(notes::API_FLAVOR)?
+                    .as_deref()
+                    .and_then(notes::ApiFlavor::parse)
+                    .unwrap_or(notes::ApiFlavor::Latest);
+                notes::delete_remote_memo(&state.http, &base, flavor, &token, name).await?;
+            }
+        }
+    }
+    state.db.delete_note(&id)?;
+    window_ctl::close_pinned(&app, &id);
+    let _ = app.emit("notes-changed", ());
     Ok(())
 }
 
