@@ -481,6 +481,12 @@ button:hover {
   cursor: grab;
 }
 
+textarea::spelling-error,
+textarea::grammar-error {
+  background: transparent;
+  text-decoration: none;
+}
+
 textarea,
 #preview {
   flex: 1 1 auto;

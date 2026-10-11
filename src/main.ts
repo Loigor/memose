@@ -359,6 +359,11 @@ function renderBlocks(focusName?: string) {
   noteBlocks.forEach((block, index) => {
     if (block.kind === "text") {
       const area = document.createElement("textarea");
+      area.spellcheck = false;
+      area.autocomplete = "off";
+      area.autocapitalize = "off";
+      area.setAttribute("autocorrect", "off");
+      area.setAttribute("writingsuggestions", "false");
       area.dataset.index = String(index);
       area.value = block.text;
       area.placeholder = noteBlocks.length === 1 ? "Write a note…" : "";
