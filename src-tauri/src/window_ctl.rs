@@ -1029,10 +1029,16 @@ fn open_pin_window(app: &AppHandle, id: &str) {
         let _ = window.emit_to(&label, "show-pin", id);
         return;
     }
+    let id_js = serde_json::to_string(id).unwrap_or_else(|_| "\"\"".into());
     let script = format!(
-        "document.documentElement.dataset.noteId={id:?};document.documentElement.classList.add('pin-window');"
+        "globalThis.__memosePin={id_js};\
+         if(document.documentElement){{\
+           document.documentElement.dataset.noteId={id_js};\
+           document.documentElement.classList.add('pin-window');\
+         }}"
     );
-    let builder = tauri::WebviewWindowBuilder::new(app, &label, tauri::WebviewUrl::App("index.html".into()))
+    let page = format!("index.html?pin={id}");
+    let builder = tauri::WebviewWindowBuilder::new(app, &label, tauri::WebviewUrl::App(page.into()))
         .title("Memose")
         .inner_size(CARD_WIDTH, CARD_HEIGHT)
         .position(-10000.0, -10000.0)

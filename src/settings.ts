@@ -96,12 +96,23 @@ gestureEl.addEventListener("change", () => {
     });
 });
 
+function thisComputer(): string {
+  const platform = navigator.platform;
+  if (/Win/i.test(platform)) {
+    return "this PC";
+  }
+  if (/Mac/i.test(platform)) {
+    return "this Mac";
+  }
+  return "this computer";
+}
+
 async function loadSettings() {
   const settings = await invoke<Settings>("get_settings");
   baseUrlEl.value = settings.baseUrl;
   tokenEl.value = "";
   tokenHintEl.textContent = settings.hasToken
-    ? "A token is saved on this Mac."
+    ? `A token is saved on ${thisComputer()}.`
     : "No token saved.";
   autostartEl.checked = settings.launchAtLogin;
   statusEl.textContent = "";

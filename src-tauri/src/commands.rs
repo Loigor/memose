@@ -213,10 +213,17 @@ pub fn save_look(
 }
 
 #[tauri::command]
-pub fn set_pinned_opacity(app: AppHandle, state: State<AppState>, opacity: u8) -> Result<(), AppError> {
+pub fn set_pinned_opacity(
+    app: AppHandle,
+    state: State<AppState>,
+    opacity: u8,
+    persist: Option<bool>,
+) -> Result<(), AppError> {
     let opacity = opacity.min(100);
-    state.db.set_pinned_opacity(opacity)?;
     let _ = app.emit("pinned-opacity", opacity);
+    if persist.unwrap_or(true) {
+        state.db.set_pinned_opacity(opacity)?;
+    }
     Ok(())
 }
 
@@ -230,13 +237,18 @@ pub fn publish_note(
 }
 
 #[tauri::command]
-pub async fn get_note(app: AppHandle, state: State<'_, AppState>, id: String) -> Result<Note, AppError> {
+pub async fn get_note(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    id: String,
+    materialize: Option<bool>,
+) -> Result<Note, AppError> {
     let db = state.db.clone();
     drop(state);
     let note = db
         .get(&id)?
         .ok_or_else(|| AppError::Message("note not found".into()))?;
-    if note.sync_state == notes::REMOTE {
+    if note.sync_state == notes::REMOTE && materialize.unwrap_or(true) {
         notes::request_materialize(&app, id).await
     } else {
         Ok(note)

@@ -62,7 +62,16 @@ let altHeld = false;
 let gestureHeld = false;
 let showingPreview = false;
 let previewGen = 0;
-const pinnedNoteId = document.documentElement.dataset.noteId ?? "";
+const pinnedFromScript = (globalThis as { __memosePin?: unknown }).__memosePin;
+const pinnedNoteId =
+  (typeof pinnedFromScript === "string" ? pinnedFromScript : "") ||
+  new URLSearchParams(window.location.search).get("pin") ||
+  document.documentElement.dataset.noteId ||
+  "";
+if (pinnedNoteId) {
+  document.documentElement.dataset.noteId = pinnedNoteId;
+  document.documentElement.classList.add("pin-window");
+}
 let noteContent = "";
 let loadedContent = "";
 let noteBlocks: Block[] = [{ kind: "text", text: "" }];
@@ -984,14 +993,27 @@ function showingPinned(): boolean {
   return pinnedNoteId !== "" || pinToggleEl.getAttribute("aria-pressed") === "true";
 }
 
+let pinnedOpacityFrame = 0;
+let pinnedOpacityLive = 0;
+
 function schedulePinnedOpacity(opacity: number) {
+  pinnedOpacityLive = opacity;
+  if (pinnedOpacityFrame === 0) {
+    pinnedOpacityFrame = requestAnimationFrame(() => {
+      pinnedOpacityFrame = 0;
+      const value = pinnedOpacityLive;
+      void invoke("set_pinned_opacity", { opacity: value, persist: false }).catch((error: unknown) => {
+        console.error(error);
+      });
+    });
+  }
   clearTimeout(pinnedOpacityTimer);
   pinnedOpacityTimer = setTimeout(() => {
     pinnedOpacityTimer = undefined;
-    void invoke("set_pinned_opacity", { opacity }).catch((error: unknown) => {
+    void invoke("set_pinned_opacity", { opacity: pinnedOpacityLive }).catch((error: unknown) => {
       console.error(error);
     });
-  }, 40);
+  }, 160);
 }
 
 function scheduleLook() {
@@ -1549,15 +1571,7 @@ renderSurface();
 
 let pinLoad = 0;
 
-async function loadPinned(id: string) {
-  if (id !== pinnedNoteId) {
-    return;
-  }
-  const ticket = ++pinLoad;
-  const note = await invoke<Note>("get_note", { id: pinnedNoteId });
-  if (ticket !== pinLoad || note.id !== pinnedNoteId) {
-    return;
-  }
+function applyPinned(note: Note) {
   const dirty = loadedContent.length > 0 && noteContent !== loadedContent;
   if (!dirty && (editingId !== note.id || loadedContent !== note.content)) {
     editingId = note.id;
@@ -1570,7 +1584,27 @@ async function loadPinned(id: string) {
   if (lookTimer === undefined) {
     adoptLook(lookFromNote(note));
   }
+}
+
+async function loadPinned(id: string) {
+  if (id !== pinnedNoteId) {
+    return;
+  }
+  const ticket = ++pinLoad;
+  const stored = await invoke<Note>("get_note", { id: pinnedNoteId, materialize: false });
+  if (ticket !== pinLoad || stored.id !== pinnedNoteId) {
+    return;
+  }
+  applyPinned(stored);
   await loadTheme();
+  if (stored.syncState !== "remote") {
+    return;
+  }
+  const note = await invoke<Note>("get_note", { id: pinnedNoteId });
+  if (ticket !== pinLoad || note.id !== pinnedNoteId) {
+    return;
+  }
+  applyPinned(note);
 }
 
 conflictLocalEl.addEventListener("click", () => {
