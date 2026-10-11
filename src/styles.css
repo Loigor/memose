@@ -16,17 +16,17 @@
 
 html[data-theme="dark"] {
   color-scheme: dark;
-  --paper: #23211f;
-  --ink: #f3eee6;
-  --muted: #b7aea4;
-  --button: rgba(243, 238, 230, 0.12);
-  --button-hover: rgba(243, 238, 230, 0.2);
-  --line: rgba(243, 238, 230, 0.14);
-  --rule: rgba(243, 238, 230, 0.42);
-  --shadow: rgba(0, 0, 0, 0.55);
-  --field: rgba(255, 255, 255, 0.06);
+  --paper: #2c2824;
+  --ink: #f6f1e8;
+  --muted: #a3988c;
+  --button: rgba(246, 241, 232, 0.1);
+  --button-hover: rgba(246, 241, 232, 0.18);
+  --line: rgba(246, 241, 232, 0.12);
+  --rule: rgba(246, 241, 232, 0.28);
+  --shadow: rgba(0, 0, 0, 0.45);
+  --field: rgba(0, 0, 0, 0.2);
   --pin: var(--muted);
-  --pin-on: #fff8ee;
+  --pin-on: #fff6ea;
   --paper-alpha: 100%;
 }
 

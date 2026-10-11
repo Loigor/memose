@@ -1059,7 +1059,7 @@ function chipColor(): string {
   const theme = currentTheme();
   const hue = theme === "dark" ? look.hueDark : look.hueLight;
   if (hue == null) {
-    return theme === "dark" ? "#23211f" : "#fff4b8";
+    return theme === "dark" ? "#2c2824" : "#fff4b8";
   }
   return paperAt(theme, hue);
 }
