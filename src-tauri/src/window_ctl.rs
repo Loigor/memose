@@ -1011,7 +1011,8 @@ fn open_pin(app: &AppHandle, id: &str) {
         let app = app.clone();
         let id = id.to_string();
         std::thread::spawn(move || {
-            let _ = app.run_on_main_thread(move || open_pin_window(&app, &id));
+            let handle = app.clone();
+            let _ = app.run_on_main_thread(move || open_pin_window(&handle, &id));
         });
         return;
     }
