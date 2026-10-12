@@ -4,6 +4,7 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import DOMPurify from "dompurify";
 import { marked } from "marked";
 
+import { applyCode, applyTask, applyTitle, taskListOnEnter, toggleTask, wrapText, type Edit } from "./markdown-edit";
 import { defaultBinds, formatBind, isModifierKey, matchBind, modifierDown, type ShortcutBinds } from "./shortcuts";
 
 type Note = {
@@ -34,6 +35,8 @@ const preview = document.querySelector<HTMLDivElement>("#preview");
 const notePane = document.querySelector<HTMLElement>("#note-pane");
 const lightbox = document.querySelector<HTMLDivElement>("#lightbox");
 const lightboxImage = document.querySelector<HTMLImageElement>("#lightbox-image");
+const markdownToggle = document.querySelector<HTMLButtonElement>("#markdown-toggle");
+const markdownPop = document.querySelector<HTMLDivElement>("#markdown-pop");
 const modeToggle = document.querySelector<HTMLButtonElement>("#mode-toggle");
 const themeToggle = document.querySelector<HTMLButtonElement>("#theme-toggle");
 const themeIcon = document.querySelector<SVGElement>("#theme-icon");
@@ -44,6 +47,7 @@ const pinToggle = document.querySelector<HTMLButtonElement>("#pin-toggle");
 const visibilityLabel = document.querySelector<HTMLButtonElement>("#visibility-label");
 const audiencePop = document.querySelector<HTMLDivElement>("#audience-pop");
 const visibilityChoices = document.querySelector<HTMLDivElement>("#visibility-choices");
+const spaceBlock = document.querySelector<HTMLDivElement>("#space-block");
 const spaceChoices = document.querySelector<HTMLDivElement>("#space-choices");
 const editedSep = document.querySelector<HTMLElement>("#edited-sep");
 const deleteConfirm = document.querySelector<HTMLDivElement>("#delete-confirm");
@@ -89,6 +93,7 @@ let noteBlocks: Block[] = [{ kind: "text", text: "" }];
 let draggingMedia: string | null = null;
 let mediaDragged = false;
 let draftTimer: ReturnType<typeof setTimeout> | undefined;
+let caret: { index: number; start: number; end: number } | null = null;
 
 marked.setOptions({ gfm: true, breaks: true });
 
@@ -105,6 +110,8 @@ const previewEl = requireEl(preview, "preview");
 const notePaneEl = requireEl(notePane, "note pane");
 const lightboxEl = requireEl(lightbox, "lightbox");
 const lightboxImageEl = requireEl(lightboxImage, "lightbox image");
+const markdownToggleEl = requireEl(markdownToggle, "markdown toggle");
+const markdownPopEl = requireEl(markdownPop, "markdown pop");
 const modeToggleEl = requireEl(modeToggle, "mode toggle");
 const themeToggleEl = requireEl(themeToggle, "theme toggle");
 const themeIconEl = requireEl(themeIcon, "theme icon");
@@ -116,6 +123,7 @@ const pinToggleEl = requireEl(pinToggle, "pin toggle");
 const visibilityLabelEl = requireEl(visibilityLabel, "visibility label");
 const audiencePopEl = requireEl(audiencePop, "audience pop");
 const visibilityChoicesEl = requireEl(visibilityChoices, "visibility choices");
+const spaceBlockEl = requireEl(spaceBlock, "space block");
 const spaceChoicesEl = requireEl(spaceChoices, "space choices");
 const editedSepEl = requireEl(editedSep, "edited separator");
 const deleteConfirmEl = requireEl(deleteConfirm, "delete confirm");
@@ -254,6 +262,11 @@ async function paintPreview() {
     return;
   }
   previewEl.innerHTML = DOMPurify.sanitize(html);
+  for (const box of previewEl.querySelectorAll("input[type='checkbox']")) {
+    if (box instanceof HTMLInputElement) {
+      box.disabled = false;
+    }
+  }
   const images = [...previewEl.querySelectorAll("img")];
   await Promise.all(
     images.map(async (img) => {
@@ -287,6 +300,60 @@ async function paintPreview() {
     }),
   );
 }
+
+previewEl.addEventListener("change", (event) => {
+  const target = event.target;
+  if (!(target instanceof HTMLInputElement) || target.type !== "checkbox") {
+    return;
+  }
+  const boxes = [...previewEl.querySelectorAll("input[type='checkbox']")];
+  const index = boxes.indexOf(target);
+  if (index < 0) {
+    return;
+  }
+  const next = toggleTask(noteContent, index, target.checked);
+  if (next == null || next === noteContent) {
+    if (next == null) {
+      target.checked = !target.checked;
+    }
+    return;
+  }
+  noteContent = next;
+  noteBlocks = parseBlocks(next);
+  scheduleDraft();
+});
+
+let previewClick: { at: number; x: number; y: number } | null = null;
+
+function previewBodyTarget(target: EventTarget | null): target is Element {
+  return target instanceof Element && Boolean(target.closest("#note-pane")) && !target.closest("a, input, img, video, button");
+}
+
+cardEl.addEventListener(
+  "mousedown",
+  (event) => {
+    if (event.button !== 0 || gestureHeld || modifierDown(binds.gesture, event) || !previewBodyTarget(event.target)) {
+      previewClick = null;
+      return;
+    }
+    const now = event.timeStamp;
+    const previous = previewClick;
+    if (
+      showingPreview &&
+      previous &&
+      now - previous.at < 600 &&
+      Math.hypot(event.clientX - previous.x, event.clientY - previous.y) < 8
+    ) {
+      previewClick = null;
+      event.preventDefault();
+      event.stopPropagation();
+      togglePreview();
+      return;
+    }
+    previewClick = { at: now, x: event.clientX, y: event.clientY };
+  },
+  true,
+);
 
 function togglePreview() {
   showingPreview = !showingPreview;
@@ -370,9 +437,28 @@ function renderBlocks(focusName?: string) {
       if (index === lastText) {
         area.classList.add("grow");
       }
+      const remember = () => {
+        caret = { index, start: area.selectionStart, end: area.selectionEnd };
+      };
+      area.addEventListener("keyup", remember);
+      area.addEventListener("mouseup", remember);
+      area.addEventListener("select", remember);
+      area.addEventListener("keydown", (event) => {
+        if (event.key !== "Enter" || event.shiftKey || event.altKey || event.metaKey || event.ctrlKey || event.isComposing) {
+          return;
+        }
+        const edit = taskListOnEnter(area.value, area.selectionStart, area.selectionEnd);
+        if (!edit) {
+          return;
+        }
+        event.preventDefault();
+        applyEdit(area, edit);
+      });
       area.addEventListener("input", () => {
         block.text = area.value;
         noteContent = serializeBlocks(noteBlocks);
+        remember();
+        followEnd(area);
         dismissList();
         scheduleDraft();
       });
@@ -434,6 +520,101 @@ function insertMedia(name: string) {
 
 async function openPreview(name: string) {
   await invoke("open_media_preview", { name });
+}
+
+function applyEdit(area: HTMLTextAreaElement, edit: Edit) {
+  const index = Number(area.dataset.index);
+  const block = noteBlocks[index];
+  if (!block || block.kind !== "text") {
+    return;
+  }
+  area.value = edit.value;
+  block.text = edit.value;
+  noteContent = serializeBlocks(noteBlocks);
+  const start = Math.min(edit.start, edit.value.length);
+  const end = Math.min(edit.end, edit.value.length);
+  area.focus();
+  area.setSelectionRange(start, end);
+  caret = { index, start, end };
+  followEnd(area);
+  dismissList();
+  scheduleDraft();
+}
+
+function followEnd(area: HTMLTextAreaElement) {
+  if (area.selectionStart !== area.value.length || area.selectionEnd !== area.value.length) {
+    return;
+  }
+  const pin = () => {
+    if (area.selectionEnd === area.value.length) {
+      area.scrollTop = area.scrollHeight;
+    }
+  };
+  pin();
+  requestAnimationFrame(pin);
+}
+
+function areaSelection(area: HTMLTextAreaElement): { start: number; end: number } {
+  if (document.activeElement === area) {
+    return { start: area.selectionStart, end: area.selectionEnd };
+  }
+  if (caret && Number(area.dataset.index) === caret.index) {
+    return {
+      start: Math.min(caret.start, area.value.length),
+      end: Math.min(caret.end, area.value.length),
+    };
+  }
+  return { start: area.value.length, end: area.value.length };
+}
+
+function targetArea(): HTMLTextAreaElement | null {
+  const active = document.activeElement;
+  if (active instanceof HTMLTextAreaElement && blocksEl.contains(active)) {
+    return active;
+  }
+  if (caret) {
+    const found = blocksEl.querySelector<HTMLTextAreaElement>(`textarea[data-index="${caret.index}"]`);
+    if (found) {
+      return found;
+    }
+  }
+  const areas = blocksEl.querySelectorAll("textarea");
+  const last = areas.item(areas.length - 1);
+  return last instanceof HTMLTextAreaElement ? last : null;
+}
+
+function applyMarkdown(kind: string) {
+  if (showingPreview) {
+    showingPreview = false;
+    renderSurface();
+  }
+  const area = targetArea();
+  if (!area) {
+    return;
+  }
+  const { start, end } = areaSelection(area);
+  const value = area.value;
+  const edit =
+    kind === "bold"
+      ? wrapText(value, start, end, "**", "**")
+      : kind === "italic"
+        ? wrapText(value, start, end, "*", "*")
+        : kind === "title"
+          ? applyTitle(value, start, end)
+          : kind === "task"
+            ? applyTask(value, start, end)
+            : kind === "code"
+              ? applyCode(value, start, end)
+              : null;
+  if (!edit) {
+    return;
+  }
+  applyEdit(area, edit);
+}
+
+function closeMarkdownPop() {
+  markdownPopEl.hidden = true;
+  markdownToggleEl.setAttribute("aria-expanded", "false");
 }
 
 function insertSnippet(snippet: string) {
@@ -664,10 +845,10 @@ let chosenVisibility = "PRIVATE";
 let chosenSpace = "";
 
 const visibilityOptions = [
-  { value: "PRIVATE", label: "Private", short: "Private" },
-  { value: "PROTECTED", label: "Signed-in users", short: "Signed-in" },
-  { value: "PUBLIC", label: "Public", short: "Public" },
-  { value: "SPACE", label: "Space members", short: "Space" },
+  { value: "PRIVATE", label: "Private", short: "Private", hint: "Only you" },
+  { value: "PROTECTED", label: "Signed-in users", short: "Signed-in", hint: "Anyone with an account" },
+  { value: "PUBLIC", label: "Public", short: "Public", hint: "Anyone with the link" },
+  { value: "SPACE", label: "Space members", short: "Space", hint: "People in one space" },
 ];
 
 function visibilityShort(value: string, space: string): string {
@@ -681,47 +862,77 @@ function refreshMetaSep() {
   editedSepEl.hidden = visibilityLabelEl.hidden || editedAtEl.hidden;
 }
 
+function audienceChoice(title: string, hint: string, pressed: boolean, onClick: () => void): HTMLButtonElement {
+  const button = document.createElement("button");
+  button.type = "button";
+  button.className = "audience-choice";
+  button.setAttribute("aria-pressed", String(pressed));
+  const copy = document.createElement("span");
+  copy.className = "audience-choice-copy";
+  const titleEl = document.createElement("span");
+  titleEl.className = "audience-choice-title";
+  titleEl.textContent = title;
+  copy.append(titleEl);
+  if (hint) {
+    const hintEl = document.createElement("span");
+    hintEl.className = "audience-choice-hint";
+    hintEl.textContent = hint;
+    copy.append(hintEl);
+  }
+  const mark = document.createElement("span");
+  mark.className = "audience-check";
+  mark.setAttribute("aria-hidden", "true");
+  mark.innerHTML =
+    '<svg viewBox="0 0 16 16" width="12" height="12"><path d="M3.5 8.5 6.5 11.5 12.5 4.5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+  button.append(copy, mark);
+  button.addEventListener("click", onClick);
+  return button;
+}
+
 function paintAudienceMenu() {
   visibilityChoicesEl.replaceChildren();
   for (const option of visibilityOptions) {
     if (option.value === "SPACE" && knownSpaces.length === 0) {
       continue;
     }
-    const button = document.createElement("button");
-    button.type = "button";
-    button.textContent = option.label;
-    button.setAttribute("aria-pressed", String(chosenVisibility === option.value));
-    button.addEventListener("click", () => {
-      chooseVisibility(option.value);
-    });
-    visibilityChoicesEl.append(button);
+    visibilityChoicesEl.append(
+      audienceChoice(option.label, option.hint, chosenVisibility === option.value, () => {
+        chooseVisibility(option.value);
+      }),
+    );
   }
   spaceChoicesEl.replaceChildren();
-  spaceChoicesEl.hidden = knownSpaces.length === 0;
+  spaceBlockEl.hidden = knownSpaces.length === 0;
   if (knownSpaces.length === 0) {
     return;
   }
-  const caption = document.createElement("p");
-  caption.className = "pop-label";
-  caption.textContent = "Space";
-  spaceChoicesEl.append(caption);
-  const unassigned = document.createElement("button");
-  unassigned.type = "button";
-  unassigned.textContent = "Unassigned";
-  unassigned.setAttribute("aria-pressed", String(chosenSpace === ""));
-  unassigned.addEventListener("click", () => {
-    chooseSpace("");
-  });
-  spaceChoicesEl.append(unassigned);
+  spaceChoicesEl.append(
+    audienceChoice("Unassigned", "", chosenSpace === "", () => {
+      chooseSpace("");
+    }),
+  );
   for (const space of knownSpaces) {
-    const button = document.createElement("button");
-    button.type = "button";
-    button.textContent = space.title;
-    button.setAttribute("aria-pressed", String(chosenSpace === space.name));
-    button.addEventListener("click", () => {
-      chooseSpace(space.name);
-    });
-    spaceChoicesEl.append(button);
+    spaceChoicesEl.append(
+      audienceChoice(space.title, "", chosenSpace === space.name, () => {
+        chooseSpace(space.name);
+      }),
+    );
+  }
+  if (!audiencePopEl.hidden) {
+    revealPressedChoice(spaceChoicesEl);
+  }
+}
+
+function revealPressedChoice(container: HTMLElement) {
+  const selected = container.querySelector<HTMLElement>('[aria-pressed="true"]');
+  if (!selected) {
+    return;
+  }
+  const delta = selected.getBoundingClientRect().top - container.getBoundingClientRect().top;
+  if (delta < 0) {
+    container.scrollTop += delta;
+  } else if (delta + selected.offsetHeight > container.clientHeight) {
+    container.scrollTop += delta + selected.offsetHeight - container.clientHeight;
   }
 }
 
@@ -1064,7 +1275,7 @@ function chipColor(): string {
   const theme = currentTheme();
   const hue = theme === "dark" ? look.hueDark : look.hueLight;
   if (hue == null) {
-    return theme === "dark" ? "#2c2824" : "#fff4b8";
+    return theme === "dark" ? "#25282c" : "#fff4b8";
   }
   return paperAt(theme, hue);
 }
@@ -1386,7 +1597,7 @@ cardEl.addEventListener("mousedown", (event) => {
   }
   const target = event.target;
   if (gestureHeld || modifierDown(binds.gesture, event)) {
-    if (target instanceof Element && target.closest("#theme-toggle, #color-pop, #audience-pop, #visibility-label")) {
+    if (target instanceof Element && target.closest("#theme-toggle, #color-pop, #audience-pop, #visibility-label, #markdown-toggle, #markdown-pop")) {
       return;
     }
     event.preventDefault();
@@ -1396,7 +1607,10 @@ cardEl.addEventListener("mousedown", (event) => {
   if (!(target instanceof Element)) {
     return;
   }
-  if (target.closest("button, a, input, textarea, select, img, video, .media, label, #color-pop, #audience-pop")) {
+  if (showingPreview && target.closest("#note-pane")) {
+    return;
+  }
+  if (target.closest("button, a, input, textarea, select, img, video, .media, label, #preview, #color-pop, #audience-pop, #markdown-pop")) {
     return;
   }
   event.preventDefault();
@@ -1476,6 +1690,43 @@ modeToggleEl.addEventListener("click", () => {
   togglePreview();
 });
 
+markdownToggleEl.addEventListener("mousedown", (event) => {
+  event.preventDefault();
+});
+
+markdownPopEl.addEventListener("mousedown", (event) => {
+  event.preventDefault();
+});
+
+markdownToggleEl.addEventListener("click", () => {
+  const open = markdownPopEl.hidden;
+  markdownPopEl.hidden = !open;
+  markdownToggleEl.setAttribute("aria-expanded", String(open));
+});
+
+markdownPopEl.addEventListener("click", (event) => {
+  const button = event.target instanceof Element ? event.target.closest("button") : null;
+  const kind = button?.dataset.markdown;
+  if (!kind) {
+    return;
+  }
+  applyMarkdown(kind);
+});
+
+document.addEventListener("mousedown", (event) => {
+  if (markdownPopEl.hidden) {
+    return;
+  }
+  const target = event.target;
+  if (!(target instanceof Node)) {
+    return;
+  }
+  if (markdownPopEl.contains(target) || markdownToggleEl.contains(target)) {
+    return;
+  }
+  closeMarkdownPop();
+});
+
 function currentNoteId(): string | null {
   return pinnedNoteId || editingId || draftId;
 }
@@ -1483,7 +1734,7 @@ function currentNoteId(): string | null {
 function resetDeleteConfirm() {
   deleteNoteEl.hidden = false;
   deleteConfirmEl.hidden = true;
-  deleteYesEl.textContent = "Yes";
+  deleteYesEl.textContent = "Delete";
 }
 
 function closeAudiencePop() {
@@ -1497,6 +1748,7 @@ visibilityLabelEl.addEventListener("click", () => {
     resetDeleteConfirm();
     audiencePopEl.hidden = false;
     visibilityLabelEl.setAttribute("aria-expanded", "true");
+    revealPressedChoice(spaceChoicesEl);
     return;
   }
   closeAudiencePop();
@@ -1687,7 +1939,7 @@ cardEl.addEventListener(
       return;
     }
     const target = event.target;
-    if (target instanceof Element && target.closest("#color-pop, #audience-pop")) {
+    if (target instanceof Element && target.closest("#color-pop, #audience-pop, #markdown-pop")) {
       return;
     }
     event.preventDefault();
@@ -1784,9 +2036,10 @@ if (!isPreviewWindow()) {
       if (event.key === "Alt") {
         return;
       }
-      if (event.key === "Escape" && (!colorPopEl.hidden || !audiencePopEl.hidden)) {
+      if (event.key === "Escape" && (!colorPopEl.hidden || !audiencePopEl.hidden || !markdownPopEl.hidden)) {
         colorPopEl.hidden = true;
         closeAudiencePop();
+        closeMarkdownPop();
         event.preventDefault();
         event.stopPropagation();
         return;

@@ -16,17 +16,18 @@
 
 html[data-theme="dark"] {
   color-scheme: dark;
-  --paper: #2c2824;
-  --ink: #f6f1e8;
-  --muted: #a3988c;
-  --button: rgba(246, 241, 232, 0.1);
-  --button-hover: rgba(246, 241, 232, 0.18);
-  --line: rgba(246, 241, 232, 0.12);
-  --rule: rgba(246, 241, 232, 0.28);
-  --shadow: rgba(0, 0, 0, 0.45);
-  --field: rgba(0, 0, 0, 0.2);
+  /* useMemos explore, default dark: card, foreground, muted-foreground, secondary, accent, border. */
+  --paper: #25282c;
+  --ink: #dbdee2;
+  --muted: #a2a5a9;
+  --button: #32363b;
+  --button-hover: #3e464f;
+  --line: #3f4348;
+  --rule: #3f4348;
+  --shadow: rgba(0, 0, 0, 0.5);
+  --field: #1d1f23;
   --pin: var(--muted);
-  --pin-on: #fff6ea;
+  --pin-on: #dbdee2;
   --paper-alpha: 100%;
 }
 
@@ -128,7 +129,7 @@ header {
 #edited-sep[hidden],
 #edited-at[hidden],
 #audience-pop[hidden],
-#space-choices[hidden],
+#space-block[hidden],
 #delete-note[hidden],
 #delete-confirm[hidden] {
   display: none;
@@ -143,75 +144,214 @@ header {
 
 #audience-pop {
   position: absolute;
-  top: calc(100% + 6px);
+  top: calc(100% + 8px);
   left: 0;
   z-index: 3;
   display: flex;
   flex-direction: column;
-  gap: 8px;
-  width: max-content;
-  min-width: 168px;
-  padding: 8px;
+  gap: 2px;
+  width: 228px;
+  max-height: 284px;
+  overflow: hidden;
+  padding: 4px;
+  border: 1px solid var(--line);
   border-radius: 12px;
   background: var(--paper);
-  box-shadow: 0 8px 16px var(--shadow);
-}
-
-#audience-pop button,
-#visibility-choices button,
-#space-choices button {
-  display: block;
-  width: 100%;
-  border-radius: 8px;
-  padding: 4px 8px;
-  font-size: 12px;
+  box-shadow: 0 10px 22px var(--shadow);
+  font-size: 13px;
   letter-spacing: 0;
-  text-align: left;
+  line-height: 1.3;
   text-transform: none;
 }
 
-#audience-pop button[aria-pressed="true"] {
-  background: var(--button-hover);
-}
-
-#audience-options {
+#visibility-choices,
+#space-choices {
   display: flex;
   flex-direction: column;
+  gap: 1px;
+}
+
+#space-block {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  min-height: 0;
+  margin-top: 2px;
+  padding-top: 2px;
+  overflow: hidden;
+  border-top: 1px solid var(--line);
+}
+
+#space-choices {
+  min-height: 44px;
+  overflow: auto;
+}
+
+#audience-pop .audience-choice {
+  display: flex;
+  align-items: center;
   gap: 8px;
+  width: 100%;
+  border-radius: 8px;
+  background: transparent;
+  padding: 4px 8px;
+  text-align: left;
+}
+
+#audience-pop .audience-choice:hover {
+  background: var(--button);
+}
+
+#audience-pop .audience-choice[aria-pressed="true"] {
+  background: var(--button);
+}
+
+.audience-choice-copy {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+  flex: 1;
+}
+
+.audience-choice-title {
+  overflow: hidden;
+  color: var(--ink);
+  font-size: 13px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.audience-choice-hint {
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.audience-check {
+  display: flex;
+  flex: none;
+  width: 12px;
+  color: transparent;
+}
+
+#audience-pop .audience-choice[aria-pressed="true"] .audience-check {
+  color: var(--ink);
+}
+
+.audience-foot {
+  flex: none;
+  margin-top: 4px;
+  padding-top: 4px;
+  border-top: 1px solid var(--line);
 }
 
 #delete-note {
+  width: 100%;
+  border-radius: 8px;
+  background: transparent;
+  padding: 6px 8px;
   color: var(--muted);
+  font-size: 12px;
+  text-align: left;
+}
+
+#delete-note:hover {
+  background: var(--button);
+  color: var(--ink);
 }
 
 #delete-confirm {
   display: flex;
   align-items: center;
-  gap: 6px;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 4px 8px;
 }
 
-#delete-confirm span {
+#delete-confirm > span {
   color: var(--ink);
   font-size: 12px;
-  letter-spacing: 0;
-  text-transform: none;
   white-space: nowrap;
+}
+
+.audience-confirm-actions {
+  display: flex;
+  gap: 4px;
 }
 
 #delete-confirm button {
   width: auto;
-  padding: 4px 8px;
+  border-radius: 999px;
+  background: transparent;
+  padding: 3px 8px;
+  font-size: 11px;
   text-align: center;
 }
 
-.pop-label {
-  margin: 4px 8px 0;
-  color: var(--muted);
-  font-size: 10px;
+#delete-confirm button:hover {
+  background: var(--button);
 }
 
+#delete-confirm #delete-yes {
+  background: var(--ink);
+  color: var(--paper);
+}
+
+#delete-confirm #delete-yes:hover {
+  background: var(--ink);
+  opacity: 0.86;
+}
+
+.pop-label {
+  margin: 3px 8px 1px;
+  color: var(--muted);
+  font-size: 10px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.markdown-anchor,
 .theme-anchor {
   position: relative;
+}
+
+#markdown-pop {
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  z-index: 3;
+  display: flex;
+  gap: 4px;
+  padding: 4px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--paper);
+  box-shadow: 0 10px 22px var(--shadow);
+  letter-spacing: 0;
+  text-transform: none;
+}
+
+#markdown-pop[hidden] {
+  display: none;
+}
+
+#markdown-pop button {
+  min-width: 28px;
+  padding: 4px 8px;
+  font-size: 12px;
+  line-height: 1.2;
+  text-align: center;
+  white-space: nowrap;
+}
+
+#markdown-pop button[data-markdown="bold"] {
+  font-weight: 700;
+}
+
+#markdown-pop button[data-markdown="italic"] {
+  font-family: Palatino, Georgia, serif;
+  font-style: italic;
+  font-weight: 600;
 }
 
 #color-pop {
@@ -529,6 +669,21 @@ textarea,
   cursor: zoom-in;
 }
 
+#preview li:has(input[type="checkbox"]) {
+  list-style: none;
+}
+
+#preview li:has(input[type="checkbox"]) > p {
+  margin: 0;
+}
+
+#preview input[type="checkbox"] {
+  margin: 0 0.35em 0 0;
+  vertical-align: -0.1em;
+  accent-color: var(--ink);
+  cursor: pointer;
+}
+
 #card.dropping {
   outline: 2px dashed var(--muted);
   outline-offset: -8px;
@@ -540,7 +695,7 @@ textarea,
   display: none;
   align-items: center;
   justify-content: center;
-  background: rgba(28, 22, 12, 0.72);
+  background: rgba(0, 0, 0, 0.72);
 }
 
 html.lightbox-window #lightbox {

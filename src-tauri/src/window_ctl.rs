@@ -362,28 +362,73 @@ fn present_at(app: &AppHandle, fresh: bool, anchor: Option<TrayAnchor>) {
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner()) = None;
     if let Some(window) = app.get_webview_window(WINDOW) {
+        // Stay hidden while the frame moves. Showing first paints the card at
+        // the screen center, then it jumps once the cursor position applies.
+        let _ = window.hide();
         let _ = window.set_size(LogicalSize::new(CARD_WIDTH, CARD_HEIGHT));
-        let placed = match anchor {
-            Some(anchor) => place_near_tray(app, &window, anchor).is_ok(),
-            None => false,
-        };
-        if !placed {
-            let _ = place_at_cursor(app, &window);
-        }
-        let _ = window.set_always_on_top(true);
         #[cfg(target_os = "macos")]
         let _ = app.set_activation_policy(tauri::ActivationPolicy::Regular);
-        let _ = window.show();
-        let _ = window.set_focus();
-        let _ = window.emit(
-            if fresh {
-                "composer-fresh"
-            } else {
-                "composer-focus"
-            },
-            generation,
-        );
+        let point = anchor
+            .and_then(|anchor| place_near_tray(app, &window, anchor))
+            .or_else(|| place_at_cursor(app, &window));
+        match point {
+            Some((x, y)) => reveal_when_placed(app.clone(), window, x, y, fresh, generation),
+            None => order_composer_front(app, &window, fresh, generation),
+        }
+        return;
     }
+    let app = app.clone();
+    tauri::async_runtime::spawn(async move {
+        tokio::time::sleep(FOCUS_GRACE).await;
+        app.state::<AppState>()
+            .suppress_blur
+            .store(false, Ordering::SeqCst);
+    });
+}
+
+fn reveal_when_placed(
+    app: AppHandle,
+    window: WebviewWindow,
+    x: i32,
+    y: i32,
+    fresh: bool,
+    generation: u64,
+) {
+    tauri::async_runtime::spawn(async move {
+        for _ in 0..20 {
+            if position_is(&window, x, y) {
+                break;
+            }
+            let _ = window.hide();
+            let _ = window.set_position(PhysicalPosition::new(x, y));
+            tokio::time::sleep(Duration::from_millis(8)).await;
+        }
+        let app_for_show = app.clone();
+        let _ = app.run_on_main_thread(move || {
+            order_composer_front(&app_for_show, &window, fresh, generation);
+        });
+    });
+}
+
+fn position_is(window: &WebviewWindow, x: i32, y: i32) -> bool {
+    let Ok(pos) = window.outer_position() else {
+        return false;
+    };
+    (pos.x - x).abs() <= 2 && (pos.y - y).abs() <= 2
+}
+
+fn order_composer_front(app: &AppHandle, window: &WebviewWindow, fresh: bool, generation: u64) {
+    let _ = window.set_always_on_top(true);
+    let _ = window.show();
+    let _ = window.set_focus();
+    let _ = window.emit(
+        if fresh {
+            "composer-fresh"
+        } else {
+            "composer-focus"
+        },
+        generation,
+    );
     let app = app.clone();
     tauri::async_runtime::spawn(async move {
         tokio::time::sleep(FOCUS_GRACE).await;
@@ -397,20 +442,18 @@ fn place_near_tray(
     app: &AppHandle,
     window: &WebviewWindow,
     anchor: TrayAnchor,
-) -> tauri::Result<()> {
+) -> Option<(i32, i32)> {
     let point = PhysicalPosition::new(anchor.x as f64 + 1.0, anchor.y as f64 + 1.0);
-    let monitors = app.available_monitors()?;
+    let monitors = app.available_monitors().ok()?;
     let monitor = monitors
         .iter()
         .find(|monitor| contains(monitor, point))
         .cloned()
-        .or(window.current_monitor()?)
-        .or(app.primary_monitor()?);
-    let Some(monitor) = monitor else {
-        return Ok(());
-    };
+        .or(window.current_monitor().ok()?)
+        .or(app.primary_monitor().ok()?);
+    let monitor = monitor?;
     let area = monitor.work_area();
-    let scale = window.scale_factor()?;
+    let scale = window.scale_factor().ok()?;
     let (x, y) = tray_card_origin(
         anchor.x,
         anchor.y,
@@ -424,7 +467,8 @@ fn place_near_tray(
         area.size.height as i32,
         (8.0 * scale).round() as i32,
     );
-    window.set_position(PhysicalPosition::new(x, y))
+    window.set_position(PhysicalPosition::new(x, y)).ok()?;
+    Some((x, y))
 }
 
 pub fn tray_card_origin(
@@ -457,19 +501,17 @@ pub fn tray_card_origin(
     clamp_position(x, y, win_w, win_h, area_x, area_y, area_w, area_h)
 }
 
-fn place_at_cursor(app: &AppHandle, window: &WebviewWindow) -> tauri::Result<()> {
-    let cursor = app.cursor_position()?;
-    let monitors = app.available_monitors()?;
+fn place_at_cursor(app: &AppHandle, window: &WebviewWindow) -> Option<(i32, i32)> {
+    let cursor = app.cursor_position().ok()?;
+    let monitors = app.available_monitors().ok()?;
     let monitor = monitors.iter().find(|monitor| contains(monitor, cursor)).cloned();
     let monitor = match monitor {
         Some(monitor) => Some(monitor),
-        None => window.current_monitor()?.or(app.primary_monitor()?),
+        None => window.current_monitor().ok()?.or(app.primary_monitor().ok()?),
     };
-    let Some(monitor) = monitor else {
-        return Ok(());
-    };
+    let monitor = monitor?;
     let area = monitor.work_area();
-    let scale = window.scale_factor()?;
+    let scale = window.scale_factor().ok()?;
     let (x, y) = clamp_position(
         cursor.x.round() as i32,
         cursor.y.round() as i32,
@@ -480,7 +522,8 @@ fn place_at_cursor(app: &AppHandle, window: &WebviewWindow) -> tauri::Result<()>
         area.size.width as i32,
         area.size.height as i32,
     );
-    window.set_position(PhysicalPosition::new(x, y))
+    window.set_position(PhysicalPosition::new(x, y)).ok()?;
+    Some((x, y))
 }
 
 fn contains(monitor: &tauri::Monitor, cursor: PhysicalPosition<f64>) -> bool {

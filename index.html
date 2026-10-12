@@ -24,14 +24,20 @@
             <span class="audience-anchor">
               <button id="visibility-label" type="button" hidden>Private</button>
               <div id="audience-pop" hidden>
-                <div id="audience-options">
-                  <div id="visibility-choices"></div>
-                  <div id="space-choices" hidden></div>
-                  <button id="delete-note" type="button">Delete</button>
+                <p class="pop-label">Who can see this</p>
+                <div id="visibility-choices"></div>
+                <div id="space-block" hidden>
+                  <p class="pop-label">Space</p>
+                  <div id="space-choices"></div>
+                </div>
+                <div class="audience-foot">
+                  <button id="delete-note" type="button">Delete memo</button>
                   <div id="delete-confirm" hidden>
-                    <span>Are you sure?</span>
-                    <button id="delete-yes" type="button">Yes</button>
-                    <button id="delete-no" type="button">No</button>
+                    <span>Delete this memo?</span>
+                    <span class="audience-confirm-actions">
+                      <button id="delete-no" type="button">Cancel</button>
+                      <button id="delete-yes" type="button">Delete</button>
+                    </span>
                   </div>
                 </div>
               </div>
@@ -41,6 +47,16 @@
           </span>
         </div>
         <div class="header-actions">
+          <div class="markdown-anchor">
+            <button id="markdown-toggle" type="button" aria-label="Markdown" aria-expanded="false">M</button>
+            <div id="markdown-pop" hidden>
+              <button type="button" data-markdown="bold" aria-label="Bold">B</button>
+              <button type="button" data-markdown="italic" aria-label="Italic">I</button>
+              <button type="button" data-markdown="title" aria-label="Title">T</button>
+              <button type="button" data-markdown="task" aria-label="Task list">[ ]</button>
+              <button type="button" data-markdown="code" aria-label="Code">&lt;&gt;</button>
+            </div>
+          </div>
           <button id="mode-toggle" type="button" aria-label="Preview" aria-pressed="false">Preview</button>
           <div class="theme-anchor">
             <button id="theme-toggle" class="icon-button" type="button" aria-label="Dark theme">
