@@ -33,8 +33,9 @@ writeIfChanged("src-tauri/Cargo.toml", cargoNext);
 
 const cargoLock = path.join(root, "src-tauri/Cargo.lock");
 const lockText = readFileSync(cargoLock, "utf8");
-const lockNext = lockText.replace(/(name = "memose"\nversion = )"[^"]+"/, `$1"${version}"`);
-if (lockNext === lockText && !lockText.includes(`name = "memose"\nversion = "${version}"`)) {
+const cargoLockVersion = /(name = "memose"\r?\nversion = )"[^"]+"/;
+const lockNext = lockText.replace(cargoLockVersion, `$1"${version}"`);
+if (!cargoLockVersion.test(lockNext)) {
   console.error("Could not find the memose package in src-tauri/Cargo.lock.");
   process.exit(1);
 }
@@ -42,19 +43,15 @@ writeIfChanged("src-tauri/Cargo.lock", lockNext);
 
 const packageLock = path.join(root, "package-lock.json");
 const packageLockText = readFileSync(packageLock, "utf8");
-let packageLockNext = packageLockText.replace(
-  /^(\{\n  "name": "memose",\n  "version": )"[^"]+"/,
-  `$1"${version}"`,
-);
-packageLockNext = packageLockNext.replace(
-  /("": \{\n      "name": "memose",\n      "version": )"[^"]+"/,
-  `$1"${version}"`,
-);
-if (!packageLockNext.includes(`"name": "memose",\n  "version": "${version}"`)) {
+const rootVersion = /^(\{\r?\n  "name": "memose",\r?\n  "version": )"[^"]+"/;
+const workspaceVersion = /("": \{\r?\n      "name": "memose",\r?\n      "version": )"[^"]+"/;
+let packageLockNext = packageLockText.replace(rootVersion, `$1"${version}"`);
+packageLockNext = packageLockNext.replace(workspaceVersion, `$1"${version}"`);
+if (!rootVersion.test(packageLockNext)) {
   console.error("Could not find the root version in package-lock.json.");
   process.exit(1);
 }
-if (!packageLockNext.includes(`"name": "memose",\n      "version": "${version}"`)) {
+if (!workspaceVersion.test(packageLockNext)) {
   console.error("Could not find the workspace version in package-lock.json.");
   process.exit(1);
 }
