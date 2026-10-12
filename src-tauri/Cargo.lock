@@ -2213,7 +2213,7 @@ dependencies = [
 
 [[package]]
 name = "memose"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "keyring",
  "reqwest 0.12.28",
