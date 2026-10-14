@@ -2,7 +2,9 @@ import { invoke } from "@tauri-apps/api/core";
 
 import {
   eventToBind,
+  eventToMouse,
   formatBind,
+  splitBinds,
   gestureSnippet,
   modifierChoices,
   shortcutFields,
@@ -15,6 +17,7 @@ type Settings = {
   launchAtLogin: boolean;
   visibility: string;
   space: string;
+  snapMemos: boolean;
 };
 
 type MemoSpace = {
@@ -27,6 +30,7 @@ const token = document.querySelector<HTMLInputElement>("#token");
 const tokenHint = document.querySelector<HTMLParagraphElement>("#token-hint");
 const status = document.querySelector<HTMLParagraphElement>("#settings-status");
 const autostart = document.querySelector<HTMLInputElement>("#autostart");
+const snapMemos = document.querySelector<HTMLInputElement>("#snap-memos");
 const audience = document.querySelector<HTMLDivElement>("#memos-audience");
 const visibilityChoices = document.querySelector<HTMLDivElement>("#visibility-choices");
 const spaceChoices = document.querySelector<HTMLDivElement>("#space-choices");
@@ -41,6 +45,7 @@ if (
   !tokenHint ||
   !status ||
   !autostart ||
+  !snapMemos ||
   !shortcuts ||
   !gesture ||
   !gestureHint ||
@@ -57,6 +62,7 @@ const tokenEl = token;
 const tokenHintEl = tokenHint;
 const statusEl = status;
 const autostartEl = autostart;
+const snapMemosEl = snapMemos;
 const audienceEl = audience;
 const visibilityChoicesEl = visibilityChoices;
 const spaceChoicesEl = spaceChoices;
@@ -102,6 +108,20 @@ function paintGesture() {
   gestureHintEl.textContent = gestureSnippet(current);
 }
 
+function saveBind(id: keyof ShortcutBinds, binding: string) {
+  recording = null;
+  void invoke<ShortcutBinds>("save_shortcut", { id, binding })
+    .then((next) => {
+      binds = next;
+      paintShortcuts();
+      statusEl.textContent = "Shortcut saved.";
+    })
+    .catch((error: unknown) => {
+      paintShortcuts();
+      statusEl.textContent = String(error);
+    });
+}
+
 function paintShortcuts() {
   shortcutsEl.replaceChildren();
   if (!binds) {
@@ -113,15 +133,39 @@ function paintShortcuts() {
     row.className = "shortcut";
     const name = document.createElement("span");
     name.textContent = field.label;
-    const button = document.createElement("button");
-    button.type = "button";
-    button.textContent = recording === field.id ? "Press shortcut" : formatBind(current[field.id]);
-    button.classList.toggle("recording", recording === field.id);
-    button.addEventListener("click", () => {
+    const list = document.createElement("div");
+    list.className = "shortcut-binds";
+    splitBinds(current[field.id]).forEach((binding, index) => {
+      const chip = document.createElement("span");
+      chip.className = "bind-chip";
+      const label = document.createElement("span");
+      label.textContent = formatBind(binding);
+      const remove = document.createElement("button");
+      remove.type = "button";
+      remove.textContent = "×";
+      remove.setAttribute("aria-label", `Remove ${formatBind(binding)}`);
+      remove.addEventListener("click", () => {
+        const next = splitBinds(current[field.id]).filter((_, item) => item !== index);
+        if (next.length === 0) {
+          statusEl.textContent = "Keep at least one shortcut.";
+          return;
+        }
+        saveBind(field.id, next.join(", "));
+      });
+      chip.append(label, remove);
+      list.append(chip);
+    });
+    const add = document.createElement("button");
+    add.type = "button";
+    add.className = "add";
+    add.textContent = recording === field.id ? "Press shortcut" : "+";
+    add.classList.toggle("recording", recording === field.id);
+    add.addEventListener("click", () => {
       recording = recording === field.id ? null : field.id;
       paintShortcuts();
     });
-    row.append(name, button);
+    list.append(add);
+    row.append(name, list);
     shortcutsEl.append(row);
   }
 }
@@ -151,6 +195,7 @@ async function loadSettings() {
     ? `A token is saved on ${thisComputer()}.`
     : "No token saved.";
   autostartEl.checked = settings.launchAtLogin;
+  snapMemosEl.checked = settings.snapMemos;
   chosenVisibility = settings.visibility || "PRIVATE";
   chosenSpace = settings.space || "";
   audienceEl.hidden = settings.baseUrl.trim() === "";
@@ -293,6 +338,13 @@ document.querySelector("#clear-memos")?.addEventListener("click", () => {
   })();
 });
 
+snapMemosEl.addEventListener("change", () => {
+  void invoke("set_snap_memos", { enabled: snapMemosEl.checked }).catch((error: unknown) => {
+    statusEl.textContent = String(error);
+    snapMemosEl.checked = !snapMemosEl.checked;
+  });
+});
+
 autostartEl.addEventListener("change", () => {
   void (async () => {
     try {
@@ -316,36 +368,40 @@ window.addEventListener(
       return;
     }
     const binding = eventToBind(event);
-    if (!binding) {
+    if (!binding || !binds) {
       return;
     }
     const id = recording;
-    recording = null;
-    void invoke<ShortcutBinds>("save_shortcut", { id, binding })
-      .then((next) => {
-        binds = next;
-        paintShortcuts();
-        statusEl.textContent = "Shortcut saved.";
-      })
-      .catch((error: unknown) => {
-        paintShortcuts();
-        statusEl.textContent = String(error);
-      });
+    saveBind(id, [...splitBinds(binds[id]), binding].join(", "));
   },
   true,
 );
 
-document.addEventListener("mousedown", (event) => {
-  if (!recording) {
-    return;
-  }
-  const target = event.target;
-  if (target instanceof Node && shortcutsEl.contains(target)) {
-    return;
-  }
-  recording = null;
-  paintShortcuts();
-});
+document.addEventListener(
+  "mousedown",
+  (event) => {
+    if (!recording || !binds) {
+      return;
+    }
+    const mouse = eventToMouse(event);
+    if (mouse) {
+      event.preventDefault();
+      const id = recording;
+      saveBind(id, [...splitBinds(binds[id]), mouse].join(", "));
+      return;
+    }
+    if (event.button !== 0) {
+      return;
+    }
+    const target = event.target;
+    if (target instanceof Node && shortcutsEl.contains(target)) {
+      return;
+    }
+    recording = null;
+    paintShortcuts();
+  },
+  true,
+);
 
 void loadSettings().catch((error: unknown) => {
   statusEl.textContent = String(error);

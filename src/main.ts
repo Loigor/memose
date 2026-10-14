@@ -1,11 +1,13 @@
 import { convertFileSrc, invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
+import { LogicalSize } from "@tauri-apps/api/dpi";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import DOMPurify from "dompurify";
 import { marked } from "marked";
 
 import { applyCode, applyTask, applyTitle, taskListOnEnter, toggleTask, wrapText, type Edit } from "./markdown-edit";
-import { defaultBinds, formatBind, isModifierKey, matchBind, modifierDown, type ShortcutBinds } from "./shortcuts";
+import { paintSurface, paintThemeButton, palette, paperAt, stackHeaderHtml, type ThemeName } from "./memo-chrome";
+import { defaultBinds, formatBind, isModifierKey, matchBind, matchMouse, modifierDown, type ShortcutBinds } from "./shortcuts";
 
 type Note = {
   id: string;
@@ -22,9 +24,10 @@ type Note = {
   swatches: number[];
   visibility?: string | null;
   space?: string | null;
+  collapsed?: boolean;
+  stackHost?: string | null;
+  theme?: string | null;
 };
-
-type ThemeName = "light" | "dark";
 type TextBlock = { kind: "text"; text: string };
 type MediaBlock = { kind: "media"; name: string };
 type Block = TextBlock | MediaBlock;
@@ -78,6 +81,9 @@ let gestureHeld = false;
 let showingPreview = false;
 let previewGen = 0;
 const pinnedFromScript = (globalThis as { __memosePin?: unknown }).__memosePin;
+const themeFromScript = (globalThis as { __memoseTheme?: unknown }).__memoseTheme;
+const pinnedThemeHint: ThemeName | null =
+  themeFromScript === "dark" || themeFromScript === "light" ? themeFromScript : null;
 const pinnedNoteId =
   (typeof pinnedFromScript === "string" ? pinnedFromScript : "") ||
   new URLSearchParams(window.location.search).get("pin") ||
@@ -203,6 +209,7 @@ function serializeBlocks(items: Block[]): string {
 function publishBlocks(focusName?: string) {
   noteBlocks = ensureTextSlots(noteBlocks);
   noteContent = serializeBlocks(noteBlocks);
+  syncNoteTitle();
   renderSurface(focusName);
 }
 
@@ -210,6 +217,7 @@ function showStored(content: string) {
   showingPreview = false;
   noteContent = content;
   noteBlocks = parseBlocks(content);
+  syncNoteTitle();
   renderSurface();
 }
 
@@ -673,6 +681,13 @@ function noteTitle(content: string): string {
     .map((part) => part.trim())
     .find((part) => part.length > 0 && !part.startsWith("![](memose-media/"));
   return (line ?? "Image").replace(/^#+\s*/, "");
+}
+
+function syncNoteTitle() {
+  const title = document.querySelector("#note-title");
+  if (title) {
+    title.textContent = noteTitle(noteContent) || "Note";
+  }
 }
 
 function scheduleDraft() {
@@ -1198,6 +1213,7 @@ type Look = {
   hueLight: number | null;
   hueDark: number | null;
   swatches: number[];
+  theme: ThemeName | null;
 };
 
 const lightHue = 48;
@@ -1215,14 +1231,22 @@ const tinted = [
   "--pin-on",
 ];
 
-let look: Look = { opacity: 100, hueLight: null, hueDark: null, swatches: [] };
+let look: Look = { opacity: 100, hueLight: null, hueDark: null, swatches: [], theme: null };
+let appTheme: ThemeName = "light";
 let lookTimer: ReturnType<typeof setTimeout> | undefined;
 let lookWrite: Promise<void> = Promise.resolve();
 let lookUnsaved = false;
 let opacityCarry = 100;
 
 function currentTheme(): ThemeName {
-  return document.documentElement.dataset.theme === "dark" ? "dark" : "light";
+  return look.theme ?? pinnedThemeHint ?? appTheme;
+}
+
+function namedTheme(value: string | null | undefined): ThemeName | null {
+  if (value === "dark" || value === "light") {
+    return value;
+  }
+  return null;
 }
 
 function currentLookId(): string | null {
@@ -1233,7 +1257,7 @@ function currentLookId(): string | null {
 }
 
 function defaultLook(): Look {
-  return { opacity: 100, hueLight: null, hueDark: null, swatches: [] };
+  return { opacity: 100, hueLight: null, hueDark: null, swatches: [], theme: null };
 }
 
 function lookFromNote(note: Note): Look {
@@ -1243,6 +1267,7 @@ function lookFromNote(note: Note): Look {
     hueLight: note.hueLight ?? null,
     hueDark: note.hueDark ?? null,
     swatches: swatches.filter((hue) => hue >= 0 && hue <= 359).slice(0, 6),
+    theme: namedTheme(note.theme),
   };
 }
 
@@ -1252,6 +1277,7 @@ function adoptLook(next: Look) {
     hueLight: next.hueLight,
     hueDark: next.hueDark,
     swatches: [...next.swatches],
+    theme: next.theme,
   };
   opacityCarry = look.opacity;
   lookUnsaved = false;
@@ -1267,10 +1293,6 @@ function activeHue(): number {
   return themeHue() ?? (currentTheme() === "dark" ? darkHue : lightHue);
 }
 
-function paperAt(theme: ThemeName, hue: number): string {
-  return theme === "dark" ? `hsl(${hue} 22% 16%)` : `hsl(${hue} 100% 86%)`;
-}
-
 function chipColor(): string {
   const theme = currentTheme();
   const hue = theme === "dark" ? look.hueDark : look.hueLight;
@@ -1280,54 +1302,18 @@ function chipColor(): string {
   return paperAt(theme, hue);
 }
 
-function palette(theme: ThemeName, hue: number): Record<string, string> {
-  if (theme === "dark") {
-    return {
-      "--paper": paperAt(theme, hue),
-      "--ink": `hsl(${hue} 28% 93%)`,
-      "--muted": `hsl(${hue} 14% 70%)`,
-      "--button": `hsl(${hue} 30% 93% / 0.12)`,
-      "--button-hover": `hsl(${hue} 30% 93% / 0.2)`,
-      "--line": `hsl(${hue} 30% 93% / 0.14)`,
-      "--rule": `hsl(${hue} 18% 90% / 0.42)`,
-      "--shadow": "hsl(0 0% 0% / 0.55)",
-      "--field": "hsl(0 0% 100% / 0.06)",
-      "--pin-on": `hsl(${hue} 40% 96%)`,
-    };
-  }
-  return {
-    "--paper": paperAt(theme, hue),
-    "--ink": `hsl(${hue} 34% 18%)`,
-    "--muted": `hsl(${hue} 32% 36%)`,
-    "--button": `hsl(${hue} 50% 18% / 0.08)`,
-    "--button-hover": `hsl(${hue} 50% 18% / 0.16)`,
-    "--line": `hsl(${hue} 50% 18% / 0.12)`,
-    "--rule": `hsl(${hue} 40% 24% / 0.38)`,
-    "--shadow": `hsl(${hue} 70% 14% / 0.34)`,
-    "--field": "hsl(0 0% 100% / 0.65)",
-    "--pin-on": `hsl(${hue} 18% 14%)`,
-  };
-}
-
 function paintThemeIcon() {
-  const dark = currentTheme() === "dark";
-  if (altHeld) {
-    themeIconEl.innerHTML = `<circle cx="8" cy="8" r="5" fill="${chipColor()}" stroke="currentColor" stroke-width="1.2"/>`;
-    themeToggleEl.setAttribute("aria-label", "Memo color");
-    themeToggleEl.title = "Memo color";
-    return;
-  }
-  themeToggleEl.setAttribute("aria-label", dark ? "Light theme" : "Dark theme");
-  themeToggleEl.title = dark ? "Light theme" : "Dark theme";
-  themeIconEl.innerHTML = dark
-    ? `<circle cx="8" cy="8" r="2.4" fill="currentColor"/><path stroke="currentColor" stroke-width="1.3" d="M8 1.4v1.8M8 12.8v1.8M1.4 8h1.8M12.8 8h1.8M3.2 3.2l1.3 1.3M11.5 11.5l1.3 1.3M12.8 3.2l-1.3 1.3M4.5 11.5l-1.3 1.3"/>`
-    : `<path fill="currentColor" d="M8 1.6a6.2 6.2 0 1 0 5.6 8.7A4.7 4.7 0 0 1 8 1.6z"/>`;
+  paintThemeButton(themeToggleEl, themeIconEl, currentTheme(), altHeld || hostBarOnly(), chipColor());
+  repaintStackColors();
 }
 
 function paintLook() {
   const theme = currentTheme();
   const hue = theme === "dark" ? look.hueDark : look.hueLight;
+  paintSurface(cardEl, theme, hue, look.opacity);
   const root = document.documentElement;
+  root.dataset.theme = theme;
+  root.style.colorScheme = theme;
   root.style.setProperty("--paper-alpha", `${look.opacity}%`);
   const colors = hue == null ? null : palette(theme, hue);
   for (const name of tinted) {
@@ -1340,6 +1326,7 @@ function paintLook() {
   if (altHeld) {
     paintThemeIcon();
   }
+  repaintStackColors();
 }
 
 function paintSlots() {
@@ -1369,7 +1356,7 @@ function syncSlider() {
 }
 
 function applyTheme(theme: ThemeName) {
-  document.documentElement.dataset.theme = theme;
+  appTheme = theme;
   paintThemeIcon();
   paintLook();
   syncSlider();
@@ -1382,6 +1369,7 @@ function enqueueLook(id: string): Promise<void> {
     hueLight: look.hueLight,
     hueDark: look.hueDark,
     swatches: [...look.swatches],
+    theme: look.theme,
   };
   lookWrite = lookWrite
     .then(() => invoke("save_look", payload))
@@ -1597,24 +1585,19 @@ cardEl.addEventListener("mousedown", (event) => {
   }
   const target = event.target;
   if (gestureHeld || modifierDown(binds.gesture, event)) {
-    if (target instanceof Element && target.closest("#theme-toggle, #color-pop, #audience-pop, #visibility-label, #markdown-toggle, #markdown-pop")) {
+    if (target instanceof Element && target.closest("#theme-toggle, #color-pop, #audience-pop, #visibility-label, #markdown-toggle, #markdown-pop, #resize-grip")) {
       return;
     }
-    event.preventDefault();
-    void getCurrentWindow().startDragging();
+    startWindowDrag(event);
     return;
   }
   if (!(target instanceof Element)) {
     return;
   }
-  if (showingPreview && target.closest("#note-pane")) {
+  if (dragBlocked(target)) {
     return;
   }
-  if (target.closest("button, a, input, textarea, select, img, video, .media, label, #preview, #color-pop, #audience-pop, #markdown-pop")) {
-    return;
-  }
-  event.preventDefault();
-  void getCurrentWindow().startDragging();
+  startWindowDrag(event);
 });
 
 blocksEl.addEventListener("paste", (event) => {
@@ -1808,10 +1791,7 @@ pinToggleEl.addEventListener("click", () => {
       await refreshRecent();
       return;
     }
-    if (!noteContent.trim()) {
-      return;
-    }
-    const note = await invoke<Note>("publish_note", { id: editingId || null, content: noteContent });
+    const note = await invoke<Note>("publish_note", { id: editingId || draftId || null, content: noteContent });
     clearTimeout(lookTimer);
     lookTimer = undefined;
     lookUnsaved = false;
@@ -1833,21 +1813,18 @@ pinToggleEl.addEventListener("click", () => {
 });
 
 themeToggleEl.addEventListener("click", (event) => {
-  if (event.altKey || altHeld) {
+  if (event.altKey || altHeld || hostBarOnly()) {
     colorPopEl.hidden = !colorPopEl.hidden;
     if (!colorPopEl.hidden) {
       syncSlider();
     }
     return;
   }
-  const next: ThemeName = currentTheme() === "dark" ? "light" : "dark";
-  applyTheme(next);
-  if (!inTauri()) {
-    return;
-  }
-  void invoke("set_theme", { theme: next }).catch((error: unknown) => {
-    console.error(error);
-  });
+  look.theme = currentTheme() === "dark" ? "light" : "dark";
+  paintThemeIcon();
+  paintLook();
+  syncSlider();
+  scheduleLook();
 });
 
 hueSliderEl.addEventListener("input", () => {
@@ -1919,6 +1896,23 @@ document.addEventListener("mousedown", (event) => {
 });
 
 document.addEventListener("mousedown", (event) => {
+  const target = event.target;
+  if (!(target instanceof Element)) {
+    return;
+  }
+  for (const pop of document.querySelectorAll<HTMLElement>(".stack-note .color-pop, .stack-note .markdown-pop")) {
+    if (pop.hidden || pop.contains(target)) {
+      continue;
+    }
+    const anchor = pop.parentElement;
+    if (anchor?.contains(target)) {
+      continue;
+    }
+    pop.hidden = true;
+  }
+});
+
+document.addEventListener("mousedown", (event) => {
   if (audiencePopEl.hidden) {
     return;
   }
@@ -1970,6 +1964,945 @@ cardEl.addEventListener(
 function inTauri(): boolean {
   return "__TAURI_INTERNALS__" in window;
 }
+
+const NOTE_BAR = 52;
+const WINDOW_BAR = 108;
+const SECTION_OPEN = 420;
+const frameEl = document.querySelector<HTMLElement>("#frame");
+const stackEl = document.querySelector<HTMLElement>("#stack");
+
+type StackState = {
+  collapsed: boolean;
+  hover: boolean;
+  loaded: string;
+  hueLight: number | null;
+  hueDark: number | null;
+  swatches: number[];
+  opacity: number;
+  theme: ThemeName | null;
+};
+
+const stackState = new Map<string, StackState>();
+const saveTimers = new Map<string, ReturnType<typeof setTimeout>>();
+
+let hostCollapsed = false;
+let hostHover = false;
+let hostWasOpen = true;
+let pressTravel = 0;
+let pressAt: { x: number; y: number } | null = null;
+let openNoteHeight = SECTION_OPEN;
+let stackGrow = 0;
+let keepNoteHeight = false;
+let savedHostHeight = 476;
+let heightTween = 0;
+let sizingWindow = false;
+let chromeBar: boolean | null = null;
+
+function hostBarOnly(): boolean {
+  return hostCollapsed && !hostHover;
+}
+
+function hasStack(): boolean {
+  return stackEl != null && stackEl.childElementCount > 0;
+}
+
+function anyNoteBar(): boolean {
+  if (hasStack() && hostBarOnly()) {
+    return true;
+  }
+  for (const state of stackState.values()) {
+    if (state.collapsed && !state.hover) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function applyOpenHeight() {
+  document.documentElement.style.setProperty("--open-h", `${Math.round(openNoteHeight)}px`);
+  document.documentElement.style.setProperty("--bar-h", `${NOTE_BAR}px`);
+}
+
+function rememberOpenSlice() {
+  const box = frameEl?.clientHeight ?? 0;
+  if (box < NOTE_BAR || sizingWindow) {
+    return;
+  }
+  const count = 1 + (stackEl?.childElementCount ?? 0);
+  if (anyNoteBar()) {
+    return;
+  }
+  const slice = Math.max(160, Math.round(box / count));
+  if (keepNoteHeight && slice + 32 < openNoteHeight) {
+    return;
+  }
+  openNoteHeight = slice;
+  stackEl?.querySelectorAll<HTMLElement>(".stack-note").forEach((section) => {
+    section.style.height = "";
+  });
+  document.documentElement.classList.add("fitting");
+  applyOpenHeight();
+  requestAnimationFrame(() => {
+    document.documentElement.classList.remove("fitting");
+  });
+}
+
+async function logicalHeight(): Promise<number> {
+  const win = getCurrentWindow();
+  const factor = await win.scaleFactor();
+  const size = await win.innerSize();
+  return Math.round(size.height / factor);
+}
+
+async function setLogicalHeight(height: number) {
+  const win = getCurrentWindow();
+  const factor = await win.scaleFactor();
+  const size = await win.innerSize();
+  const width = Math.max(220, Math.round(size.width / factor));
+  sizingWindow = true;
+  await win.setSize(new LogicalSize(width, Math.max(96, height)));
+  window.setTimeout(() => {
+    sizingWindow = false;
+  }, 250);
+}
+
+function tweenWindowHeight(target: number) {
+  cancelAnimationFrame(heightTween);
+  void logicalHeight().then((from) => {
+    const began = performance.now();
+    const step = (now: number) => {
+      const t = Math.min(1, (now - began) / 180);
+      const eased = 1 - (1 - t) ** 3;
+      void setLogicalHeight(Math.round(from + (target - from) * eased));
+      if (t < 1) {
+        heightTween = requestAnimationFrame(step);
+      }
+    };
+    heightTween = requestAnimationFrame(step);
+  });
+}
+
+function sectionTheme(state: StackState): ThemeName {
+  return state.theme ?? currentTheme();
+}
+
+function sectionHue(state: StackState): number | null {
+  const theme = sectionTheme(state);
+  return theme === "dark" ? state.hueDark : state.hueLight;
+}
+
+function sectionChip(state: StackState): string {
+  const theme = sectionTheme(state);
+  const hue = sectionHue(state);
+  if (hue == null) {
+    return theme === "dark" ? "#25282c" : "#fff4b8";
+  }
+  return paperAt(theme, hue);
+}
+
+function paintSectionColor(section: HTMLElement, state: StackState) {
+  const theme = sectionTheme(state);
+  paintSurface(section, theme, sectionHue(state), state.opacity);
+  const button = section.querySelector<HTMLElement>(".theme-toggle");
+  const icon = section.querySelector(".theme-icon");
+  if (button && icon) {
+    paintThemeButton(button, icon, theme, altHeld || section.classList.contains("is-bar"), sectionChip(state));
+  }
+}
+
+function repaintStackColors() {
+  stackEl?.querySelectorAll<HTMLElement>(".stack-note").forEach((section) => {
+    const id = section.dataset.id;
+    const state = id ? stackState.get(id) : undefined;
+    if (state) {
+      paintSectionColor(section, state);
+    }
+  });
+}
+
+function syncSection(section: HTMLElement, note: Note) {
+  const state = stackState.get(note.id);
+  if (!state) {
+    return;
+  }
+  section.classList.toggle("is-bar", state.collapsed && !state.hover);
+  const title = section.querySelector(".note-title");
+  if (title) {
+    title.textContent = noteTitle(note.content) || "Note";
+  }
+  const visibility = section.querySelector<HTMLElement>(".visibility-label");
+  if (visibility) {
+    visibility.hidden = false;
+    visibility.textContent = visibilityShort(note.visibility || "PRIVATE", note.space || "");
+  }
+  const edited = section.querySelector<HTMLElement>(".edited-at");
+  const sep = section.querySelector<HTMLElement>(".edited-sep");
+  if (edited && sep) {
+    if (note.updatedAt > 0) {
+      edited.hidden = false;
+      sep.hidden = false;
+      edited.textContent = relativeTime(note.updatedAt);
+      edited.title = exactStamp(note.updatedAt);
+    } else {
+      edited.hidden = true;
+      sep.hidden = true;
+    }
+  }
+  const body = section.querySelector("textarea");
+  if (body && document.activeElement !== body && (body.value === state.loaded || body.value === note.content)) {
+    body.value = note.content;
+    state.loaded = note.content;
+  }
+  const hue = section.querySelector<HTMLInputElement>(".hue-slider");
+  if (hue && document.activeElement !== hue) {
+    hue.value = String(sectionHue(state) ?? 48);
+  }
+  paintSectionSlots(section, state);
+  paintSectionColor(section, state);
+}
+
+type SectionLift = {
+  id: string;
+  pointerId: number;
+  x: number;
+  y: number;
+  started: boolean;
+};
+
+let sectionLift: SectionLift | null = null;
+
+function beginSectionLift(section: HTMLElement, title: HTMLElement, event: PointerEvent) {
+  const id = section.dataset.id;
+  if (!id) {
+    return;
+  }
+  sectionLift = {
+    id,
+    pointerId: event.pointerId,
+    x: event.clientX,
+    y: event.clientY,
+    started: false,
+  };
+  title.setPointerCapture(event.pointerId);
+}
+
+function moveSectionLift(section: HTMLElement, title: HTMLElement, event: PointerEvent) {
+  const lift = sectionLift;
+  if (!lift || lift.started || event.pointerId !== lift.pointerId) {
+    return;
+  }
+  const dx = event.clientX - lift.x;
+  const dy = event.clientY - lift.y;
+  if (dx * dx + dy * dy < 36) {
+    return;
+  }
+  lift.started = true;
+  title.dataset.moved = "1";
+  const sources: HTMLElement[] = [section];
+  let next = section.nextElementSibling;
+  while (next instanceof HTMLElement && next.classList.contains("stack-note")) {
+    sources.push(next);
+    next = next.nextElementSibling;
+  }
+  for (const source of sources) {
+    source.classList.add("lifting");
+  }
+  const first = section.getBoundingClientRect();
+  const last = sources[sources.length - 1].getBoundingClientRect();
+  const factor = window.devicePixelRatio || 1;
+  const x = Math.round((event.screenX - (event.clientX - first.left) - 24) * factor);
+  const y = Math.round((event.screenY - (event.clientY - first.top) - 24) * factor);
+  const w = Math.round((first.width + 48) * factor);
+  const h = Math.round((last.bottom - first.top + 56) * factor);
+  const grabX = Math.round(event.screenX * factor) - x;
+  const grabY = Math.round(event.screenY * factor) - y;
+  const state = stackState.get(lift.id);
+  void invoke("detach_stack", {
+    guestId: lift.id,
+    x,
+    y,
+    w,
+    h,
+    theme: state ? sectionTheme(state) : currentTheme(),
+    grabX,
+    grabY,
+    pull: Math.round(64 * factor),
+  }).catch((error: unknown) => {
+    console.error(error);
+    for (const source of sources) {
+      source.classList.remove("lifting");
+    }
+  });
+}
+
+function endSectionLift(title: HTMLElement, event: PointerEvent, _commit: boolean) {
+  const lift = sectionLift;
+  if (!lift || event.pointerId !== lift.pointerId) {
+    return;
+  }
+  sectionLift = null;
+  if (title.hasPointerCapture(event.pointerId)) {
+    title.releasePointerCapture(event.pointerId);
+  }
+}
+
+function saveSectionLook(id: string, state: StackState) {
+  void invoke("save_look", {
+    id,
+    opacity: state.opacity,
+    hueLight: state.hueLight,
+    hueDark: state.hueDark,
+    swatches: state.swatches,
+    theme: state.theme,
+  }).catch((error: unknown) => {
+    console.error(error);
+  });
+}
+
+function setSectionHue(section: HTMLElement, state: StackState, hue: number) {
+  if (sectionTheme(state) === "dark") {
+    state.hueDark = hue;
+  } else {
+    state.hueLight = hue;
+  }
+  paintSectionColor(section, state);
+  paintSectionSlots(section, state);
+  const id = section.dataset.id;
+  if (id) {
+    saveSectionLook(id, state);
+  }
+}
+
+function paintSectionSlots(section: HTMLElement, state: StackState) {
+  const theme = sectionTheme(state);
+  const current = sectionHue(state);
+  const slots = [...section.querySelectorAll<HTMLButtonElement>(".hue-slot")];
+  slots.forEach((slot, index) => {
+    const hue = state.swatches[index];
+    if (hue == null) {
+      slot.style.background = "";
+      delete slot.dataset.hue;
+      slot.setAttribute("aria-pressed", "false");
+      return;
+    }
+    slot.dataset.hue = String(hue);
+    slot.style.background = paperAt(theme, hue);
+    slot.setAttribute("aria-pressed", String(hue === current));
+  });
+  const add = section.querySelector<HTMLButtonElement>(".hue-add");
+  const slider = section.querySelector<HTMLInputElement>(".hue-slider");
+  if (add && slider) {
+    const hue = Number(slider.value);
+    add.disabled = state.swatches.length >= 6 || state.swatches.includes(hue);
+    slider.style.setProperty("--thumb", paperAt(theme, current ?? hue));
+  }
+}
+
+function buildSection(note: Note): HTMLElement {
+  const section = document.createElement("section");
+  section.className = "stack-note";
+  section.dataset.id = note.id;
+  section.innerHTML = `${stackHeaderHtml()}
+    <textarea class="stack-body" spellcheck="false" writingsuggestions="false" autocomplete="off" autocorrect="off" autocapitalize="off"></textarea>
+    <div class="stack-preview" hidden></div>
+  `;
+  const field = section.querySelector<HTMLTextAreaElement>("textarea");
+  if (field) {
+    field.value = note.content;
+  }
+  const header = section.querySelector<HTMLElement>("header");
+  let openedAtPress = true;
+  if (!header) {
+    return section;
+  }
+  header.addEventListener("pointerdown", (event) => {
+    if (event.button !== 0) {
+      return;
+    }
+    const target = event.target;
+    if (dragBlocked(target)) {
+      return;
+    }
+    event.stopPropagation();
+    event.preventDefault();
+    openedAtPress = !stackState.get(note.id)?.collapsed;
+    if (gestureHeld || modifierDown(binds.gesture, event)) {
+      header.dataset.moved = "0";
+      beginSectionLift(section, header, event);
+      return;
+    }
+    const pointerId = event.pointerId;
+    const originX = event.clientX;
+    const originY = event.clientY;
+    let held = false;
+    header.setPointerCapture(pointerId);
+    const timer = window.setTimeout(() => {
+      held = true;
+      header.classList.add("detach-hold");
+      header.dataset.moved = "0";
+      beginSectionLift(section, header, event);
+    }, 420);
+    const stopWait = () => {
+      window.clearTimeout(timer);
+      header.classList.remove("detach-hold");
+      header.removeEventListener("pointermove", onMove);
+      header.removeEventListener("pointerup", onUp);
+      header.removeEventListener("pointercancel", onUp);
+    };
+    const onMove = (ev: PointerEvent) => {
+      if (ev.pointerId !== pointerId || held) {
+        return;
+      }
+      const dx = ev.clientX - originX;
+      const dy = ev.clientY - originY;
+      if (dx * dx + dy * dy < 36) {
+        return;
+      }
+      stopWait();
+      if (header.hasPointerCapture(pointerId)) {
+        header.releasePointerCapture(pointerId);
+      }
+      startWindowDrag(ev);
+    };
+    const onUp = (ev: PointerEvent) => {
+      if (ev.pointerId !== pointerId) {
+        return;
+      }
+      stopWait();
+    };
+    header.addEventListener("pointermove", onMove);
+    header.addEventListener("pointerup", onUp);
+    header.addEventListener("pointercancel", onUp);
+  });
+  header.addEventListener("pointermove", (event) => {
+    moveSectionLift(section, header, event);
+  });
+  header.addEventListener("pointerup", (event) => {
+    endSectionLift(header, event, true);
+  });
+  header.addEventListener("pointercancel", (event) => {
+    endSectionLift(header, event, false);
+  });
+  header.addEventListener("dblclick", () => {
+    if (header.dataset.moved === "1" || !openedAtPress) {
+      header.dataset.moved = "0";
+      return;
+    }
+    const id = section.dataset.id;
+    const state = id ? stackState.get(id) : undefined;
+    if (id && state && !state.collapsed) {
+      void toggleSection(id);
+    }
+  });
+  section.addEventListener("click", () => {
+    const state = stackState.get(note.id);
+    if (!state?.collapsed || pressTravel > 8 || header.dataset.moved === "1") {
+      return;
+    }
+    state.collapsed = false;
+    state.hover = false;
+    section.classList.remove("is-bar");
+    paintSectionColor(section, state);
+    void invoke("set_collapsed", { id: note.id, collapsed: false }).catch((error: unknown) => {
+      console.error(error);
+    });
+  });
+  section.addEventListener("pointerdown", (event) => {
+    if (event.button !== 0 || !inTauri() || isPreviewWindow()) {
+      return;
+    }
+    const target = event.target;
+    if (!(target instanceof Element)) {
+      return;
+    }
+    if (target.closest("header, button, input, textarea, .color-pop, .markdown-pop, #resize-grip")) {
+      return;
+    }
+    startWindowDrag(event);
+  });
+  section.addEventListener("mouseenter", () => {
+    syncCollapsedPeek();
+  });
+  section.addEventListener("mouseleave", () => {
+    syncCollapsedPeek();
+  });
+  const body = section.querySelector<HTMLTextAreaElement>("textarea");
+  body?.addEventListener("input", () => {
+    const id = section.dataset.id;
+    const state = id ? stackState.get(id) : undefined;
+    if (!id || !state || !body) {
+      return;
+    }
+    const titleEl = section.querySelector(".note-title");
+    if (titleEl) {
+      titleEl.textContent = noteTitle(body.value) || "Note";
+    }
+    const content = body.value;
+    const pending = saveTimers.get(id);
+    if (pending) {
+      clearTimeout(pending);
+    }
+    saveTimers.set(
+      id,
+      setTimeout(() => {
+        state.loaded = content;
+        void invoke("save_edit", { id, content }).catch((error: unknown) => {
+          console.error(error);
+        });
+      }, 300),
+    );
+  });
+  const themeButton = section.querySelector<HTMLButtonElement>(".theme-toggle");
+  const pop = section.querySelector<HTMLElement>(".color-pop");
+  const hue = section.querySelector<HTMLInputElement>(".hue-slider");
+  themeButton?.addEventListener("click", (event) => {
+    const state = stackState.get(note.id);
+    if (!state || !pop) {
+      return;
+    }
+    if (event.altKey || altHeld || section.classList.contains("is-bar")) {
+      pop.hidden = !pop.hidden;
+      return;
+    }
+    state.theme = sectionTheme(state) === "dark" ? "light" : "dark";
+    paintSectionColor(section, state);
+    paintSectionSlots(section, state);
+    saveSectionLook(note.id, state);
+  });
+  hue?.addEventListener("input", () => {
+    const state = stackState.get(note.id);
+    if (!state || !hue) {
+      return;
+    }
+    setSectionHue(section, state, Number(hue.value));
+  });
+  section.querySelectorAll<HTMLButtonElement>(".hue-slot").forEach((slot) => {
+    slot.addEventListener("click", () => {
+      const state = stackState.get(note.id);
+      const raw = slot.dataset.hue;
+      if (!state || raw == null || raw === "") {
+        return;
+      }
+      setSectionHue(section, state, Number(raw));
+    });
+  });
+  section.querySelector<HTMLButtonElement>(".hue-add")?.addEventListener("click", () => {
+    const state = stackState.get(note.id);
+    if (!state || !hue || state.swatches.length >= 6) {
+      return;
+    }
+    const value = Number(hue.value);
+    if (state.swatches.includes(value)) {
+      return;
+    }
+    state.swatches.push(value);
+    setSectionHue(section, state, value);
+  });
+  const markdownPop = section.querySelector<HTMLElement>(".markdown-pop");
+  const markdownToggle = section.querySelector<HTMLButtonElement>(".markdown-toggle");
+  markdownToggle?.addEventListener("mousedown", (event) => {
+    event.preventDefault();
+  });
+  markdownToggle?.addEventListener("click", () => {
+    if (!markdownPop || !markdownToggle) {
+      return;
+    }
+    markdownPop.hidden = !markdownPop.hidden;
+    markdownToggle.setAttribute("aria-expanded", String(!markdownPop.hidden));
+  });
+  markdownPop?.addEventListener("click", (event) => {
+    const button = event.target instanceof Element ? event.target.closest("button") : null;
+    const kind = button?.dataset.markdown;
+    const field = section.querySelector("textarea");
+    if (!kind || !(field instanceof HTMLTextAreaElement)) {
+      return;
+    }
+    const start = field.selectionStart;
+    const end = field.selectionEnd;
+    const value = field.value;
+    const edit =
+      kind === "bold"
+        ? wrapText(value, start, end, "**", "**")
+        : kind === "italic"
+          ? wrapText(value, start, end, "*", "*")
+          : kind === "title"
+            ? applyTitle(value, start, end)
+            : kind === "task"
+              ? applyTask(value, start, end)
+              : kind === "code"
+                ? applyCode(value, start, end)
+                : null;
+    if (!edit) {
+      return;
+    }
+    field.value = edit.value;
+    field.setSelectionRange(edit.start, edit.end);
+    field.dispatchEvent(new Event("input"));
+    if (markdownPop) {
+      markdownPop.hidden = true;
+    }
+  });
+  const mode = section.querySelector<HTMLButtonElement>(".mode-toggle");
+  const preview = section.querySelector<HTMLElement>(".stack-preview");
+  mode?.addEventListener("click", () => {
+    const field = section.querySelector("textarea");
+    if (!mode || !preview || !(field instanceof HTMLTextAreaElement)) {
+      return;
+    }
+    const open = preview.hidden;
+    preview.hidden = !open;
+    field.hidden = open;
+    mode.textContent = open ? "Edit" : "Preview";
+    mode.setAttribute("aria-pressed", String(open));
+    if (open) {
+      const parsed = marked.parse(field.value, { async: false });
+      preview.innerHTML = DOMPurify.sanitize(parsed);
+    }
+  });
+  section.querySelector<HTMLButtonElement>(".pin-toggle")?.addEventListener("click", () => {
+    void invoke("set_pinned", { id: note.id, pinned: false, fromComposer: false }).catch((error: unknown) => {
+      console.error(error);
+    });
+  });
+  return section;
+}
+
+async function loadStack() {
+  if (!stackEl) {
+    return;
+  }
+  if (!pinnedNoteId || !inTauri()) {
+    stackState.clear();
+    stackEl.replaceChildren();
+    frameEl?.classList.remove("has-stack");
+    cardEl.classList.remove("stacked-host", "is-bar");
+    return;
+  }
+  const notes = await invoke<Note[]>("stack_chain", { hostId: pinnedNoteId });
+  const ids = new Set(notes.map((note) => note.id));
+  for (const id of [...stackState.keys()]) {
+    if (!ids.has(id)) {
+      stackState.delete(id);
+    }
+  }
+  for (const note of notes) {
+    const prev = stackState.get(note.id);
+    stackState.set(note.id, {
+      collapsed: prev?.collapsed ?? Boolean(note.collapsed),
+      hover: prev?.hover ?? false,
+      loaded: prev?.loaded ?? note.content,
+      hueLight: note.hueLight,
+      hueDark: note.hueDark,
+      swatches: [...note.swatches],
+      opacity: note.opacity,
+      theme: prev?.theme ?? namedTheme(note.theme),
+    });
+  }
+  const existing = [...stackEl.children].map((node) => (node as HTMLElement).dataset.id);
+  const previous = new Set(existing.filter((id): id is string => Boolean(id)));
+  const nextIds = notes.map((note) => note.id);
+  const same = existing.length === nextIds.length && existing.every((id, index) => id === nextIds[index]);
+  if (!same) {
+    const sections = notes.map((note) => buildSection(note));
+    stackEl.replaceChildren(...sections);
+    for (const section of sections) {
+      const id = section.dataset.id || "";
+      if (!previous.has(id) && !stackState.get(id)?.collapsed) {
+        section.classList.add("joining");
+      }
+    }
+    stackGrow = 0;
+    frameEl?.classList.toggle("has-stack", notes.length > 0);
+    cardEl.classList.toggle("stacked-host", notes.length > 0);
+    applyOpenHeight();
+    const openGuests = notes.filter((note) => !stackState.get(note.id)?.collapsed).length;
+    const bars = (hostBarOnly() ? 1 : 0) + (notes.length - openGuests);
+    const opens = (hostBarOnly() ? 0 : 1) + openGuests;
+    const chrome = 56;
+    const target = chrome + openNoteHeight * opens + NOTE_BAR * bars;
+    keepNoteHeight = true;
+    sizingWindow = true;
+    const current = await logicalHeight();
+    if (target > current + 24) {
+      await setLogicalHeight(target);
+    }
+    window.setTimeout(() => {
+      keepNoteHeight = false;
+    }, 400);
+  }
+  notes.forEach((note, index) => {
+    const section = stackEl.children[index];
+    if (section instanceof HTMLElement) {
+      syncSection(section, note);
+    }
+  });
+  frameEl?.classList.toggle("has-stack", notes.length > 0);
+  cardEl.classList.toggle("stacked-host", notes.length > 0);
+  cardEl.classList.toggle("is-bar", notes.length > 0 && hostBarOnly());
+  applyOpenHeight();
+}
+
+async function toggleSection(id: string) {
+  const state = stackState.get(id);
+  if (!state) {
+    return;
+  }
+  state.collapsed = !state.collapsed;
+  state.hover = false;
+  const section = stackEl?.querySelector<HTMLElement>(`.stack-note[data-id="${id}"]`);
+  section?.classList.toggle("is-bar", state.collapsed);
+  await invoke("set_collapsed", { id, collapsed: state.collapsed }).catch((error: unknown) => {
+    console.error(error);
+  });
+}
+
+function paintChrome() {
+  document.documentElement.classList.toggle("collapsed", hostCollapsed);
+  document.documentElement.classList.toggle("hover-open", hostCollapsed && hostHover);
+  frameEl?.classList.toggle("has-stack", hasStack());
+  cardEl.classList.toggle("is-bar", hasStack() && hostBarOnly());
+  syncNoteTitle();
+  paintThemeIcon();
+  applyOpenHeight();
+  if (!inTauri() || isPreviewWindow() || hasStack()) {
+    return;
+  }
+  const bar = hostBarOnly();
+  const first = chromeBar === null;
+  if (chromeBar === bar) {
+    return;
+  }
+  chromeBar = bar;
+  if (first) {
+    return;
+  }
+  tweenWindowHeight(bar ? WINDOW_BAR : savedHostHeight);
+}
+
+async function setHostCollapsed(collapsed: boolean) {
+  if (hostCollapsed === collapsed) {
+    return;
+  }
+  if (collapsed && !hasStack()) {
+    savedHostHeight = await logicalHeight();
+    rememberOpenSlice();
+  }
+  hostCollapsed = collapsed;
+  hostHover = false;
+  const id = pinnedNoteId || editingId;
+  if (id && inTauri()) {
+    await invoke("set_collapsed", { id, collapsed: hostCollapsed }).catch((error: unknown) => {
+      console.error(error);
+    });
+  }
+  paintChrome();
+}
+
+function syncCollapsedPeek() {
+  const peek = gestureHeld;
+  if (hostCollapsed) {
+    const over = cardEl.matches(":hover");
+    const next = peek && over;
+    if (next !== hostHover) {
+      hostHover = next;
+      paintChrome();
+    }
+  } else if (hostHover) {
+    hostHover = false;
+    paintChrome();
+  }
+  stackEl?.querySelectorAll<HTMLElement>(".stack-note").forEach((section) => {
+    const id = section.dataset.id;
+    const state = id ? stackState.get(id) : undefined;
+    if (!state?.collapsed) {
+      return;
+    }
+    const next = peek && section.matches(":hover");
+    if (next === state.hover) {
+      return;
+    }
+    state.hover = next;
+    section.classList.toggle("is-bar", !next);
+  });
+}
+
+function dragBlocked(target: EventTarget | null): boolean {
+  return (
+    target instanceof Element &&
+    Boolean(
+      target.closest(
+        "button, a, input, textarea, select, #resize-grip, #color-pop, #audience-pop, #markdown-pop, .color-pop, .markdown-pop",
+      ),
+    )
+  );
+}
+
+function inResizeCorner(event: MouseEvent): boolean {
+  return window.innerWidth - event.clientX <= 64 && window.innerHeight - event.clientY <= 72;
+}
+
+let resizing = false;
+
+function startResize(event: MouseEvent) {
+  if (resizing || !inTauri() || isPreviewWindow()) {
+    return;
+  }
+  event.preventDefault();
+  event.stopPropagation();
+  resizing = true;
+  void invoke("begin_corner_resize", { label: getCurrentWindow().label })
+    .catch((error: unknown) => {
+      console.error(error);
+    })
+    .finally(() => {
+      resizing = false;
+    });
+}
+
+function startWindowDrag(event: MouseEvent) {
+  if (!inTauri() || isPreviewWindow()) {
+    return;
+  }
+  if (inResizeCorner(event)) {
+    startResize(event);
+    return;
+  }
+  event.preventDefault();
+  void getCurrentWindow().startDragging();
+  void invoke("begin_memo_drag", { label: getCurrentWindow().label });
+}
+
+function typingNote(): boolean {
+  const el = document.activeElement;
+  return el instanceof HTMLTextAreaElement || el instanceof HTMLInputElement;
+}
+
+function slideOut() {
+  if (!inTauri() || isPreviewWindow() || resizing) {
+    return;
+  }
+  void invoke("slide_into_view", { label: getCurrentWindow().label }).catch((error: unknown) => {
+    console.error(error);
+  });
+}
+
+function slideHome() {
+  if (!inTauri() || isPreviewWindow() || resizing || typingNote()) {
+    return;
+  }
+  void invoke("slide_back", { label: getCurrentWindow().label }).catch((error: unknown) => {
+    console.error(error);
+  });
+}
+
+function finishSnapDrag() {
+  if (!inTauri()) {
+    return;
+  }
+  void invoke("end_memo_drag", { label: getCurrentWindow().label });
+}
+
+function wireChrome() {
+  window.addEventListener(
+    "pointerdown",
+    (event) => {
+      if (event.button !== 0 || !inResizeCorner(event)) {
+        return;
+      }
+      startResize(event);
+    },
+    true,
+  );
+  window.addEventListener(
+    "mousedown",
+    (event) => {
+      if (event.button !== 0 || !inResizeCorner(event)) {
+        return;
+      }
+      event.preventDefault();
+      event.stopPropagation();
+      startResize(event);
+    },
+    true,
+  );
+
+  const hostHeader = document.querySelector<HTMLElement>("#card header");
+  hostHeader?.addEventListener("pointerdown", (event) => {
+    if (event.button !== 0 || dragBlocked(event.target)) {
+      return;
+    }
+    hostWasOpen = !hostCollapsed;
+    startWindowDrag(event);
+  });
+  const hostBrand = document.querySelector<HTMLElement>("#card .brand");
+  hostBrand?.addEventListener("dblclick", (event) => {
+    const target = event.target;
+    if (target instanceof Element && target.closest("button, input, #audience-pop, #color-pop")) {
+      return;
+    }
+    if (!hostWasOpen) {
+      return;
+    }
+    void setHostCollapsed(true);
+  });
+
+  cardEl.addEventListener("click", () => {
+    if (!hostCollapsed || pressTravel > 8) {
+      return;
+    }
+    void setHostCollapsed(false);
+  });
+  cardEl.addEventListener("mouseenter", () => {
+    syncCollapsedPeek();
+  });
+  document.documentElement.addEventListener("mouseenter", slideOut);
+  document.documentElement.addEventListener("mouseleave", slideHome);
+  document.addEventListener("focusin", () => {
+    if (typingNote()) {
+      slideOut();
+    }
+  });
+  document.addEventListener("focusout", () => {
+    window.setTimeout(slideHome, 0);
+  });
+  cardEl.addEventListener("mouseleave", () => {
+    syncCollapsedPeek();
+  });
+
+  window.addEventListener("pointerdown", (event) => {
+    pressAt = { x: event.clientX, y: event.clientY };
+    pressTravel = 0;
+  });
+  window.addEventListener("pointermove", (event) => {
+    if (pressAt && event.buttons % 2 === 1) {
+      const dx = event.clientX - pressAt.x;
+      const dy = event.clientY - pressAt.y;
+      pressTravel = Math.max(pressTravel, Math.hypot(dx, dy));
+    }
+    if (hostCollapsed || stackEl) {
+      syncCollapsedPeek();
+    }
+  });
+  window.addEventListener("pointerup", () => {
+    finishSnapDrag();
+  });
+  window.addEventListener("pointercancel", () => {
+    finishSnapDrag();
+  });
+
+  if (frameEl && typeof ResizeObserver !== "undefined") {
+    const observer = new ResizeObserver(() => {
+      if (sizingWindow || anyNoteBar()) {
+        return;
+      }
+      rememberOpenSlice();
+    });
+    observer.observe(frameEl);
+  }
+
+}
+
+wireChrome();
 
 function isPreviewWindow(): boolean {
   return inTauri() && getCurrentWindow().label === "media-preview";
@@ -2030,6 +2963,7 @@ if (!isPreviewWindow()) {
       if (isModifierKey(binds.gesture, event.key)) {
         if (!event.repeat) {
           gestureHeld = true;
+          syncCollapsedPeek();
         }
         return;
       }
@@ -2071,10 +3005,12 @@ if (!isPreviewWindow()) {
     }
     if (isModifierKey(binds.gesture, event.key)) {
       gestureHeld = false;
+      syncCollapsedPeek();
     }
   });
   window.addEventListener("blur", () => {
     gestureHeld = false;
+    syncCollapsedPeek();
     if (!altHeld) {
       return;
     }
@@ -2095,7 +3031,59 @@ if (!isPreviewWindow()) {
     void listen<ShortcutBinds>("shortcuts-changed", (event) => {
       applyBinds(event.payload);
     });
+    window.addEventListener(
+      "pointerdown",
+      (event) => {
+        if (event.button < 1 || event.button === 2) {
+          return;
+        }
+        const matched = [binds.newMemo, binds.togglePinned, binds.preview, binds.hide, binds.randomHue].some((binding) =>
+          matchMouse(event, binding),
+        );
+        if (!matched) {
+          return;
+        }
+        event.preventDefault();
+        void invoke("mouse_chord", {
+          button: event.button + 1,
+          alt: event.altKey,
+          ctrl: event.ctrlKey,
+          shift: event.shiftKey,
+          meta: event.metaKey,
+        }).catch((error: unknown) => {
+          console.error(error);
+        });
+      },
+      true,
+    );
+    void listen<{ button: number; alt: boolean; ctrl: boolean; shift: boolean; meta: boolean }>("mouse-chord", (event) => {
+      const chord = {
+        button: event.payload.button - 1,
+        altKey: event.payload.alt,
+        ctrlKey: event.payload.ctrl,
+        shiftKey: event.payload.shift,
+        metaKey: event.payload.meta,
+      };
+      if (matchMouse(chord, binds.randomHue)) {
+        randomHue();
+        return;
+      }
+      if (matchMouse(chord, binds.preview)) {
+        togglePreview();
+        return;
+      }
+      if (matchMouse(chord, binds.hide)) {
+        void invoke("hide_memos").catch((error: unknown) => {
+          console.error(error);
+        });
+      }
+    });
   }
+}
+
+if (pinnedThemeHint) {
+  look.theme = pinnedThemeHint;
+  paintLook();
 }
 
 renderSurface();
@@ -2112,7 +3100,9 @@ function applyPinned(note: Note) {
   setConflict(note.syncState === "conflict" ? note.id : null);
   setPinPressed(note.pinned);
   setEditedAt(note.updatedAt);
+  hostCollapsed = Boolean(note.collapsed);
   paintAudience(note);
+  void paintChrome();
   if (lookTimer === undefined) {
     adoptLook(lookFromNote(note));
   }
@@ -2128,6 +3118,7 @@ async function loadPinned(id: string) {
     return;
   }
   applyPinned(stored);
+  await loadStack();
   await loadTheme();
   if (stored.syncState !== "remote") {
     return;
@@ -2207,6 +3198,21 @@ if (isPreviewWindow()) {
     void loadPinned(pinnedNoteId).catch((error: unknown) => {
       console.error(error);
     });
+  });
+  void listen("stack-changed", (event) => {
+    const extra = typeof event.payload === "number" ? event.payload : 0;
+    if (extra > 0) {
+      stackGrow += extra;
+    }
+    void loadStack().catch((error: unknown) => {
+      console.error(error);
+    });
+  });
+  void listen<string>("stack-aim", (event) => {
+    const notes = document.getElementById("notes");
+    const mode = event.payload;
+    notes?.classList.toggle("stack-aim", mode === "hold" || mode === "ready");
+    notes?.classList.toggle("stack-ready", mode === "ready");
   });
 } else if (inTauri()) {
   void listen<number>("composer-focus", (event) => {

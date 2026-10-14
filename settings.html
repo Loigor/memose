@@ -35,12 +35,17 @@
         <input id="autostart" type="checkbox" />
         Launch at login
       </label>
+      <label class="check">
+        <input id="snap-memos" type="checkbox" />
+        Snap memos to a screen grid
+      </label>
+      <p class="hint">New memos open on the nearest point. Dragging eases onto a grid point and holds there until you pull away. Drop a memo onto a stack to attach it at the bottom. Drag a stacked title away to take that memo and everything below it.</p>
       <h2>On a memo</h2>
       <p class="field-label">Modifier</p>
       <div id="gesture" class="choices"></div>
       <p id="gesture-hint" class="hint"></p>
       <h2>Shortcuts</h2>
-      <p class="hint">Click a shortcut, then press the keys you want. New memo and Toggle pinned also work from other apps.</p>
+      <p class="hint">Click + and press keys or a mouse button, such as Alt+Mouse 4. An action can have more than one shortcut. New memo and Toggle pinned also work from other apps. On Mac, a side button from another app needs Accessibility permission for Memose.</p>
       <div id="shortcuts"></div>
       <p id="settings-status" role="status"></p>
     </main>

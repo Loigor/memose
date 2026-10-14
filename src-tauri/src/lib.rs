@@ -2,6 +2,7 @@ mod auth;
 mod commands;
 mod error;
 mod media;
+mod mouse_hook;
 mod notes;
 mod shortcuts;
 mod state;
@@ -65,6 +66,8 @@ pub fn run() {
             if let Err(err) = shortcuts::install(app.handle(), &binds) {
                 eprintln!("memose: shortcuts unavailable ({err})");
             }
+            mouse_hook::start(app.handle().clone());
+            window_ctl::watch_offscreen_hover(app.handle().clone());
             notes::start_worker(app.handle().clone());
             notes::request_sync(app.handle());
             Ok(())
@@ -87,6 +90,7 @@ pub fn run() {
             commands::set_note_audience,
             commands::delete_note,
             commands::get_shortcuts,
+            commands::mouse_chord,
             commands::save_shortcut,
             commands::clear_memos,
             commands::test_memos,
@@ -100,7 +104,19 @@ pub fn run() {
             commands::set_pinned,
             commands::hide_memos,
             commands::hide_composer,
-            commands::set_autostart
+            commands::set_autostart,
+            commands::set_snap_memos,
+            commands::set_collapsed,
+            commands::stack_guest,
+            commands::stack_chain,
+            commands::move_snap,
+            commands::end_snap_drag,
+            commands::begin_memo_drag,
+            commands::end_memo_drag,
+            commands::slide_into_view,
+            commands::slide_back,
+            commands::begin_corner_resize,
+            commands::detach_stack
         ])
         .run(tauri::generate_context!())
         .expect("error while running memose");

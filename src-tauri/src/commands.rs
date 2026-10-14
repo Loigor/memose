@@ -17,6 +17,7 @@ pub(crate) struct SettingsView {
     launch_at_login: bool,
     visibility: String,
     space: String,
+    snap_memos: bool,
 }
 
 #[derive(Serialize)]
@@ -119,7 +120,94 @@ pub fn get_settings(app: AppHandle, state: State<AppState>) -> Result<SettingsVi
                 .unwrap_or_else(|| "PRIVATE".into()),
         ),
         space: state.db.get_meta(notes::MEMO_SPACE)?.unwrap_or_default(),
+        snap_memos: state.db.get_meta(notes::SNAP_MEMOS)?.as_deref() == Some("1"),
     })
+}
+
+#[tauri::command]
+pub fn set_snap_memos(app: AppHandle, state: State<AppState>, enabled: bool) -> Result<(), AppError> {
+    state.db.set_meta(notes::SNAP_MEMOS, if enabled { "1" } else { "0" })?;
+    let _ = app.emit("snap-changed", enabled);
+    Ok(())
+}
+
+#[tauri::command]
+pub fn set_collapsed(state: State<AppState>, id: String, collapsed: bool) -> Result<(), AppError> {
+    state.db.set_collapsed(&id, collapsed)
+}
+
+#[tauri::command]
+pub fn stack_guest(state: State<AppState>, host_id: String) -> Result<Option<Note>, AppError> {
+    state.db.guest_of(&host_id)
+}
+
+#[tauri::command]
+pub fn stack_chain(state: State<AppState>, host_id: String) -> Result<Vec<Note>, AppError> {
+    state.db.chain_after(&host_id)
+}
+
+#[tauri::command]
+pub fn move_snap(app: AppHandle, label: String, x: i32, y: i32) -> Result<(), AppError> {
+    window_ctl::move_towards(&app, &label, x, y);
+    Ok(())
+}
+
+#[tauri::command]
+pub fn end_snap_drag(app: AppHandle, label: String) -> Result<(), AppError> {
+    window_ctl::end_snap_drag(&app, &label);
+    Ok(())
+}
+
+#[tauri::command]
+pub fn begin_memo_drag(label: String) {
+    window_ctl::begin_memo_drag(&label);
+}
+
+#[tauri::command]
+pub fn end_memo_drag(app: AppHandle, label: String) {
+    window_ctl::end_memo_drag(&app, &label);
+}
+
+#[tauri::command]
+pub fn slide_into_view(app: AppHandle, label: String) {
+    window_ctl::slide_into_view(&app, &label);
+}
+
+#[tauri::command]
+pub fn slide_back(app: AppHandle, label: String) {
+    window_ctl::slide_back(&app, &label);
+}
+
+#[tauri::command]
+pub async fn begin_corner_resize(app: AppHandle, label: String) {
+    let (tx, rx) = std::sync::mpsc::channel();
+    window_ctl::begin_corner_resize(app, label, tx);
+    let _ = tauri::async_runtime::spawn_blocking(move || rx.recv()).await;
+}
+
+#[tauri::command]
+pub fn detach_stack(
+    app: AppHandle,
+    guest_id: String,
+    x: Option<i32>,
+    y: Option<i32>,
+    w: Option<i32>,
+    h: Option<i32>,
+    theme: Option<String>,
+    grab_x: Option<i32>,
+    grab_y: Option<i32>,
+    pull: Option<i32>,
+) -> Result<(), AppError> {
+    let at = match (x, y, w, h) {
+        (Some(x), Some(y), Some(w), Some(h)) => Some((x, y, w, h)),
+        _ => None,
+    };
+    let follow = match (grab_x, grab_y, pull) {
+        (Some(grab_x), Some(grab_y), Some(pull)) => Some((grab_x, grab_y, pull)),
+        _ => None,
+    };
+    window_ctl::detach_guest(&app, &guest_id, at, theme.as_deref(), follow);
+    Ok(())
 }
 
 #[tauri::command]
@@ -212,10 +300,16 @@ pub async fn delete_note(app: AppHandle, state: State<'_, AppState>, id: String)
             }
         }
     }
+    window_ctl::prepare_remove(&app, &id);
     state.db.delete_note(&id)?;
     window_ctl::close_pinned(&app, &id);
     let _ = app.emit("notes-changed", ());
     Ok(())
+}
+
+#[tauri::command]
+pub fn mouse_chord(app: AppHandle, button: u8, alt: bool, ctrl: bool, shift: bool, meta: bool) {
+    shortcuts::dispatch_mouse(&app, button, alt, ctrl, shift, meta);
 }
 
 #[tauri::command]
@@ -301,10 +395,11 @@ pub fn save_look(
     hue_light: Option<u16>,
     hue_dark: Option<u16>,
     swatches: Vec<u16>,
+    theme: Option<String>,
 ) -> Result<(), AppError> {
     state
         .db
-        .save_look(&id, opacity, hue_light, hue_dark, &swatches)
+        .save_look(&id, opacity, hue_light, hue_dark, &swatches, theme.as_deref())
 }
 
 #[tauri::command]
@@ -379,7 +474,7 @@ pub fn set_pinned(
     from_composer: bool,
 ) -> Result<(), AppError> {
     if pinned {
-        window_ctl::place_in_free_space(&app, &id);
+        window_ctl::place_for_pin(&app, &id);
     }
     state.db.set_pinned(&id, pinned)?;
     if pinned {
@@ -388,6 +483,7 @@ pub fn set_pinned(
             window_ctl::dismiss_composer(&app);
         }
     } else {
+        window_ctl::prepare_remove(&app, &id);
         window_ctl::close_pinned(&app, &id);
     }
     Ok(())

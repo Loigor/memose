@@ -84,7 +84,18 @@ export function isModifierKey(gesture: string, key: string): boolean {
   }
 }
 
+export function splitBinds(binding: string): string[] {
+  return binding
+    .split(",")
+    .map((part) => part.trim())
+    .filter((part) => part.length > 0);
+}
+
 export function formatBind(binding: string): string {
+  return splitBinds(binding).map(formatOne).join(" or ");
+}
+
+function formatOne(binding: string): string {
   const apple = mac();
   const parts = binding
     .split("+")
@@ -113,6 +124,9 @@ export function formatBind(binding: string): string {
       if (name === "escape" || name === "esc") {
         return "Esc";
       }
+      if (name.startsWith("mouse") && Number.isInteger(Number(name.slice(5)))) {
+        return `Mouse ${name.slice(5)}`;
+      }
       if (name.startsWith("key") && name.length === 4) {
         return name.slice(3).toUpperCase();
       }
@@ -139,6 +153,55 @@ function normalizeKey(value: string): string {
 }
 
 export function matchBind(event: KeyboardEvent, binding: string): boolean {
+  return splitBinds(binding).some((part) => matchKey(event, part));
+}
+
+export function matchMouse(
+  event: { button: number; altKey: boolean; ctrlKey: boolean; shiftKey: boolean; metaKey: boolean },
+  binding: string,
+): boolean {
+  const button = `mouse${event.button + 1}`;
+  return splitBinds(binding).some((part) => matchPointer(event, part, button));
+}
+
+function matchPointer(
+  event: { altKey: boolean; ctrlKey: boolean; shiftKey: boolean; metaKey: boolean },
+  binding: string,
+  button: string,
+): boolean {
+  const tokens = binding
+    .split("+")
+    .map((token) => token.trim())
+    .filter((token) => token.length > 0);
+  let alt = false;
+  let ctrl = false;
+  let shift = false;
+  let meta = false;
+  let key = "";
+  for (const token of tokens) {
+    const name = token.toLowerCase();
+    if (name === "alt" || name === "option") {
+      alt = true;
+    } else if (name === "control" || name === "ctrl") {
+      ctrl = true;
+    } else if (name === "shift") {
+      shift = true;
+    } else if (name === "super" || name === "command" || name === "cmd" || name === "meta") {
+      meta = true;
+    } else {
+      key = name;
+    }
+  }
+  return (
+    key === button &&
+    event.altKey === alt &&
+    event.ctrlKey === ctrl &&
+    event.shiftKey === shift &&
+    event.metaKey === meta
+  );
+}
+
+function matchKey(event: KeyboardEvent, binding: string): boolean {
   const tokens = binding
     .split("+")
     .map((token) => token.trim())
@@ -171,7 +234,7 @@ export function matchBind(event: KeyboardEvent, binding: string): boolean {
       key = token;
     }
   }
-  if (key.length === 0) {
+  if (key.length === 0 || key.toLowerCase().startsWith("mouse")) {
     return false;
   }
   return (
@@ -208,5 +271,26 @@ export function eventToBind(event: KeyboardEvent): string | null {
   } else {
     parts.push(code);
   }
+  return parts.join("+");
+}
+
+export function eventToMouse(event: MouseEvent): string | null {
+  if (event.button < 1 || event.button === 2) {
+    return null;
+  }
+  const parts: string[] = [];
+  if (event.shiftKey) {
+    parts.push("Shift");
+  }
+  if (event.ctrlKey) {
+    parts.push("Control");
+  }
+  if (event.altKey) {
+    parts.push("Alt");
+  }
+  if (event.metaKey) {
+    parts.push("Super");
+  }
+  parts.push(`Mouse${event.button + 1}`);
   return parts.join("+");
 }

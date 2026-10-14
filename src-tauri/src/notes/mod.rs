@@ -4,7 +4,7 @@ mod sync;
 
 pub use db::{
     canonical_visibility, Db, API_FLAVOR, BASE_URL, KEYCHAIN_IMPORTED, MEMO_SPACE, MEMO_VISIBILITY,
-    THEME,
+    SNAP_MEMOS, THEME,
 };
 pub use model::{Note, REMOTE};
 pub use sync::{

@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicU64};
 use std::sync::Mutex;
@@ -32,6 +33,10 @@ pub struct AppState {
     pub preview_name: Mutex<Option<String>>,
     pub preview_opened_at: Mutex<Option<Instant>>,
     pub shortcuts: Mutex<ShortcutBinds>,
+    /// Per-window drag settle tickets: ticket, resize gesture, last event time.
+    pub settle: Mutex<HashMap<String, (u64, bool, Instant)>>,
+    /// Visual anchor a window is magnetically holding, if any.
+    pub drag_hold: Mutex<HashMap<String, (i32, i32)>>,
 }
 
 impl AppState {
@@ -61,6 +66,8 @@ impl AppState {
             preview_name: Mutex::new(None),
             preview_opened_at: Mutex::new(None),
             shortcuts: Mutex::new(ShortcutBinds::defaults()),
+            settle: Mutex::new(HashMap::new()),
+            drag_hold: Mutex::new(HashMap::new()),
         })
     }
 }

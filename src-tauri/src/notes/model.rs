@@ -33,6 +33,12 @@ pub struct Note {
     pub visibility: Option<String>,
     /// useMemos space resource name, such as `spaces/team`. Empty means unassigned.
     pub space: Option<String>,
+    /// Title bar is locked collapsed until it is double-clicked open.
+    pub collapsed: bool,
+    /// When set, this note is drawn under that host note's window.
+    pub stack_host: Option<String>,
+    /// Light or dark paper for this memo. Empty follows the app theme.
+    pub theme: Option<String>,
 }
 
 pub fn commit_state(has_server: bool) -> &'static str {

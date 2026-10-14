@@ -113,8 +113,28 @@ button:hover {
   font-size: 13px;
 }
 
-.shortcut button {
-  min-width: 132px;
+.shortcut-binds {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 6px;
+}
+
+.bind-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  border: 1px solid #d9d3c6;
+  border-radius: 8px;
+  background: #fff;
+  padding: 4px 6px 4px 8px;
+  font-size: 12px;
+}
+
+.bind-chip button,
+.shortcut button.add {
+  min-width: 0;
+  padding: 0 4px;
 }
 
 .shortcut button.recording {

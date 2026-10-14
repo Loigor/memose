@@ -48,6 +48,7 @@ impl Db {
         ensure_sync_columns(&conn)?;
         ensure_look_columns(&conn)?;
         ensure_audience_columns(&conn)?;
+        ensure_stack_columns(&conn)?;
         Ok(Self {
             conn: Arc::new(Mutex::new(conn)),
         })
@@ -187,7 +188,7 @@ impl Db {
     pub fn publish_note(&self, id: Option<&str>, content: &str) -> Result<Note, AppError> {
         let trimmed = content.trim();
         if trimmed.is_empty() {
-            return Err(AppError::Message("empty note".into()));
+            return self.publish_blank(id);
         }
         if let Some(id) = id {
             if let Some(existing) = self.get(id)? {
@@ -207,6 +208,37 @@ impl Db {
         self.finalize_content(trimmed)?;
         self.get(&draft.id)?
             .ok_or_else(|| AppError::Message("note disappeared".into()))
+    }
+
+    fn publish_blank(&self, id: Option<&str>) -> Result<Note, AppError> {
+        if let Some(id) = id {
+            if let Some(existing) = self.get(id)? {
+                if existing.sync_state == DRAFT {
+                    self.with(|conn| {
+                        conn.execute(
+                            "UPDATE notes
+                             SET content = '', updated_at = ?1, sync_state = ?2, last_error = NULL
+                             WHERE id = ?3",
+                            params![now_ms(), LOCAL, id],
+                        )?;
+                        Ok(())
+                    })?;
+                }
+                return self
+                    .get(id)?
+                    .ok_or_else(|| AppError::Message("note disappeared".into()));
+            }
+        }
+        let id = Uuid::new_v4().to_string();
+        self.with(|conn| {
+            let now = now_ms();
+            conn.execute(
+                "INSERT INTO notes (id, content, created_at, updated_at, sync_state, remote_name, last_error)
+                 VALUES (?1, '', ?2, ?2, ?3, NULL, NULL)",
+                params![id, now, LOCAL],
+            )?;
+            note_by_id(conn, &id)?.ok_or_else(|| AppError::Message("note disappeared".into()))
+        })
     }
 
     pub fn remember_audience(&self, id: &str, visibility: &str, space: &str) -> Result<(), AppError> {
@@ -254,8 +286,100 @@ impl Db {
 
     pub fn delete_note(&self, id: &str) -> Result<(), AppError> {
         self.with(|conn| {
+            let parent: Option<String> = conn
+                .query_row(
+                    "SELECT stack_host FROM notes WHERE id = ?1",
+                    params![id],
+                    |row| row.get::<_, Option<String>>(0),
+                )
+                .optional()?
+                .flatten();
+            conn.execute(
+                "UPDATE notes SET stack_host = ?1 WHERE stack_host = ?2",
+                params![parent, id],
+            )?;
             conn.execute("DELETE FROM notes WHERE id = ?1", params![id])?;
             Ok(())
+        })
+    }
+
+    pub fn set_collapsed(&self, id: &str, collapsed: bool) -> Result<(), AppError> {
+        self.with(|conn| {
+            conn.execute(
+                "UPDATE notes SET collapsed = ?1 WHERE id = ?2",
+                params![collapsed, id],
+            )?;
+            Ok(())
+        })
+    }
+
+    pub fn set_stack_host(&self, id: &str, host: Option<&str>) -> Result<(), AppError> {
+        if host == Some(id) {
+            return Err(AppError::Message("a memo cannot stack on itself".into()));
+        }
+        self.with(|conn| {
+            conn.execute(
+                "UPDATE notes SET stack_host = ?1 WHERE id = ?2",
+                params![host, id],
+            )?;
+            Ok(())
+        })
+    }
+
+    /// Notes under `host_id`, in stack order. Each note keeps its own child.
+    pub fn chain_after(&self, host_id: &str) -> Result<Vec<Note>, AppError> {
+        let mut chain = Vec::new();
+        let mut current = host_id.to_string();
+        for _ in 0..8 {
+            let Some(guest) = self.guest_of(&current)? else {
+                break;
+            };
+            if guest.id == host_id || chain.iter().any(|note: &Note| note.id == guest.id) {
+                break;
+            }
+            current = guest.id.clone();
+            chain.push(guest);
+        }
+        Ok(chain)
+    }
+
+    pub fn stack_tail(&self, root_id: &str) -> Result<String, AppError> {
+        let chain = self.chain_after(root_id)?;
+        Ok(chain
+            .last()
+            .map(|note| note.id.clone())
+            .unwrap_or_else(|| root_id.to_string()))
+    }
+
+    /// Walk parents to the note that owns the window.
+    pub fn stack_root_id(&self, id: &str) -> Result<String, AppError> {
+        let mut current = id.to_string();
+        for _ in 0..8 {
+            let Some(note) = self.get(&current)? else {
+                break;
+            };
+            let Some(host) = note.stack_host else {
+                break;
+            };
+            if host == current {
+                break;
+            }
+            current = host;
+        }
+        Ok(current)
+    }
+
+    pub fn guest_of(&self, host_id: &str) -> Result<Option<Note>, AppError> {
+        self.with(|conn| {
+            let mut stmt = conn.prepare(
+                "SELECT id, content, created_at, updated_at, sync_state, remote_name, last_error, pinned, win_x, win_y, win_w, win_h, opacity, hue_light, hue_dark, swatches, visibility, remote_space, collapsed, stack_host, theme FROM notes WHERE stack_host = ?1 LIMIT 1",
+            )?;
+            let mut rows = stmt.query(params![host_id])?;
+            if let Some(row) = rows.next()? {
+                Ok(Some(map_note(row)?))
+            } else {
+                Ok(None)
+            }
         })
     }
 
@@ -286,17 +410,23 @@ impl Db {
         hue_light: Option<u16>,
         hue_dark: Option<u16>,
         swatches: &[u16],
+        theme: Option<&str>,
     ) -> Result<(), AppError> {
         let opacity = opacity.min(100);
         let hue_light = hue_light.filter(|hue| *hue <= 359);
         let hue_dark = hue_dark.filter(|hue| *hue <= 359);
         let stored = encode_swatches(swatches);
+        let theme = match theme {
+            Some("dark") => Some("dark"),
+            Some("light") => Some("light"),
+            _ => None,
+        };
         self.with(|conn| {
             conn.execute(
                 "UPDATE notes
-                 SET opacity = ?1, hue_light = ?2, hue_dark = ?3, swatches = ?4
-                 WHERE id = ?5",
-                params![opacity, hue_light, hue_dark, stored, id],
+                 SET opacity = ?1, hue_light = ?2, hue_dark = ?3, swatches = ?4, theme = ?5
+                 WHERE id = ?6",
+                params![opacity, hue_light, hue_dark, stored, theme, id],
             )?;
             Ok(())
         })
@@ -614,6 +744,7 @@ pub struct RemoteLink {
 pub const BASE_URL: &str = "base_url";
 pub const MEMO_VISIBILITY: &str = "memo_visibility";
 pub const MEMO_SPACE: &str = "memo_space";
+pub const SNAP_MEMOS: &str = "snap_memos";
 
 pub fn canonical_visibility(value: &str) -> String {
     match value.trim().to_ascii_uppercase().as_str() {
@@ -654,7 +785,7 @@ fn get_meta(conn: &Connection, key: &str) -> Result<Option<String>, AppError> {
 macro_rules! note_sql {
     ($tail:literal) => {
         concat!(
-            "SELECT id, content, created_at, updated_at, sync_state, remote_name, last_error, pinned, win_x, win_y, win_w, win_h, opacity, hue_light, hue_dark, swatches, visibility, remote_space ",
+            "SELECT id, content, created_at, updated_at, sync_state, remote_name, last_error, pinned, win_x, win_y, win_w, win_h, opacity, hue_light, hue_dark, swatches, visibility, remote_space, collapsed, stack_host, theme ",
             $tail
         )
     };
@@ -745,6 +876,7 @@ fn ensure_look_columns(conn: &Connection) -> Result<(), AppError> {
         ("hue_light", "ALTER TABLE notes ADD COLUMN hue_light INTEGER"),
         ("hue_dark", "ALTER TABLE notes ADD COLUMN hue_dark INTEGER"),
         ("swatches", "ALTER TABLE notes ADD COLUMN swatches TEXT"),
+        ("theme", "ALTER TABLE notes ADD COLUMN theme TEXT"),
     ] {
         if !names.iter().any(|existing| existing == name) {
             conn.execute(ddl, [])?;
@@ -809,7 +941,37 @@ fn map_note(row: &rusqlite::Row<'_>) -> rusqlite::Result<Note> {
         swatches: parse_swatches(row.get(15)?),
         visibility: row.get(16)?,
         space: row.get(17)?,
+        collapsed: row.get::<_, i64>(18)? != 0,
+        stack_host: row.get(19)?,
+        theme: theme_column(row.get(20)?),
     })
+}
+
+fn theme_column(value: Option<String>) -> Option<String> {
+    match value.as_deref() {
+        Some("dark") => Some("dark".into()),
+        Some("light") => Some("light".into()),
+        _ => None,
+    }
+}
+
+fn ensure_stack_columns(conn: &Connection) -> Result<(), AppError> {
+    let mut stmt = conn.prepare("PRAGMA table_info(notes)")?;
+    let names = stmt
+        .query_map([], |row| row.get::<_, String>(1))?
+        .collect::<Result<Vec<_>, _>>()?;
+    for (name, ddl) in [
+        (
+            "collapsed",
+            "ALTER TABLE notes ADD COLUMN collapsed INTEGER NOT NULL DEFAULT 0",
+        ),
+        ("stack_host", "ALTER TABLE notes ADD COLUMN stack_host TEXT"),
+    ] {
+        if !names.iter().any(|existing| existing == name) {
+            conn.execute(ddl, [])?;
+        }
+    }
+    Ok(())
 }
 
 fn ensure_audience_columns(conn: &Connection) -> Result<(), AppError> {
@@ -960,7 +1122,7 @@ mod tests {
         assert_eq!(draft.opacity, 100);
         assert!(draft.hue_light.is_none());
         assert!(draft.swatches.is_empty());
-        db.save_look(&draft.id, 40, Some(200), Some(400), &[12, 200, 400])
+        db.save_look(&draft.id, 40, Some(200), Some(400), &[12, 200, 400], Some("dark"))
             .unwrap();
         db.finalize_content("colored").unwrap();
         db.save_edit(&draft.id, "colored more").unwrap();
@@ -969,6 +1131,17 @@ mod tests {
         assert_eq!(note.hue_light, Some(200));
         assert!(note.hue_dark.is_none());
         assert_eq!(note.swatches, vec![12, 200]);
+        assert_eq!(note.theme.as_deref(), Some("dark"));
+    }
+
+    #[test]
+    fn an_empty_memo_can_be_published() {
+        let db = db();
+        let note = db.publish_note(None, "  ").unwrap();
+        assert_eq!(note.content, "");
+        assert_eq!(note.sync_state, LOCAL);
+        db.set_pinned(&note.id, true).unwrap();
+        assert!(db.get(&note.id).unwrap().unwrap().pinned);
     }
 
     #[test]
@@ -982,7 +1155,7 @@ mod tests {
         db.finalize_content("loose").unwrap();
         db.set_pinned(&first.id, true).unwrap();
         db.set_pinned(&second.id, true).unwrap();
-        db.save_look(&first.id, 80, Some(12), None, &[]).unwrap();
+        db.save_look(&first.id, 80, Some(12), None, &[], None).unwrap();
         db.set_pinned_opacity(25).unwrap();
         let first = db.get(&first.id).unwrap().unwrap();
         assert_eq!(first.opacity, 25);
@@ -1060,5 +1233,42 @@ mod tests {
         assert!(db.set_audience(&draft.id, "SPACE", "").is_err());
         db.delete_note(&draft.id).unwrap();
         assert!(db.get(&draft.id).unwrap().is_none());
+    }
+
+    #[test]
+    fn a_guest_note_points_at_its_host_until_the_host_is_deleted() {
+        let db = db();
+        let host = db.upsert_draft("host").unwrap().unwrap();
+        db.finalize_content("host").unwrap();
+        let guest = db.upsert_draft("guest").unwrap().unwrap();
+        db.finalize_content("guest").unwrap();
+        db.set_stack_host(&guest.id, Some(&host.id)).unwrap();
+        db.set_collapsed(&guest.id, true).unwrap();
+        let stored = db.guest_of(&host.id).unwrap().unwrap();
+        assert_eq!(stored.id, guest.id);
+        assert!(stored.collapsed);
+        assert!(db.set_stack_host(&host.id, Some(&host.id)).is_err());
+        db.delete_note(&host.id).unwrap();
+        assert!(db.get(&guest.id).unwrap().unwrap().stack_host.is_none());
+    }
+
+    #[test]
+    fn a_middle_memo_keeps_the_tail_and_delete_joins_the_tail_up() {
+        let db = db();
+        let host = db.upsert_draft("one").unwrap().unwrap();
+        db.finalize_content("one").unwrap();
+        let middle = db.upsert_draft("two").unwrap().unwrap();
+        db.finalize_content("two").unwrap();
+        let tail = db.upsert_draft("three").unwrap().unwrap();
+        db.finalize_content("three").unwrap();
+        db.set_stack_host(&middle.id, Some(&host.id)).unwrap();
+        db.set_stack_host(&tail.id, Some(&middle.id)).unwrap();
+        db.set_stack_host(&middle.id, None).unwrap();
+        assert!(db.get(&middle.id).unwrap().unwrap().stack_host.is_none());
+        assert_eq!(db.get(&tail.id).unwrap().unwrap().stack_host.as_deref(), Some(middle.id.as_str()));
+        assert_eq!(db.chain_after(&middle.id).unwrap().len(), 1);
+        db.set_stack_host(&middle.id, Some(&host.id)).unwrap();
+        db.delete_note(&middle.id).unwrap();
+        assert_eq!(db.get(&tail.id).unwrap().unwrap().stack_host.as_deref(), Some(host.id.as_str()));
     }
 }

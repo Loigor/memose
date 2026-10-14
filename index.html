@@ -13,13 +13,12 @@
   </head>
   <body>
     <div id="frame">
+    <div id="notes">
     <main id="card">
       <header>
         <div class="brand">
-          <span>Memose</span>
-          <button id="pin-toggle" class="icon-button" type="button" aria-label="Pin" aria-pressed="false">
-            <span class="pin-glyph" aria-hidden="true"></span>
-          </button>
+          <span id="brand-name" class="brand-name">Memose</span>
+          <span id="note-title" class="note-title"></span>
           <span class="note-meta">
             <span class="audience-anchor">
               <button id="visibility-label" type="button" hidden>Private</button>
@@ -59,10 +58,10 @@
           </div>
           <button id="mode-toggle" type="button" aria-label="Preview" aria-pressed="false">Preview</button>
           <div class="theme-anchor">
-            <button id="theme-toggle" class="icon-button" type="button" aria-label="Dark theme">
-              <svg id="theme-icon" viewBox="0 0 16 16" width="14" height="14" aria-hidden="true"></svg>
+            <button id="theme-toggle" class="theme-toggle icon-button" type="button" aria-label="Dark theme">
+              <svg id="theme-icon" class="theme-icon" viewBox="0 0 16 16" width="14" height="14" aria-hidden="true"></svg>
             </button>
-            <div id="color-pop" hidden>
+            <div id="color-pop" class="color-pop" hidden>
               <div class="hue-track">
                 <input id="hue-slider" type="range" min="0" max="359" value="48" aria-label="Hue" />
               </div>
@@ -77,6 +76,9 @@
               </div>
             </div>
           </div>
+          <button id="pin-toggle" class="pin-toggle icon-button" type="button" aria-label="Pin" aria-pressed="false">
+            <span class="pin-glyph" aria-hidden="true"></span>
+          </button>
         </div>
       </header>
 
@@ -99,7 +101,10 @@
         <button id="recent-more" type="button" hidden>More</button>
       </section>
     </main>
+    <div id="stack"></div>
     </div>
+    </div>
+    <div id="resize-grip" aria-hidden="true"></div>
     <div id="lightbox">
       <img id="lightbox-image" alt="" />
     </div>
