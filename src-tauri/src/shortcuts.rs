@@ -458,7 +458,6 @@ mod tests {
     }
 
     #[test]
-    #[test]
     fn one_action_can_keep_a_key_and_a_side_button() {
         let mut binds = ShortcutBinds::defaults();
         binds.new_memo = format!("{}, alt+mouse4", binds.new_memo);
@@ -483,6 +482,7 @@ mod tests {
         assert!(normalize(&binds).is_err());
     }
 
+    #[test]
     fn gesture_rejects_a_full_shortcut() {
         let mut binds = ShortcutBinds::defaults();
         binds.gesture = "Alt+N".into();

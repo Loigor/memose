@@ -30,44 +30,6 @@ const FOCUS_GRACE: Duration = Duration::from_millis(200);
 const RESIGN_GRACE: Duration = Duration::from_millis(140);
 const FLUSH_TIMEOUT: Duration = Duration::from_millis(500);
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Visibility {
-    Hidden,
-    Shown,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Gesture {
-    HotkeyOrTray { focused: bool },
-    FocusLost { suppress_blur: bool },
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Action {
-    ShowAtCursor,
-    HideAndSave,
-    Ignore,
-}
-
-pub fn transition(state: Visibility, gesture: Gesture) -> (Visibility, Action) {
-    match (state, gesture) {
-        (_, Gesture::FocusLost { suppress_blur: true }) => (state, Action::Ignore),
-        (Visibility::Hidden, Gesture::FocusLost { .. }) => (Visibility::Hidden, Action::Ignore),
-        (Visibility::Shown, Gesture::FocusLost { suppress_blur: false }) => {
-            (Visibility::Hidden, Action::HideAndSave)
-        }
-        (Visibility::Hidden, Gesture::HotkeyOrTray { .. }) => {
-            (Visibility::Shown, Action::ShowAtCursor)
-        }
-        (Visibility::Shown, Gesture::HotkeyOrTray { focused: true }) => {
-            (Visibility::Hidden, Action::HideAndSave)
-        }
-        (Visibility::Shown, Gesture::HotkeyOrTray { focused: false }) => {
-            (Visibility::Shown, Action::ShowAtCursor)
-        }
-    }
-}
-
 pub fn attach(app: &AppHandle) {
     let Some(window) = app.get_webview_window(WINDOW) else {
         return;
@@ -81,7 +43,10 @@ pub fn attach(app: &AppHandle) {
             api.prevent_close();
             hide_and_save(&handle, true);
         }
-        WindowEvent::Focused(false) => schedule_resign(&handle),
+        WindowEvent::Focused(false) => {
+            slide_back(&handle, WINDOW);
+            schedule_resign(&handle);
+        }
         WindowEvent::Moved(_) => schedule_settle(&handle, WINDOW, None, false),
         WindowEvent::Resized(_) => schedule_settle(&handle, WINDOW, None, true),
         _ => {}
@@ -646,46 +611,6 @@ fn pin_label(id: &str) -> String {
     format!("pin-{id}")
 }
 
-#[allow(dead_code)]
-pub fn free_slot(
-    occupied: &[(i32, i32, i32, i32)],
-    area_x: i32,
-    area_y: i32,
-    area_w: i32,
-    area_h: i32,
-    cell_w: i32,
-    cell_h: i32,
-    gap: i32,
-) -> (i32, i32) {
-    let gap = gap.max(0);
-    let cell_w = cell_w.max(1);
-    let cell_h = cell_h.max(1);
-    let columns = ((area_w.saturating_sub(gap)) / (cell_w + gap)).max(1);
-    let rows = ((area_h.saturating_sub(gap)) / (cell_h + gap)).max(1);
-    for row in 0..rows {
-        for col in 0..columns {
-            let x = area_x + gap + col * (cell_w + gap);
-            let y = area_y + gap + row * (cell_h + gap);
-            let blocked = occupied.iter().any(|&(ox, oy, ow, oh)| {
-                rects_overlap(x, y, cell_w, cell_h, ox, oy, ow.max(1), oh.max(1), gap)
-            });
-            if !blocked {
-                return clamp_position(x, y, cell_w, cell_h, area_x, area_y, area_w, area_h);
-            }
-        }
-    }
-    clamp_position(
-        area_x + gap,
-        area_y + gap,
-        cell_w,
-        cell_h,
-        area_x,
-        area_y,
-        area_w,
-        area_h,
-    )
-}
-
 fn rects_overlap(
     x: i32,
     y: i32,
@@ -703,87 +628,10 @@ fn rects_overlap(
         && y.saturating_add(h).saturating_add(pad) > oy
 }
 
-const SNAP_COLUMNS: i32 = 5;
-const SNAP_ROWS: i32 = 3;
 /// How close a memo edge must be to a screen edge before it catches.
 const EDGE_CATCH: i32 = 36;
-const MEMO_CATCH: i32 = 22;
+const MEMO_CATCH: i32 = 36;
 const STACK_LIMIT: usize = 8;
-
-pub fn snap_anchors(area_x: i32, area_y: i32, area_w: i32, area_h: i32, card_w: i32, card_h: i32) -> Vec<(i32, i32)> {
-    let span_x = (area_w - card_w).max(0);
-    let span_y = (area_h - card_h).max(0);
-    let mut points = Vec::with_capacity((SNAP_COLUMNS * SNAP_ROWS) as usize);
-    for row in 0..SNAP_ROWS {
-        for col in 0..SNAP_COLUMNS {
-            let x = area_x + span_x * col / (SNAP_COLUMNS - 1);
-            let y = area_y + span_y * row / (SNAP_ROWS - 1);
-            points.push((x, y));
-        }
-    }
-    points
-}
-
-fn point_dist(ax: i32, ay: i32, bx: i32, by: i32) -> i32 {
-    let dx = i64::from(ax) - i64::from(bx);
-    let dy = i64::from(ay) - i64::from(by);
-    dx.saturating_mul(dx)
-        .saturating_add(dy.saturating_mul(dy))
-        .isqrt() as i32
-}
-
-fn approach(from: i32, to: i32, num: i32, den: i32) -> i32 {
-    let den = i64::from(den).max(1);
-    let delta = i64::from(to) - i64::from(from);
-    (i64::from(from) + delta * i64::from(num) / den) as i32
-}
-
-/// Pull a window origin toward the nearest grid point. `hold` is the visual
-/// anchor already locked. Catch eases in slowly; lock sticks until release.
-pub fn magnet_origin(
-    desired_x: i32,
-    desired_y: i32,
-    pad_x: i32,
-    pad_y: i32,
-    anchors: &[(i32, i32)],
-    hold: Option<(i32, i32)>,
-    catch: i32,
-    lock: i32,
-    release: i32,
-) -> (i32, i32, Option<(i32, i32)>) {
-    let vx = desired_x.saturating_add(pad_x);
-    let vy = desired_y.saturating_add(pad_y);
-    if let Some((hx, hy)) = hold {
-        let away = point_dist(vx, vy, hx, hy);
-        if away < release {
-            let hold_band = (release / 2).max(lock);
-            if away <= hold_band {
-                return (hx.saturating_sub(pad_x), hy.saturating_sub(pad_y), Some((hx, hy)));
-            }
-            let span = (release - hold_band).max(1);
-            let crept = away - hold_band;
-            let num = crept.saturating_mul(crept);
-            let den = span.saturating_mul(span).max(1);
-            let x = approach(hx, vx, num, den);
-            let y = approach(hy, vy, num, den);
-            return (x.saturating_sub(pad_x), y.saturating_sub(pad_y), Some((hx, hy)));
-        }
-    }
-    let Some((ax, ay)) = nearest_anchor(vx, vy, anchors, Some(catch)) else {
-        return (desired_x, desired_y, None);
-    };
-    let away = point_dist(vx, vy, ax, ay);
-    if away <= lock {
-        return (ax.saturating_sub(pad_x), ay.saturating_sub(pad_y), Some((ax, ay)));
-    }
-    let span = (catch - lock).max(1);
-    let into = catch.saturating_sub(away);
-    let num = into.saturating_mul(into);
-    let den = span.saturating_mul(span).max(1);
-    let x = approach(vx, ax, num, den);
-    let y = approach(vy, ay, num, den);
-    (x.saturating_sub(pad_x), y.saturating_sub(pad_y), None)
-}
 
 /// Move the window origin so a card edge that is against the work area sticks to it.
 /// Other positions stay where the pointer put them.
@@ -810,10 +658,10 @@ pub fn snap_screen_edges(
     let mut y = origin_y;
     let left_gap = (left - area_x).abs();
     let right_gap = (right - area_right).abs();
-    if left_gap <= catch && left_gap <= right_gap {
-        x = area_x.saturating_sub(pad_x);
-    } else if right_gap <= catch {
+    if right_gap <= catch && right_gap <= left_gap {
         x = area_right.saturating_sub(card_w).saturating_sub(pad_x);
+    } else if left_gap <= catch {
+        x = area_x.saturating_sub(pad_x);
     }
     let top_gap = (top - area_y).abs();
     let bottom_gap = (bottom - area_bottom).abs();
@@ -861,11 +709,20 @@ pub fn snap_memo_edges(
         {
             continue;
         }
-        for edge in [left, right] {
+        let overlap_x = right.min(other_right).saturating_sub(left.max(other_left));
+        let overlap_y = bottom.min(other_bottom).saturating_sub(top.max(other_top));
+        if overlap_x > catch && overlap_y > catch {
+            continue;
+        }
+        for edge in [right, left] {
             for other in [other_left, other_right] {
                 let delta = other.saturating_sub(edge);
                 let distance = delta.abs();
-                if distance <= catch && best_dx.is_none_or(|(best, _)| distance < best) {
+                if distance <= catch
+                    && best_dx.is_none_or(|(best, best_delta)| {
+                        distance < best || (distance == best && delta > best_delta)
+                    })
+                {
                     best_dx = Some((distance, delta));
                 }
             }
@@ -884,36 +741,6 @@ pub fn snap_memo_edges(
         origin_x.saturating_add(best_dx.map(|(_, delta)| delta).unwrap_or(0)),
         origin_y.saturating_add(best_dy.map(|(_, delta)| delta).unwrap_or(0)),
     )
-}
-
-pub fn nearest_line(value: i32, lines: &[i32], max_distance: i32) -> Option<i32> {
-    let points: Vec<(i32, i32)> = lines.iter().map(|line| (*line, 0)).collect();
-    nearest_anchor(value, 0, &points, Some(max_distance)).map(|(x, _)| x)
-}
-
-pub fn nearest_anchor(
-    x: i32,
-    y: i32,
-    points: &[(i32, i32)],
-    max_distance: Option<i32>,
-) -> Option<(i32, i32)> {
-    let mut best: Option<(i64, i32, i32)> = None;
-    for &(px, py) in points {
-        let dx = i64::from(x) - i64::from(px);
-        let dy = i64::from(y) - i64::from(py);
-        let dist = dx * dx + dy * dy;
-        if best.map(|(score, _, _)| dist < score).unwrap_or(true) {
-            best = Some((dist, px, py));
-        }
-    }
-    let (dist, px, py) = best?;
-    if let Some(max) = max_distance {
-        let max = i64::from(max);
-        if dist > max * max {
-            return None;
-        }
-    }
-    Some((px, py))
 }
 
 fn snap_enabled(app: &AppHandle) -> bool {
@@ -1153,6 +980,11 @@ pub fn organize_pinned(app: &AppHandle) {
             layout.step_y,
             0,
         );
+        let label = pin_label(&note.id);
+        suppress_settle(&label, Duration::from_millis(600));
+        if let Ok(mut parked) = parks().lock() {
+            parked.remove(&label);
+        }
         let _ = app
             .state::<AppState>()
             .db
@@ -1258,7 +1090,7 @@ fn occupied_rects(app: &AppHandle, except: &str) -> Vec<(i32, i32, i32, i32)> {
     let mut rects = Vec::new();
     if let Ok(notes) = app.state::<AppState>().db.list_pinned() {
         for note in notes {
-            if note.id == except {
+            if note.id == except || note.stack_host.is_some() {
                 continue;
             }
             if let (Some(x), Some(y), Some(w), Some(h)) = (note.win_x, note.win_y, note.win_w, note.win_h)
@@ -1399,17 +1231,15 @@ fn open_pin_window(app: &AppHandle, id: &str) {
     let handle = app.clone();
     let accept_moves_at = Instant::now() + Duration::from_millis(250);
     window.on_window_event(move |event| match event {
-        WindowEvent::Focused(false) => schedule_resign(&handle),
+        WindowEvent::Focused(false) => {
+            slide_back(&handle, &pin_label(&note_id));
+            schedule_resign(&handle);
+        }
         WindowEvent::Moved(_) => {
             if follow_active(&note_id) || Instant::now() < accept_moves_at {
                 return;
             }
             let label = pin_label(&note_id);
-            if drag_active(&label) {
-                if let Some(window) = handle.get_webview_window(&label) {
-                    arm_stack_attach(&handle, &note_id, &window);
-                }
-            }
             schedule_settle(&handle, &label, Some(note_id.clone()), false);
         }
         WindowEvent::Resized(_) => {
@@ -1440,6 +1270,8 @@ fn place_at() -> &'static Mutex<HashMap<String, (i32, i32, i32, i32)>> {
 }
 
 fn place_pin(app: &AppHandle, id: &str, window: &WebviewWindow) {
+    let label = pin_label(id);
+    suppress_settle(&label, Duration::from_millis(500));
     if let Some((x, y, width, height)) = place_at().lock().ok().and_then(|mut pending| pending.remove(id)) {
         let _ = window.set_size(PhysicalSize::new(width.max(1) as u32, height.max(1) as u32));
         let _ = window.set_position(PhysicalPosition::new(x, y));
@@ -1485,7 +1317,7 @@ fn pinned_origins(app: &AppHandle, except: &str) -> Vec<(i32, i32)> {
         .list_pinned()
         .unwrap_or_default()
         .into_iter()
-        .filter(|note| note.id != except)
+        .filter(|note| note.id != except && note.stack_host.is_none())
         .filter_map(|note| note.win_x.zip(note.win_y))
         .collect()
 }
@@ -1509,7 +1341,30 @@ fn nudge_origin(x: i32, y: i32, taken: &[(i32, i32)], step: i32) -> (i32, i32) {
     (x, y)
 }
 
+fn height_sizing() -> &'static Mutex<HashMap<String, Instant>> {
+    static SIZING: LazyLock<Mutex<HashMap<String, Instant>>> =
+        LazyLock::new(|| Mutex::new(HashMap::new()));
+    &SIZING
+}
+
+fn suppress_settle(label: &str, duration: Duration) {
+    if let Ok(mut map) = height_sizing().lock() {
+        map.insert(label.to_string(), Instant::now() + duration);
+    }
+}
+
+fn height_sizing_active(label: &str) -> bool {
+    height_sizing()
+        .lock()
+        .ok()
+        .and_then(|map| map.get(label).copied())
+        .is_some_and(|until| Instant::now() < until)
+}
+
 fn schedule_settle(app: &AppHandle, label: &str, note_id: Option<String>, resize: bool) {
+    if height_sizing_active(label) || park_quiet(label) {
+        return;
+    }
     let ticket = {
         let state = app.state::<AppState>();
         let mut tickets = state
@@ -1554,18 +1409,26 @@ fn settle_window(app: &AppHandle, label: &str, note_id: Option<&str>, resize: bo
     if !window.is_visible().unwrap_or(false) {
         return;
     }
-    if resize_active(label) {
+    if resize_active(label)
+        || drag_active(label)
+        || height_sizing_active(label)
+        || follow_active(note_id.unwrap_or(""))
+    {
         return;
     }
     if snap_enabled(app) && !park_quiet(label) {
         if resize {
+            suppress_settle(label, Duration::from_millis(350));
             snap_resized_edges(app, &window);
         } else if !aim_pending(note_id.unwrap_or("")) {
+            suppress_settle(label, Duration::from_millis(350));
             snap_moved_corner(app, &window);
         }
     }
     if let Some(id) = note_id {
-        save_pin_frame(app, id, &window);
+        if parks().lock().ok().is_none_or(|parked| !parked.contains_key(label)) {
+            save_pin_frame(app, id, &window);
+        }
     }
 }
 
@@ -1574,10 +1437,38 @@ fn closer_snap(current: i32, screen: i32, memo: i32) -> i32 {
     let memo_move = (memo - current).abs();
     if screen_move == 0 {
         memo
-    } else if memo_move == 0 || screen_move <= memo_move {
+    } else if memo_move == 0 {
         screen
-    } else {
+    } else if screen_move < memo_move {
+        screen
+    } else if memo_move < screen_move {
         memo
+    } else if memo >= screen {
+        memo
+    } else {
+        screen
+    }
+}
+
+fn closer_snap_x(current: i32, screen: i32, memo: i32) -> i32 {
+    let screen_move = (screen - current).abs();
+    let memo_move = (memo - current).abs();
+    if screen_move == 0 {
+        memo
+    } else if memo_move == 0 {
+        screen
+    } else if memo > current && screen < current {
+        // When caught between a screen edge on the left and a memo on the right,
+        // prioritize snapping to the right.
+        memo
+    } else if screen > current && memo < current {
+        screen
+    } else if screen_move < memo_move {
+        screen
+    } else if memo_move < screen_move {
+        memo
+    } else {
+        screen.max(memo)
     }
 }
 
@@ -1608,28 +1499,30 @@ fn neighbor_cards(app: &AppHandle, window: &WebviewWindow) -> Vec<(i32, i32, i32
     cards
 }
 
-fn snap_moved_corner(app: &AppHandle, window: &WebviewWindow) {
-    let Ok(position) = window.outer_position() else {
-        return;
-    };
+fn snap_target_for_origin(
+    app: &AppHandle,
+    window: &WebviewWindow,
+    raw_x: i32,
+    raw_y: i32,
+) -> Option<(i32, i32)> {
     let Ok(scale) = window.scale_factor() else {
-        return;
+        return None;
     };
-    let Some(monitor) = monitor_containing(app, position.x, position.y) else {
-        return;
+    let Some(monitor) = monitor_containing(app, raw_x, raw_y) else {
+        return None;
     };
     let area = monitor.work_area();
     let pad_x = (CARD_PAD_X * scale).round() as i32;
     let pad_top = (CARD_PAD_TOP * scale).round() as i32;
     let Ok(size) = window.outer_size() else {
-        return;
+        return None;
     };
     let card_w = (size.width as i32 - pad_x.saturating_mul(2)).max(1);
     let card_h = (size.height as i32 - pad_top - (CARD_PAD_BOTTOM * scale).round() as i32).max(1);
     let catch = (f64::from(EDGE_CATCH) * scale).round() as i32;
     let (screen_x, screen_y) = snap_screen_edges(
-        position.x,
-        position.y,
+        raw_x,
+        raw_y,
         card_w,
         card_h,
         pad_x,
@@ -1642,8 +1535,8 @@ fn snap_moved_corner(app: &AppHandle, window: &WebviewWindow) {
     );
     let memo_catch = (f64::from(MEMO_CATCH) * scale).round() as i32;
     let (memo_x, memo_y) = snap_memo_edges(
-        position.x,
-        position.y,
+        raw_x,
+        raw_y,
         card_w,
         card_h,
         pad_x,
@@ -1651,8 +1544,19 @@ fn snap_moved_corner(app: &AppHandle, window: &WebviewWindow) {
         &neighbor_cards(app, window),
         memo_catch,
     );
-    let x = closer_snap(position.x, screen_x, memo_x);
-    let y = closer_snap(position.y, screen_y, memo_y);
+    Some((
+        closer_snap_x(raw_x, screen_x, memo_x),
+        closer_snap(raw_y, screen_y, memo_y),
+    ))
+}
+
+fn snap_moved_corner(app: &AppHandle, window: &WebviewWindow) {
+    let Ok(position) = window.outer_position() else {
+        return;
+    };
+    let Some((x, y)) = snap_target_for_origin(app, window, position.x, position.y) else {
+        return;
+    };
     if (x - position.x).abs() <= 2 && (y - position.y).abs() <= 2 {
         return;
     }
@@ -1678,14 +1582,27 @@ fn snap_resized_edges(app: &AppHandle, window: &WebviewWindow) {
     let threshold = (f64::from(EDGE_CATCH) * scale).round() as i32;
     let min_w = (220.0 * scale).round() as i32;
     let min_h = (140.0 * scale).round() as i32;
+    let left = position.x + pad_x;
     let right = position.x + size.width as i32 - pad_x;
     let bottom = position.y + size.height as i32 - pad_bottom;
+    let area_left = area.position.x;
     let area_right = area.position.x + area.size.width as i32;
     let area_bottom = area.position.y + area.size.height as i32;
+    let mut x = position.x;
     let mut width = size.width as i32;
     let mut height = size.height as i32;
+    if (left - area_left).abs() <= threshold {
+        let target_x = area_left - pad_x;
+        if target_x != position.x {
+            let next = width + (position.x - target_x);
+            if next >= min_w {
+                x = target_x;
+                width = next;
+            }
+        }
+    }
     if (right - area_right).abs() <= threshold {
-        let next = area_right + pad_x - position.x;
+        let next = area_right + pad_x - x;
         if next >= min_w {
             width = next;
         }
@@ -1696,8 +1613,11 @@ fn snap_resized_edges(app: &AppHandle, window: &WebviewWindow) {
             height = next;
         }
     }
-    if width == size.width as i32 && height == size.height as i32 {
+    if x == position.x && width == size.width as i32 && height == size.height as i32 {
         return;
+    }
+    if x != position.x {
+        let _ = window.set_position(PhysicalPosition::new(x, position.y));
     }
     let _ = window.set_size(PhysicalSize::new(width.max(1) as u32, height.max(1) as u32));
 }
@@ -1716,11 +1636,13 @@ fn chain_contains(db: &crate::notes::Db, start: &str, target: &str) -> bool {
     false
 }
 
-const STACK_HOLD: Duration = Duration::from_millis(1200);
+const STACK_HOLD: Duration = Duration::from_millis(750);
+const STACK_STILL_RADIUS: i32 = 10;
 
 struct StackAim {
-    ticket: u64,
     host: String,
+    anchor: (i32, i32),
+    since: Instant,
     ready: bool,
 }
 
@@ -1764,15 +1686,52 @@ fn resize_active(label: &str) -> bool {
         .is_some()
 }
 
-/// New outer size while dragging the bottom-right corner. `dx` and `dy` are cursor travel.
-pub fn southeast_size(start_w: i32, start_h: i32, dx: i32, dy: i32, min_w: i32, min_h: i32) -> (i32, i32) {
-    (
-        start_w.saturating_add(dx).max(min_w),
-        start_h.saturating_add(dy).max(min_h),
-    )
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ResizeEdge {
+    East,
+    South,
+    West,
+    SouthEast,
+    SouthWest,
 }
 
-pub fn begin_corner_resize(app: AppHandle, label: String, done: std::sync::mpsc::Sender<()>) {
+pub fn resize_frame(
+    start_x: i32,
+    start_y: i32,
+    start_w: i32,
+    start_h: i32,
+    dx: i32,
+    dy: i32,
+    min_w: i32,
+    min_h: i32,
+    edge: ResizeEdge,
+) -> (i32, i32, i32, i32) {
+    let width = match edge {
+        ResizeEdge::East | ResizeEdge::SouthEast => start_w.saturating_add(dx).max(min_w),
+        ResizeEdge::West | ResizeEdge::SouthWest => start_w.saturating_sub(dx).max(min_w),
+        ResizeEdge::South => start_w,
+    };
+    let height = match edge {
+        ResizeEdge::South | ResizeEdge::SouthEast | ResizeEdge::SouthWest => {
+            start_h.saturating_add(dy).max(min_h)
+        }
+        ResizeEdge::East | ResizeEdge::West => start_h,
+    };
+    let x = match edge {
+        ResizeEdge::West | ResizeEdge::SouthWest => {
+            start_x.saturating_add(start_w.saturating_sub(width))
+        }
+        ResizeEdge::East | ResizeEdge::South | ResizeEdge::SouthEast => start_x,
+    };
+    (x, start_y, width, height)
+}
+
+pub fn begin_corner_resize(
+    app: AppHandle,
+    label: String,
+    edge: ResizeEdge,
+    done: std::sync::mpsc::Sender<()>,
+) {
     let finish = |done: std::sync::mpsc::Sender<()>| {
         let _ = done.send(());
     };
@@ -1780,7 +1739,12 @@ pub fn begin_corner_resize(app: AppHandle, label: String, done: std::sync::mpsc:
         finish(done);
         return;
     };
-    let (Ok(cursor), Ok(size), Ok(scale)) = (app.cursor_position(), window.outer_size(), window.scale_factor()) else {
+    let (Ok(cursor), Ok(pos), Ok(size), Ok(scale)) = (
+        app.cursor_position(),
+        window.outer_position(),
+        window.outer_size(),
+        window.scale_factor(),
+    ) else {
         finish(done);
         return;
     };
@@ -1792,6 +1756,8 @@ pub fn begin_corner_resize(app: AppHandle, label: String, done: std::sync::mpsc:
     }
     let start_x = cursor.x.round() as i32;
     let start_y = cursor.y.round() as i32;
+    let start_win_x = pos.x;
+    let start_win_y = pos.y;
     let start_w = size.width as i32;
     let start_h = size.height as i32;
     let min_w = (220.0 * scale).round().max(1.0) as i32;
@@ -1799,6 +1765,7 @@ pub fn begin_corner_resize(app: AppHandle, label: String, done: std::sync::mpsc:
     std::thread::spawn(move || {
         let started = Instant::now();
         let mut saw_down = false;
+        let mut last_rect = (start_win_x, start_win_y, start_w, start_h);
         while started.elapsed() < Duration::from_secs(20) {
             let down = left_button_down();
             if down {
@@ -1809,21 +1776,44 @@ pub fn begin_corner_resize(app: AppHandle, label: String, done: std::sync::mpsc:
             let (tx, rx) = std::sync::mpsc::channel();
             let app2 = app.clone();
             let label2 = label.clone();
+            let prev_rect = last_rect;
             let posted = app.run_on_main_thread(move || {
-                let applied = app2.cursor_position().ok().map(|cursor| {
+                let mut next_rect = prev_rect;
+                if let (Ok(cursor), Some(window)) =
+                    (app2.cursor_position(), app2.get_webview_window(&label2))
+                {
                     let dx = cursor.x.round() as i32 - start_x;
                     let dy = cursor.y.round() as i32 - start_y;
-                    let (width, height) = southeast_size(start_w, start_h, dx, dy, min_w, min_h);
-                    if let Some(window) = app2.get_webview_window(&label2) {
-                        let _ = window.set_size(PhysicalSize::new(width.max(1) as u32, height.max(1) as u32));
+                    let (x, y, width, height) = resize_frame(
+                        start_win_x,
+                        start_win_y,
+                        start_w,
+                        start_h,
+                        dx,
+                        dy,
+                        min_w,
+                        min_h,
+                        edge,
+                    );
+                    if (x, y) != (prev_rect.0, prev_rect.1) {
+                        let _ = window.set_position(PhysicalPosition::new(x, y));
                     }
-                });
-                let _ = tx.send(applied);
+                    if (width, height) != (prev_rect.2, prev_rect.3) {
+                        let _ = window.set_size(PhysicalSize::new(
+                            width.max(1) as u32,
+                            height.max(1) as u32,
+                        ));
+                    }
+                    next_rect = (x, y, width, height);
+                }
+                let _ = tx.send(next_rect);
             });
             if posted.is_err() {
                 break;
             }
-            let _ = rx.recv_timeout(Duration::from_millis(80));
+            if let Ok(rect) = rx.recv_timeout(Duration::from_millis(80)) {
+                last_rect = rect;
+            }
             std::thread::sleep(Duration::from_millis(12));
         }
         if let Ok(mut labels) = corner_resizing().lock() {
@@ -1838,34 +1828,132 @@ pub fn begin_corner_resize(app: AppHandle, label: String, done: std::sync::mpsc:
     });
 }
 
-pub fn begin_memo_drag(label: &str) {
-    if let Ok(mut labels) = dragging().lock() {
-        labels.insert(label.to_string());
-    }
-    if let Ok(mut parked) = parks().lock() {
-        parked.remove(label);
-    }
-}
-
-pub fn end_memo_drag(app: &AppHandle, label: &str) {
-    if let Ok(mut labels) = dragging().lock() {
-        labels.remove(label);
-    }
-    let Some(guest_id) = label.strip_prefix("pin-") else {
-        return;
-    };
-    let aim = stack_aims().lock().ok().and_then(|mut aims| aims.remove(guest_id));
-    let Some(aim) = aim else {
-        return;
-    };
-    show_aim(app, &aim.host, "off");
-    if !aim.ready {
-        return;
-    }
+pub fn set_window_height(app: &AppHandle, label: &str, logical_height: i32) {
     let Some(window) = app.get_webview_window(label) else {
         return;
     };
-    let _ = attach_if_covering(app, guest_id, &window);
+    let Ok(size) = window.outer_size() else {
+        return;
+    };
+    if let Ok(mut map) = height_sizing().lock() {
+        map.insert(label.to_string(), Instant::now() + Duration::from_millis(300));
+    }
+    let scale = window.scale_factor().unwrap_or(1.0).max(0.5);
+    let height = ((f64::from(logical_height.max(96))) * scale).round().max(1.0) as u32;
+    let width = size.width.max(1);
+    let _ = window.set_size(PhysicalSize::new(width, height));
+    if let Some(id) = label.strip_prefix("pin-") {
+        if parks().lock().ok().is_none_or(|parked| !parked.contains_key(label)) {
+            save_pin_frame(app, id, &window);
+        }
+    }
+}
+
+pub fn begin_memo_drag(app: AppHandle, label: String) {
+    if let Ok(mut parked) = parks().lock() {
+        parked.remove(&label);
+    }
+    let Some(window) = app.get_webview_window(&label) else {
+        return;
+    };
+    let (Ok(cursor), Ok(start_pos)) = (app.cursor_position(), window.outer_position()) else {
+        return;
+    };
+    let inserted = dragging()
+        .lock()
+        .map(|mut labels| labels.insert(label.clone()))
+        .unwrap_or(false);
+    if !inserted {
+        return;
+    }
+    let grab_x = cursor.x.round() as i32 - start_pos.x;
+    let grab_y = cursor.y.round() as i32 - start_pos.y;
+    std::thread::spawn(move || {
+        let started = Instant::now();
+        let mut saw_down = false;
+        let mut last_pos = (start_pos.x, start_pos.y);
+        while started.elapsed() < Duration::from_secs(20) {
+            if !drag_active(&label) {
+                return;
+            }
+            let down = left_button_down();
+            if down {
+                saw_down = true;
+            } else if saw_down || started.elapsed() > Duration::from_millis(200) {
+                break;
+            }
+            let (tx, rx) = std::sync::mpsc::channel();
+            let app2 = app.clone();
+            let label2 = label.clone();
+            let prev_pos = last_pos;
+            let posted = app.run_on_main_thread(move || {
+                let mut next_pos = prev_pos;
+                if drag_active(&label2) {
+                    if let (Ok(cursor), Some(window)) =
+                        (app2.cursor_position(), app2.get_webview_window(&label2))
+                    {
+                        let raw_x = cursor.x.round() as i32 - grab_x;
+                        let raw_y = cursor.y.round() as i32 - grab_y;
+                        let (mut x, mut y) = (raw_x, raw_y);
+                        let guest_id = label2.strip_prefix("pin-");
+                        if let Some(id) = guest_id {
+                            arm_stack_attach(&app2, id, &window);
+                        }
+                        if snap_enabled(&app2) && !aim_pending(guest_id.unwrap_or("")) {
+                            if let Some(snapped) = snap_target_for_origin(&app2, &window, raw_x, raw_y) {
+                                x = snapped.0;
+                                y = snapped.1;
+                            }
+                        }
+                        if (x, y) != prev_pos {
+                            let _ = window.set_position(PhysicalPosition::new(x, y));
+                            next_pos = (x, y);
+                        }
+                    }
+                }
+                let _ = tx.send(next_pos);
+            });
+            if posted.is_err() {
+                break;
+            }
+            if let Ok(pos) = rx.recv_timeout(Duration::from_millis(80)) {
+                last_pos = pos;
+            }
+            std::thread::sleep(Duration::from_millis(12));
+        }
+        let app2 = app.clone();
+        let label2 = label.clone();
+        let _ = app.run_on_main_thread(move || {
+            finish_memo_drag(&app2, &label2);
+        });
+    });
+}
+
+pub fn end_memo_drag(app: &AppHandle, label: &str) {
+    finish_memo_drag(app, label);
+}
+
+fn finish_memo_drag(app: &AppHandle, label: &str) {
+    let was_dragging = dragging()
+        .lock()
+        .map(|mut labels| labels.remove(label))
+        .unwrap_or(false);
+    let note_id = label.strip_prefix("pin-");
+    if let Some(guest_id) = note_id {
+        if let Some(aim) = stack_aims().lock().ok().and_then(|mut aims| aims.remove(guest_id)) {
+            show_aim(app, &aim.host, "off");
+            if aim.ready {
+                if let Some(window) = app.get_webview_window(label) {
+                    if attach_if_covering(app, guest_id, &window, Some(&aim.host)) {
+                        return;
+                    }
+                }
+            }
+        }
+    }
+    if was_dragging {
+        settle_window(app, label, note_id, false);
+    }
 }
 
 fn show_aim(app: &AppHandle, host_id: &str, mode: &str) {
@@ -1874,97 +1962,104 @@ fn show_aim(app: &AppHandle, host_id: &str, mode: &str) {
     }
 }
 
-fn aim_checked() -> &'static Mutex<HashMap<String, Instant>> {
-    static CHECKED: LazyLock<Mutex<HashMap<String, Instant>>> =
-        LazyLock::new(|| Mutex::new(HashMap::new()));
-    &CHECKED
+fn clear_aim(app: &AppHandle, guest_id: &str) {
+    if let Some(aim) = stack_aims().lock().ok().and_then(|mut aims| aims.remove(guest_id)) {
+        show_aim(app, &aim.host, "off");
+    }
 }
 
 fn arm_stack_attach(app: &AppHandle, guest_id: &str, window: &WebviewWindow) {
-    if !snap_enabled(app) {
-        return;
-    }
-    {
-        let mut checked = aim_checked()
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
-        if checked
-            .get(guest_id)
-            .is_some_and(|at| at.elapsed() < Duration::from_millis(90))
-        {
-            return;
-        }
-        checked.insert(guest_id.to_string(), Instant::now());
-    }
     let target = stack_target(app, guest_id, window);
-    let ticket = {
-        let mut aims = stack_aims().lock().unwrap_or_else(|poisoned| poisoned.into_inner());
-        match (&target, aims.get(guest_id)) {
-            (Some(host), Some(aim)) if aim.host == *host => return,
-            (None, None) => return,
-            _ => {}
-        }
-        let previous = aims.remove(guest_id);
-        if let Some(previous) = &previous {
-            show_aim(app, &previous.host, "off");
-        }
-        let Some(host) = target else {
-            return;
-        };
-        let ticket = previous.map(|aim| aim.ticket).unwrap_or(0).wrapping_add(1);
-        aims.insert(
-            guest_id.to_string(),
-            StackAim {
-                ticket,
-                host: host.clone(),
-                ready: false,
-            },
-        );
-        show_aim(app, &host, "hold");
-        ticket
-    };
-    let app = app.clone();
-    let guest_id = guest_id.to_string();
-    tauri::async_runtime::spawn(async move {
-        tokio::time::sleep(STACK_HOLD).await;
-        let host = {
-            let aims = stack_aims().lock().unwrap_or_else(|poisoned| poisoned.into_inner());
-            let Some(aim) = aims.get(&guest_id) else {
-                return;
-            };
-            if aim.ticket != ticket || aim.ready {
-                return;
-            }
-            aim.host.clone()
-        };
-        let _ = app.clone().run_on_main_thread(move || {
-            let Some(window) = app.get_webview_window(&pin_label(&guest_id)) else {
-                return;
-            };
-            let still = stack_target(&app, &guest_id, &window).as_deref() == Some(host.as_str());
-            if !still {
-                show_aim(&app, &host, "off");
-                if let Ok(mut aims) = stack_aims().lock() {
-                    if aims.get(&guest_id).is_some_and(|aim| aim.ticket == ticket) {
-                        aims.remove(&guest_id);
+    let cursor = app
+        .cursor_position()
+        .ok()
+        .map(|point| (point.x.round() as i32, point.y.round() as i32))
+        .unwrap_or((0, 0));
+    let mut aims = stack_aims().lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+    match target {
+        Some(host) => {
+            if let Some(aim) = aims.get_mut(guest_id) {
+                if aim.host == host {
+                    let moved = (cursor.0 - aim.anchor.0).abs() > STACK_STILL_RADIUS
+                        || (cursor.1 - aim.anchor.1).abs() > STACK_STILL_RADIUS;
+                    if moved && !aim.ready {
+                        aim.anchor = cursor;
+                        aim.since = Instant::now();
+                        return;
                     }
-                }
-                return;
-            }
-            if let Ok(mut aims) = stack_aims().lock() {
-                if let Some(aim) = aims.get_mut(&guest_id) {
-                    if aim.ticket == ticket {
+                    if !aim.ready && aim.since.elapsed() >= STACK_HOLD {
                         aim.ready = true;
+                        show_aim(app, &host, "ready");
                     }
+                    return;
                 }
             }
-            show_aim(&app, &host, "ready");
-        });
-    });
+            if let Some(previous) = aims.remove(guest_id) {
+                show_aim(app, &previous.host, "off");
+            }
+            show_aim(app, &host, "hold");
+            aims.insert(
+                guest_id.to_string(),
+                StackAim {
+                    host,
+                    anchor: cursor,
+                    since: Instant::now(),
+                    ready: false,
+                },
+            );
+        }
+        None => {
+            if let Some(previous) = aims.remove(guest_id) {
+                show_aim(app, &previous.host, "off");
+            }
+        }
+    }
 }
 
-fn attach_if_covering(app: &AppHandle, guest_id: &str, window: &WebviewWindow) -> bool {
-    let Some(root_id) = stack_target(app, guest_id, window) else {
+const STACK_NOTE_OPEN_H: f64 = 420.0;
+const STACK_NOTE_BAR_H: f64 = 52.0;
+
+fn resize_stack_window(app: &AppHandle, root_id: &str) {
+    resize_stack_window_with_open(app, root_id, None);
+}
+
+fn resize_stack_window_with_open(app: &AppHandle, root_id: &str, held_open: Option<&str>) {
+    let label = pin_label(root_id);
+    if app.get_webview_window(&label).is_none() {
+        return;
+    }
+    let db = app.state::<AppState>().db.clone();
+    let Ok(Some(root_note)) = db.get(root_id) else {
+        return;
+    };
+    let chain = db.chain_after(root_id).unwrap_or_default();
+    let root_bar = root_note.collapsed && held_open != Some(root_id);
+    let mut opens = if root_bar { 0usize } else { 1usize };
+    let mut bars = if root_bar { 1usize } else { 0usize };
+    for note in &chain {
+        if note.collapsed && held_open != Some(note.id.as_str()) {
+            bars += 1;
+        } else {
+            opens += 1;
+        }
+    }
+    let logical_height = (CARD_PAD_TOP
+        + CARD_PAD_BOTTOM
+        + (opens as f64) * STACK_NOTE_OPEN_H
+        + (bars as f64) * STACK_NOTE_BAR_H)
+        .round() as i32;
+    set_window_height(app, &label, logical_height);
+}
+
+fn attach_if_covering(
+    app: &AppHandle,
+    guest_id: &str,
+    window: &WebviewWindow,
+    preferred_host: Option<&str>,
+) -> bool {
+    let Some(root_id) = stack_target(app, guest_id, window)
+        .or_else(|| preferred_host.map(str::to_string))
+    else {
         return false;
     };
     let db = app.state::<AppState>().db.clone();
@@ -1985,9 +2080,25 @@ fn attach_if_covering(app: &AppHandle, guest_id: &str, window: &WebviewWindow) -
     if db.set_stack_host(guest_id, Some(&tail)).is_err() {
         return false;
     }
+    let total = already + 1 + incoming + 1;
+    let held_open = if total >= 4 {
+        let _ = db.set_collapsed(&root_id, true);
+        if let Ok(chain) = db.chain_after(&root_id) {
+            for note in chain {
+                let _ = db.set_collapsed(&note.id, true);
+            }
+        }
+        Some(guest_id)
+    } else {
+        None
+    };
     let extra = card_logical_height(window);
+    resize_stack_window_with_open(app, &root_id, held_open);
     let _ = app.emit("stack-changed", extra);
     close_pinned(app, guest_id);
+    if let Some(host_window) = app.get_webview_window(&pin_label(&root_id)) {
+        let _ = host_window.set_focus();
+    }
     true
 }
 
@@ -2008,9 +2119,11 @@ fn card_logical_height(window: &WebviewWindow) -> i32 {
 
 fn stack_target(app: &AppHandle, guest_id: &str, _window: &WebviewWindow) -> Option<String> {
     let db = app.state::<AppState>().db.clone();
-    let cursor = app.cursor_position().ok()?;
-    let vx = cursor.x.round() as i32;
-    let vy = cursor.y.round() as i32;
+    let cursor = app
+        .cursor_position()
+        .ok()
+        .map(|point| (point.x.round() as i32, point.y.round() as i32))?;
+    let mut best: Option<(i64, String)> = None;
     for (label, other) in app.webview_windows() {
         let Some(id) = label.strip_prefix("pin-") else {
             continue;
@@ -2039,11 +2152,29 @@ fn stack_target(app: &AppHandle, guest_id: &str, _window: &WebviewWindow) -> Opt
         let top = other_pos.y + pad_top;
         let width = (other_size.width as i32 - pad_x.saturating_mul(2)).max(1);
         let height = (other_size.height as i32 - pad_top - (CARD_PAD_BOTTOM * scale).round() as i32).max(1);
-        if vx >= left && vx < left + width && vy >= top && vy < top + height {
-            return Some(id.to_string());
+        let inset_x = (24.0 * scale).round().min(f64::from(width) * 0.2) as i32;
+        let inset_y = (16.0 * scale).round().min(f64::from(height) * 0.2) as i32;
+        let point_inside = |(px, py): (i32, i32)| {
+            px >= left + inset_x
+                && px < left + width - inset_x
+                && py >= top + inset_y
+                && py < top + height - inset_y
+        };
+        if !point_inside(cursor) {
+            continue;
+        }
+        let cx = left + width / 2;
+        let cy = top + height / 2;
+        let dx = i64::from(cursor.0) - i64::from(cx);
+        let dy = i64::from(cursor.1) - i64::from(cy);
+        let dist = dx * dx + dy * dy;
+        if best.as_ref().is_none_or(|(best_dist, best_id)| {
+            dist < *best_dist || (dist == *best_dist && id < best_id.as_str())
+        }) {
+            best = Some((dist, id.to_string()));
         }
     }
-    None
+    best.map(|(_, id)| id)
 }
 
 pub fn detach_guest(
@@ -2063,25 +2194,22 @@ pub fn detach_guest(
         return;
     };
     let root = db.stack_root_id(&parent).unwrap_or(parent.clone());
-    if let Some(theme) = shown_theme {
-        let inherited = db
-            .get(guest_id)
-            .ok()
-            .flatten()
-            .and_then(|note| note.theme)
-            .is_none();
-        keep_shown_theme(&db, guest_id, theme);
-        if inherited {
-            if let Ok(chain) = db.chain_after(guest_id) {
-                for note in chain {
-                    keep_shown_theme(&db, &note.id, theme);
-                }
-            }
+    let host_opacity = db
+        .get(&root)
+        .ok()
+        .flatten()
+        .map(|note| note.opacity)
+        .unwrap_or(100);
+    keep_stack_look(&db, guest_id, host_opacity, shown_theme);
+    if let Ok(chain) = db.chain_after(guest_id) {
+        for note in chain {
+            keep_stack_look(&db, &note.id, host_opacity, shown_theme);
         }
     }
     if db.set_stack_host(guest_id, None).is_err() {
         return;
     }
+    let _ = db.set_collapsed(guest_id, false);
     if let Some(place) = at {
         if let Ok(mut pending) = place_at().lock() {
             pending.insert(guest_id.to_string(), place);
@@ -2094,6 +2222,7 @@ pub fn detach_guest(
     }
     open_pinned(app, guest_id);
     if app.get_webview_window(&pin_label(&root)).is_some() {
+        resize_stack_window(app, &root);
         let _ = app.emit("stack-changed", 0_i32);
     }
     if let Some((grab_x, grab_y, pull)) = follow {
@@ -2111,20 +2240,18 @@ pub fn detach_guest(
     }
 }
 
-fn keep_shown_theme(db: &crate::notes::Db, id: &str, theme: &str) {
+fn keep_stack_look(db: &crate::notes::Db, id: &str, opacity: u8, shown_theme: Option<&str>) {
     let Ok(Some(note)) = db.get(id) else {
         return;
     };
-    if note.theme.is_some() {
-        return;
-    }
+    let theme = note.theme.as_deref().or(shown_theme);
     let _ = db.save_look(
         id,
-        note.opacity,
+        opacity,
         note.hue_light,
         note.hue_dark,
         &note.swatches,
-        Some(theme),
+        theme,
     );
 }
 
@@ -2151,6 +2278,7 @@ fn follow_detached(
     grab_y: i32,
     pull: i32,
 ) {
+    let pull_sq = i64::from(pull) * i64::from(pull);
     std::thread::spawn(move || {
         let mut last = (origin_x, origin_y);
         let started = Instant::now();
@@ -2160,12 +2288,27 @@ fn follow_detached(
             let id = guest_id.clone();
             let posted = app.run_on_main_thread(move || {
                 let point = app2.cursor_position().ok().map(|cursor| {
-                    let x = cursor.x.round() as i32 - grab_x;
-                    let y = cursor.y.round() as i32 - grab_y;
+                    let raw_x = cursor.x.round() as i32 - grab_x;
+                    let raw_y = cursor.y.round() as i32 - grab_y;
+                    let dx = i64::from(raw_x) - i64::from(origin_x);
+                    let dy = i64::from(raw_y) - i64::from(origin_y);
+                    let pulled_far = dx * dx + dy * dy >= pull_sq;
+                    let (mut x, mut y) = (raw_x, raw_y);
                     if let Some(window) = app2.get_webview_window(&pin_label(&id)) {
+                        if pulled_far {
+                            arm_stack_attach(&app2, &id, &window);
+                            if snap_enabled(&app2) && !aim_pending(&id) {
+                                if let Some(snapped) = snap_target_for_origin(&app2, &window, raw_x, raw_y) {
+                                    x = snapped.0;
+                                    y = snapped.1;
+                                }
+                            }
+                        } else {
+                            clear_aim(&app2, &id);
+                        }
                         let _ = window.set_position(PhysicalPosition::new(x, y));
                     }
-                    (x, y)
+                    (raw_x, raw_y)
                 });
                 let _ = tx.send(point);
             });
@@ -2179,8 +2322,7 @@ fn follow_detached(
         }
         let dx = i64::from(last.0) - i64::from(origin_x);
         let dy = i64::from(last.1) - i64::from(origin_y);
-        let pull = i64::from(pull);
-        let pulled = dx * dx + dy * dy >= pull * pull;
+        let pulled = dx * dx + dy * dy >= pull_sq;
         let app2 = app.clone();
         let id = guest_id.clone();
         let parent = parent.clone();
@@ -2190,17 +2332,28 @@ fn follow_detached(
             }
             let db = app2.state::<AppState>().db.clone();
             if !pulled {
+                clear_aim(&app2, &id);
                 let _ = db.set_stack_host(&id, Some(&parent));
                 close_pinned(&app2, &id);
                 let root = db.stack_root_id(&parent).unwrap_or(parent);
                 if app2.get_webview_window(&pin_label(&root)).is_some() {
+                    resize_stack_window(&app2, &root);
                     let _ = app2.emit("stack-changed", 0_i32);
                 }
                 return;
             }
-            if let Some(window) = app2.get_webview_window(&pin_label(&id)) {
-                save_pin_frame(&app2, &id, &window);
+            let label = pin_label(&id);
+            if let Some(aim) = stack_aims().lock().ok().and_then(|mut aims| aims.remove(&id)) {
+                show_aim(&app2, &aim.host, "off");
+                if aim.ready {
+                    if let Some(window) = app2.get_webview_window(&label) {
+                        if attach_if_covering(&app2, &id, &window, Some(&aim.host)) {
+                            return;
+                        }
+                    }
+                }
             }
+            settle_window(&app2, &label, Some(&id), false);
         });
     });
 }
@@ -2230,7 +2383,8 @@ fn left_button_down() -> bool {
 
 pub fn prepare_remove(app: &AppHandle, id: &str) {
     let db = app.state::<AppState>().db.clone();
-    let parent = db.get(id).ok().flatten().and_then(|note| note.stack_host);
+    let host_note = db.get(id).ok().flatten();
+    let parent = host_note.as_ref().and_then(|note| note.stack_host.clone());
     let child = db.guest_of(id).ok().flatten();
     if let Some(child) = &child {
         let _ = db.set_stack_host(&child.id, parent.as_deref());
@@ -2239,9 +2393,42 @@ pub fn prepare_remove(app: &AppHandle, id: &str) {
         let _ = db.set_stack_host(id, None);
         let root = db.stack_root_id(&parent).unwrap_or(parent);
         if app.get_webview_window(&pin_label(&root)).is_some() {
+            resize_stack_window(app, &root);
             let _ = app.emit("stack-changed", 0_i32);
         }
     } else if let Some(child) = child {
+        if let Some(host) = &host_note {
+            keep_stack_look(&db, &child.id, host.opacity, host.theme.as_deref());
+        }
+        let child_collapsed = child.collapsed;
+        let tail_len = db.chain_after(&child.id).map(|chain| chain.len()).unwrap_or(0);
+        let frame = app
+            .get_webview_window(&pin_label(id))
+            .and_then(|win| {
+                let pos = win.outer_position().ok()?;
+                let size = win.outer_size().ok()?;
+                let scale = win.scale_factor().unwrap_or(1.0);
+                let h = if tail_len == 0 && !child_collapsed {
+                    (CARD_HEIGHT * scale).round() as i32
+                } else {
+                    size.height as i32
+                };
+                Some((pos.x, pos.y, size.width as i32, h))
+            })
+            .or_else(|| {
+                let note = host_note?;
+                let h = if tail_len == 0 && !child_collapsed {
+                    CARD_HEIGHT as i32
+                } else {
+                    note.win_h?
+                };
+                Some((note.win_x?, note.win_y?, note.win_w?, h))
+            });
+        if let Some(frame) = frame {
+            if let Ok(mut pending) = place_at().lock() {
+                pending.insert(child.id.clone(), frame);
+            }
+        }
         open_pin(app, &child.id);
     }
 }
@@ -2263,6 +2450,9 @@ pub fn slide_card_into_view(
     area_w: i32,
     area_h: i32,
 ) -> Option<(i32, i32)> {
+    if width >= area_w || height >= area_h {
+        return None;
+    }
     let area_right = area_x.saturating_add(area_w);
     let area_bottom = area_y.saturating_add(area_h);
     let mut next_left = left;
@@ -2359,6 +2549,9 @@ pub fn slide_into_view(app: &AppHandle, label: &str) {
         return;
     };
     let area = monitor.work_area();
+    if size.width as i32 >= area.size.width as i32 || size.height as i32 >= area.size.height as i32 {
+        return;
+    }
     let pad_x = (CARD_PAD_X * scale).round() as i32;
     let pad_top = (CARD_PAD_TOP * scale).round() as i32;
     let pad_bottom = (CARD_PAD_BOTTOM * scale).round() as i32;
@@ -2471,6 +2664,23 @@ fn hover_over() -> &'static Mutex<HashSet<String>> {
     &OVER
 }
 
+fn hover_cursors() -> &'static Mutex<HashMap<String, (i32, i32)>> {
+    static CURSORS: LazyLock<Mutex<HashMap<String, (i32, i32)>>> =
+        LazyLock::new(|| Mutex::new(HashMap::new()));
+    &CURSORS
+}
+
+fn clear_hover_cursors(app: &AppHandle) {
+    let Ok(mut cursors) = hover_cursors().lock() else {
+        return;
+    };
+    for (label, _) in cursors.drain() {
+        if let Some(window) = app.get_webview_window(&label) {
+            let _ = window.emit_to(&label, "window-cursor", Option::<(i32, i32)>::None);
+        }
+    }
+}
+
 fn gesture_blocks_hover() -> bool {
     let dragging = dragging().lock().ok().is_some_and(|labels| !labels.is_empty());
     let resizing = corner_resizing().lock().ok().is_some_and(|labels| !labels.is_empty());
@@ -2482,6 +2692,7 @@ fn tick_offscreen_hover(app: &AppHandle) {
         if let Ok(mut over) = hover_over().lock() {
             over.clear();
         }
+        clear_hover_cursors(app);
         return;
     }
     if left_button_down() {
@@ -2493,8 +2704,10 @@ fn tick_offscreen_hover(app: &AppHandle) {
     let cx = cursor.x.round() as i32;
     let cy = cursor.y.round() as i32;
     let mut hits = Vec::new();
+    let mut cursor_hits: HashMap<String, Option<(i32, i32)>> = HashMap::new();
     for (label, window) in app.webview_windows() {
         if label == SETTINGS || label == PREVIEW || !window.is_visible().unwrap_or(false) {
+            cursor_hits.insert(label, None);
             continue;
         }
         let (Ok(position), Ok(size)) = (window.outer_position(), window.outer_size()) else {
@@ -2504,20 +2717,71 @@ fn tick_offscreen_hover(app: &AppHandle) {
             && cy >= position.y
             && cx < position.x.saturating_add(size.width as i32)
             && cy < position.y.saturating_add(size.height as i32);
+        let local = if over_window {
+            let scale = window.scale_factor().unwrap_or(1.0).max(0.01);
+            Some((
+                ((cursor.x - f64::from(position.x)) / scale).round() as i32,
+                ((cursor.y - f64::from(position.y)) / scale).round() as i32,
+            ))
+        } else {
+            None
+        };
+        cursor_hits.insert(label.clone(), local);
         hits.push((label, over_window, window.is_focused().unwrap_or(false)));
+    }
+    if let Ok(mut cursors) = hover_cursors().lock() {
+        cursors.retain(|label, _| {
+            if cursor_hits.contains_key(label) {
+                true
+            } else {
+                if let Some(window) = app.get_webview_window(label) {
+                    let _ = window.emit_to(label, "window-cursor", Option::<(i32, i32)>::None);
+                }
+                false
+            }
+        });
+        for (label, next_pos) in cursor_hits {
+            match next_pos {
+                Some(pos) => {
+                    if cursors.insert(label.clone(), pos) != Some(pos) {
+                        if let Some(window) = app.get_webview_window(&label) {
+                            let _ = window.emit_to(&label, "window-cursor", Some(pos));
+                        }
+                    }
+                }
+                None => {
+                    if cursors.remove(&label).is_some() {
+                        if let Some(window) = app.get_webview_window(&label) {
+                            let _ = window.emit_to(&label, "window-cursor", Option::<(i32, i32)>::None);
+                        }
+                    }
+                }
+            }
+        }
     }
     let Ok(mut over) = hover_over().lock() else {
         return;
     };
+    let parked_labels: HashSet<String> = parks()
+        .lock()
+        .ok()
+        .map(|parked| {
+            parked
+                .iter()
+                .filter(|(_, park)| park.quiet_until <= Instant::now())
+                .map(|(label, _)| label.clone())
+                .collect()
+        })
+        .unwrap_or_default();
     let mut next = HashSet::new();
     for (label, is_over, focused) in hits {
-        let was_over = over.contains(&label);
+        let was_over = over.contains(&label) || (!is_over && !focused && parked_labels.contains(&label));
         match offscreen_hover_step(was_over, is_over, focused) {
             HoverStep::Reveal => slide_into_view(app, &label),
             HoverStep::Restore => slide_back(app, &label),
             HoverStep::Idle => {}
         }
-        if is_over && !focused {
+        if is_over {
             next.insert(label);
         }
     }
@@ -2528,6 +2792,30 @@ pub fn watch_offscreen_hover(app: AppHandle) {
     std::thread::spawn(move || {
         loop {
             std::thread::sleep(Duration::from_millis(40));
+            if gesture_blocks_hover() || left_button_down() {
+                continue;
+            }
+            let state = app.state::<AppState>();
+            let any_hover = hover_over()
+                .lock()
+                .ok()
+                .is_some_and(|over| !over.is_empty());
+            let any_cursor = hover_cursors()
+                .lock()
+                .ok()
+                .is_some_and(|cursors| !cursors.is_empty());
+            let has_pins = app
+                .webview_windows()
+                .keys()
+                .any(|label| label.starts_with("pin-"));
+            if !state.pinned_mode.load(Ordering::SeqCst)
+                && !state.shown.load(Ordering::SeqCst)
+                && !has_pins
+                && !any_hover
+                && !any_cursor
+            {
+                continue;
+            }
             let (tx, rx) = std::sync::mpsc::channel();
             let app2 = app.clone();
             let posted = app.run_on_main_thread(move || {
@@ -2540,53 +2828,6 @@ pub fn watch_offscreen_hover(app: AppHandle) {
             let _ = rx.recv_timeout(Duration::from_millis(120));
         }
     });
-}
-
-pub fn move_towards(app: &AppHandle, label: &str, x: i32, y: i32) {
-    let Some(window) = app.get_webview_window(label) else {
-        return;
-    };
-    if !snap_enabled(app) {
-        let _ = window.set_position(PhysicalPosition::new(x, y));
-        return;
-    }
-    let Ok(scale) = window.scale_factor() else {
-        return;
-    };
-    let Some(monitor) = monitor_containing(app, x, y) else {
-        let _ = window.set_position(PhysicalPosition::new(x, y));
-        return;
-    };
-    let area = monitor.work_area();
-    let pad_x = (CARD_PAD_X * scale).round() as i32;
-    let pad_top = (CARD_PAD_TOP * scale).round() as i32;
-    let size = window.outer_size().unwrap_or(PhysicalSize::new(1, 1));
-    let card_w = (size.width as i32 - pad_x.saturating_mul(2)).max(1);
-    let card_h = (size.height as i32 - pad_top - (CARD_PAD_BOTTOM * scale).round() as i32).max(1);
-    let catch = (f64::from(EDGE_CATCH) * scale).round() as i32;
-    let (nx, ny) = snap_screen_edges(
-        x,
-        y,
-        card_w,
-        card_h,
-        pad_x,
-        pad_top,
-        area.position.x,
-        area.position.y,
-        area.size.width as i32,
-        area.size.height as i32,
-        catch,
-    );
-    let _ = window.set_position(PhysicalPosition::new(nx, ny));
-}
-
-pub fn end_snap_drag(app: &AppHandle, label: &str) {
-    let state = app.state::<AppState>();
-    let mut holds = state
-        .drag_hold
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner());
-    holds.remove(label);
 }
 
 fn monitor_containing(app: &AppHandle, x: i32, y: i32) -> Option<tauri::Monitor> {
@@ -2648,46 +2889,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn hidden_hotkey_shows_at_cursor() {
-        let (state, action) = transition(
-            Visibility::Hidden,
-            Gesture::HotkeyOrTray { focused: false },
-        );
-        assert_eq!(state, Visibility::Shown);
-        assert_eq!(action, Action::ShowAtCursor);
-    }
-
-    #[test]
-    fn shown_and_focused_hides() {
-        let (state, action) = transition(
-            Visibility::Shown,
-            Gesture::HotkeyOrTray { focused: true },
-        );
-        assert_eq!(state, Visibility::Hidden);
-        assert_eq!(action, Action::HideAndSave);
-    }
-
-    #[test]
-    fn shown_but_unfocused_moves_to_cursor() {
-        let (state, action) = transition(
-            Visibility::Shown,
-            Gesture::HotkeyOrTray { focused: false },
-        );
-        assert_eq!(state, Visibility::Shown);
-        assert_eq!(action, Action::ShowAtCursor);
-    }
-
-    #[test]
-    fn blur_hides_the_card() {
-        let (state, action) = transition(
-            Visibility::Shown,
-            Gesture::FocusLost { suppress_blur: false },
-        );
-        assert_eq!(state, Visibility::Hidden);
-        assert_eq!(action, Action::HideAndSave);
-    }
-
-    #[test]
     fn tray_card_sits_under_a_top_right_icon() {
         let (x, y) = tray_card_origin(1800, 0, 40, 24, 400, 500, 0, 28, 1920, 1052, 8);
         assert_eq!(x, 1440);
@@ -2699,66 +2900,6 @@ mod tests {
         let (x, y) = tray_card_origin(1800, 1040, 40, 40, 400, 500, 0, 0, 1920, 1000, 8);
         assert_eq!(x, 1440);
         assert_eq!(y, 500);
-    }
-
-    #[test]
-    fn self_hide_blur_is_ignored() {
-        let (state, action) = transition(
-            Visibility::Shown,
-            Gesture::FocusLost { suppress_blur: true },
-        );
-        assert_eq!(state, Visibility::Shown);
-        assert_eq!(action, Action::Ignore);
-    }
-
-    #[test]
-    fn blur_while_hidden_is_ignored() {
-        let (state, action) = transition(
-            Visibility::Hidden,
-            Gesture::FocusLost {
-                suppress_blur: false,
-            },
-        );
-        assert_eq!(state, Visibility::Hidden);
-        assert_eq!(action, Action::Ignore);
-    }
-
-    #[test]
-    fn five_by_three_anchors_span_the_work_area() {
-        let points = snap_anchors(0, 0, 1000, 600, 200, 100);
-        assert_eq!(points.len(), 15);
-        assert_eq!(points[0], (0, 0));
-        assert_eq!(points[4], (800, 0));
-        assert_eq!(points[10], (0, 500));
-        assert_eq!(points[14], (800, 500));
-    }
-
-    #[test]
-    fn nearest_anchor_keeps_a_close_corner_and_ignores_a_far_one() {
-        let points = snap_anchors(0, 0, 1000, 600, 200, 100);
-        assert_eq!(nearest_anchor(10, 12, &points, Some(48)), Some((0, 0)));
-        assert_eq!(nearest_anchor(400, 250, &points, Some(48)), None);
-        assert!(nearest_anchor(400, 250, &points, None).is_some());
-    }
-
-    #[test]
-    fn nearest_line_snaps_an_edge_that_is_close() {
-        assert_eq!(nearest_line(190, &[0, 200, 400], 48), Some(200));
-        assert_eq!(nearest_line(120, &[0, 200, 400], 48), None);
-    }
-
-    #[test]
-    fn magnet_locks_close_holds_and_then_lets_go() {
-        let anchors = [(0, 0), (400, 0)];
-        let (x, y, hold) = magnet_origin(10, 8, 0, 0, &anchors, None, 156, 64, 240);
-        assert_eq!((x, y), (0, 0));
-        assert_eq!(hold, Some((0, 0)));
-        let (x, y, hold) = magnet_origin(100, 0, 0, 0, &anchors, hold, 156, 64, 240);
-        assert_eq!((x, y), (0, 0));
-        assert_eq!(hold, Some((0, 0)));
-        let (x, y, hold) = magnet_origin(400, 0, 0, 0, &anchors, Some((0, 0)), 156, 64, 240);
-        assert_eq!((x, y), (400, 0));
-        assert_eq!(hold, Some((400, 0)));
     }
 
     #[test]
@@ -2782,12 +2923,37 @@ mod tests {
         assert_eq!(slide_card_into_view(-8, 40, 300, 200, 0, 0, 1000, 800), Some((0, 40)));
         assert_eq!(slide_card_into_view(-294, 40, 300, 200, 0, 0, 1000, 800), Some((0, 40)));
         assert_eq!(slide_card_into_view(-400, 40, 300, 200, 0, 0, 1000, 800), None);
+        assert_eq!(slide_card_into_view(-140, 0, 300, 800, 0, 0, 1000, 800), None);
+        assert_eq!(slide_card_into_view(-140, -50, 300, 900, 0, 0, 1000, 800), None);
+        assert_eq!(slide_card_into_view(-140, 40, 1000, 200, 0, 0, 1000, 800), None);
     }
 
     #[test]
     fn the_bottom_right_corner_changes_the_window_size() {
-        assert_eq!(southeast_size(400, 500, 30, -20, 220, 140), (430, 480));
-        assert_eq!(southeast_size(400, 500, -300, -400, 220, 140), (220, 140));
+        assert_eq!(
+            resize_frame(0, 0, 400, 500, 30, -20, 220, 140, ResizeEdge::SouthEast),
+            (0, 0, 430, 480)
+        );
+        assert_eq!(
+            resize_frame(0, 0, 400, 500, -300, -400, 220, 140, ResizeEdge::SouthEast),
+            (0, 0, 220, 140)
+        );
+        assert_eq!(
+            resize_frame(100, 50, 400, 500, -40, 30, 220, 140, ResizeEdge::SouthWest),
+            (60, 50, 440, 530)
+        );
+        assert_eq!(
+            resize_frame(100, 50, 400, 500, 300, 30, 220, 140, ResizeEdge::West),
+            (280, 50, 220, 500)
+        );
+        assert_eq!(
+            resize_frame(100, 50, 400, 500, 50, 40, 220, 140, ResizeEdge::East),
+            (100, 50, 450, 500)
+        );
+        assert_eq!(
+            resize_frame(100, 50, 400, 500, 50, 40, 220, 140, ResizeEdge::South),
+            (100, 50, 400, 540)
+        );
     }
 
     #[test]
@@ -2799,6 +2965,9 @@ mod tests {
         assert_eq!((x, y), (400, 0));
         let (x, y) = snap_memo_edges(50, 0, 100, 80, 0, 0, &neighbors, 22);
         assert_eq!((x, y), (50, 0));
+        // Deep overlap on both axes is ignored so memos can be dropped onto each other to stack.
+        let (x, y) = snap_memo_edges(100, 8, 100, 80, 0, 0, &neighbors, 22);
+        assert_eq!((x, y), (100, 8));
     }
 
     #[test]
@@ -2811,18 +2980,6 @@ mod tests {
         assert_eq!((x, y), (700, 150));
         let (x, y) = snap_screen_edges(200, 590, 300, 200, 0, 0, 0, 0, 1000, 800, 36);
         assert_eq!((x, y), (200, 600));
-    }
-
-    #[test]
-    fn magnet_eases_toward_a_point_before_locking() {
-        let anchors = [(0, 0)];
-        let (x, y, hold) = magnet_origin(120, 0, 0, 0, &anchors, None, 156, 64, 240);
-        assert!(hold.is_none());
-        assert!(x > 0 && x < 120);
-        assert_eq!(y, 0);
-        let (x, y, hold) = magnet_origin(500, 400, 0, 0, &anchors, None, 156, 64, 240);
-        assert_eq!((x, y), (500, 400));
-        assert!(hold.is_none());
     }
 
     #[test]
@@ -2882,27 +3039,32 @@ mod tests {
     }
 
     #[test]
-    fn free_slot_skips_occupied_cards() {
-        let cell = (100, 80);
-        let gap = 8;
-        assert_eq!(free_slot(&[], 0, 0, 400, 300, cell.0, cell.1, gap), (8, 8));
-        let first = (8, 8, 100, 80);
-        assert_eq!(
-            free_slot(&[first], 0, 0, 400, 300, cell.0, cell.1, gap),
-            (8 + 108, 8)
-        );
-        let second = (8 + 108, 8, 100, 80);
-        assert_eq!(
-            free_slot(&[first, second], 0, 0, 220, 300, cell.0, cell.1, gap),
-            (8, 8 + 88)
-        );
-    }
-
-    #[test]
     fn stacked_pins_step_apart() {
         assert_eq!(nudge_origin(10, 20, &[], 36), (10, 20));
         assert_eq!(nudge_origin(10, 20, &[(10, 20)], 36), (46, 56));
         assert_eq!(nudge_origin(10, 20, &[(10, 20), (46, 56)], 36), (82, 92));
         assert_eq!(nudge_origin(80, 20, &[(10, 20)], 36), (80, 20));
+    }
+
+    #[test]
+    fn snapping_between_left_screen_edge_and_right_neighbor_prioritizes_right() {
+        let layout = organize_grid(0, 0, 1400, 900, 408, 476, 24, 24, 32, 4);
+        let first_x = layout.origin_x;
+        let second = visual_card(
+            layout.origin_x + layout.step_x,
+            layout.origin_y,
+            408,
+            476,
+            24,
+            24,
+            32,
+        );
+        let (screen_x, _) =
+            snap_screen_edges(first_x, layout.origin_y, 360, 420, 24, 24, 0, 0, 1400, 900, 36);
+        let (memo_x, _) =
+            snap_memo_edges(first_x, layout.origin_y, 360, 420, 24, 24, &[second], 36);
+        let chosen_x = super::closer_snap_x(first_x, screen_x, memo_x);
+        assert_eq!(chosen_x, memo_x);
+        assert!(chosen_x > first_x);
     }
 }

@@ -46,33 +46,44 @@
           </span>
         </div>
         <div class="header-actions">
-          <div class="markdown-anchor">
-            <button id="markdown-toggle" type="button" aria-label="Markdown" aria-expanded="false">M</button>
-            <div id="markdown-pop" hidden>
-              <button type="button" data-markdown="bold" aria-label="Bold">B</button>
-              <button type="button" data-markdown="italic" aria-label="Italic">I</button>
-              <button type="button" data-markdown="title" aria-label="Title">T</button>
-              <button type="button" data-markdown="task" aria-label="Task list">[ ]</button>
-              <button type="button" data-markdown="code" aria-label="Code">&lt;&gt;</button>
-            </div>
-          </div>
-          <button id="mode-toggle" type="button" aria-label="Preview" aria-pressed="false">Preview</button>
-          <div class="theme-anchor">
-            <button id="theme-toggle" class="theme-toggle icon-button" type="button" aria-label="Dark theme">
-              <svg id="theme-icon" class="theme-icon" viewBox="0 0 16 16" width="14" height="14" aria-hidden="true"></svg>
+          <div class="editor-tools-anchor">
+            <button id="editor-menu-toggle" class="editor-menu-toggle icon-button" type="button" aria-label="Editor options" aria-expanded="false" title="Editor options">
+              <span class="menu-glyph" aria-hidden="true"></span>
             </button>
-            <div id="color-pop" class="color-pop" hidden>
-              <div class="hue-track">
-                <input id="hue-slider" type="range" min="0" max="359" value="48" aria-label="Hue" />
+            <div id="editor-tools" class="editor-tools">
+              <div class="markdown-anchor">
+                <button id="markdown-toggle" class="markdown-toggle icon-button" type="button" aria-label="Markdown" aria-expanded="false" title="Markdown">
+                  <span class="markdown-glyph" aria-hidden="true"></span>
+                </button>
+                <div id="markdown-pop" hidden>
+                  <button type="button" data-markdown="bold" aria-label="Bold">B</button>
+                  <button type="button" data-markdown="italic" aria-label="Italic">I</button>
+                  <button type="button" data-markdown="title" aria-label="Title">T</button>
+                  <button type="button" data-markdown="task" aria-label="Task list">[ ]</button>
+                  <button type="button" data-markdown="code" aria-label="Code">&lt;&gt;</button>
+                </div>
               </div>
-              <div id="hue-slots">
-                <button type="button" class="hue-slot" aria-label="Saved color 1"></button>
-                <button type="button" class="hue-slot" aria-label="Saved color 2"></button>
-                <button type="button" class="hue-slot" aria-label="Saved color 3"></button>
-                <button type="button" class="hue-slot" aria-label="Saved color 4"></button>
-                <button type="button" class="hue-slot" aria-label="Saved color 5"></button>
-                <button type="button" class="hue-slot" aria-label="Saved color 6"></button>
-                <button id="hue-add" type="button" aria-label="Save hue">+</button>
+              <button id="mode-toggle" class="mode-toggle icon-button" type="button" aria-label="Preview" aria-pressed="false" title="Preview">
+                <span class="preview-glyph" aria-hidden="true"></span>
+              </button>
+              <div class="theme-anchor">
+                <button id="theme-toggle" class="theme-toggle icon-button" type="button" aria-label="Dark theme">
+                  <svg id="theme-icon" class="theme-icon" viewBox="0 0 16 16" width="14" height="14" aria-hidden="true"></svg>
+                </button>
+                <div id="color-pop" class="color-pop" hidden>
+                  <div class="hue-track">
+                    <input id="hue-slider" type="range" min="0" max="359" value="48" aria-label="Hue" />
+                  </div>
+                  <div id="hue-slots">
+                    <button type="button" class="hue-slot" aria-label="Saved color 1"></button>
+                    <button type="button" class="hue-slot" aria-label="Saved color 2"></button>
+                    <button type="button" class="hue-slot" aria-label="Saved color 3"></button>
+                    <button type="button" class="hue-slot" aria-label="Saved color 4"></button>
+                    <button type="button" class="hue-slot" aria-label="Saved color 5"></button>
+                    <button type="button" class="hue-slot" aria-label="Saved color 6"></button>
+                    <button id="hue-add" type="button" aria-label="Save hue">+</button>
+                  </div>
+                </div>
               </div>
             </div>
           </div>
@@ -80,6 +91,9 @@
             <span class="pin-glyph" aria-hidden="true"></span>
           </button>
         </div>
+        <button id="fold-toggle" class="fold-toggle icon-button" type="button" aria-label="Fold memo" title="Fold memo">
+          <span class="collapsed-chevron" aria-hidden="true"></span>
+        </button>
       </header>
 
       <section id="composer-view">
@@ -104,7 +118,11 @@
     <div id="stack"></div>
     </div>
     </div>
-    <div id="resize-grip" aria-hidden="true"></div>
+    <div id="resize-w" class="resize-handle" data-resize="w" aria-hidden="true"></div>
+    <div id="resize-e" class="resize-handle" data-resize="e" aria-hidden="true"></div>
+    <div id="resize-s" class="resize-handle" data-resize="s" aria-hidden="true"></div>
+    <div id="resize-sw" class="resize-handle" data-resize="sw" aria-hidden="true"></div>
+    <div id="resize-grip" class="resize-handle" data-resize="se" aria-hidden="true"></div>
     <div id="lightbox">
       <img id="lightbox-image" alt="" />
     </div>

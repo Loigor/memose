@@ -50,7 +50,7 @@ export function palette(theme: ThemeName, hue: number): Record<string, string> {
       "--button": `hsl(${hue} 30% 93% / 0.12)`,
       "--button-hover": `hsl(${hue} 30% 93% / 0.2)`,
       "--line": `hsl(${hue} 30% 93% / 0.14)`,
-      "--rule": `hsl(${hue} 18% 90% / 0.42)`,
+      "--rule": "#3f4348",
       "--shadow": "hsl(0 0% 0% / 0.55)",
       "--field": "hsl(0 0% 100% / 0.06)",
       "--pin-on": `hsl(${hue} 40% 96%)`,
@@ -63,7 +63,7 @@ export function palette(theme: ThemeName, hue: number): Record<string, string> {
     "--button": `hsl(${hue} 50% 18% / 0.08)`,
     "--button-hover": `hsl(${hue} 50% 18% / 0.16)`,
     "--line": `hsl(${hue} 50% 18% / 0.12)`,
-    "--rule": `hsl(${hue} 40% 24% / 0.38)`,
+    "--rule": "rgba(80, 58, 16, 0.38)",
     "--shadow": `hsl(${hue} 70% 14% / 0.34)`,
     "--field": "hsl(0 0% 100% / 0.65)",
     "--pin-on": `hsl(${hue} 18% 14%)`,
@@ -89,9 +89,10 @@ export function colorGlyph(chip: string): string {
   return `<circle cx="8" cy="8" r="5" fill="${chip}" stroke="currentColor" stroke-width="1.2"/>`;
 }
 
-export function paintThemeButton(button: HTMLElement, icon: Element, theme: ThemeName, colorMode: boolean, chip: string) {
+export function paintThemeButton(button: HTMLElement, icon: Element, theme: ThemeName, colorMode: boolean, _chip: string) {
+  button.classList.toggle("color-mode", colorMode);
   if (colorMode) {
-    icon.innerHTML = colorGlyph(chip);
+    icon.innerHTML = "";
     button.setAttribute("aria-label", "Memo color");
     button.title = "Memo color";
     return;
@@ -110,39 +111,70 @@ export function stackHeaderHtml(): string {
         <span class="brand-name">Memose</span>
         <span class="note-title"></span>
         <span class="note-meta">
-          <span class="visibility-label" hidden></span>
+          <span class="audience-anchor">
+            <button class="visibility-label" type="button" hidden>Private</button>
+            <div class="audience-pop" hidden>
+              <p class="pop-label">Who can see this</p>
+              <div class="visibility-choices"></div>
+              <div class="space-block" hidden>
+                <p class="pop-label">Space</p>
+                <div class="space-choices"></div>
+              </div>
+              <div class="audience-foot">
+                <button class="delete-note" type="button">Delete memo</button>
+                <div class="delete-confirm" hidden>
+                  <span>Delete this memo?</span>
+                  <span class="audience-confirm-actions">
+                    <button class="delete-no" type="button">Cancel</button>
+                    <button class="delete-yes" type="button">Delete</button>
+                  </span>
+                </div>
+              </div>
+            </div>
+          </span>
           <span class="edited-sep" hidden>|</span>
           <span class="edited-at" hidden></span>
         </span>
       </div>
       <div class="header-actions">
-        <div class="markdown-anchor">
-          <button class="markdown-toggle" type="button" aria-label="Markdown" aria-expanded="false">M</button>
-          <div class="markdown-pop" hidden>
-            <button type="button" data-markdown="bold" aria-label="Bold">B</button>
-            <button type="button" data-markdown="italic" aria-label="Italic">I</button>
-            <button type="button" data-markdown="title" aria-label="Title">T</button>
-            <button type="button" data-markdown="task" aria-label="Task list">[ ]</button>
-            <button type="button" data-markdown="code" aria-label="Code">&lt;&gt;</button>
-          </div>
-        </div>
-        <button class="mode-toggle" type="button" aria-label="Preview" aria-pressed="false">Preview</button>
-        <div class="theme-anchor">
-          <button class="theme-toggle icon-button" type="button" aria-label="Dark theme">
-            <svg class="theme-icon" viewBox="0 0 16 16" width="14" height="14" aria-hidden="true"></svg>
+        <div class="editor-tools-anchor">
+          <button class="editor-menu-toggle icon-button" type="button" aria-label="Editor options" aria-expanded="false" title="Editor options">
+            <span class="menu-glyph" aria-hidden="true"></span>
           </button>
-          <div class="color-pop" hidden>
-            <div class="hue-track">
-              <input class="hue-slider" type="range" min="0" max="359" value="48" aria-label="Hue" />
+          <div class="editor-tools">
+            <div class="markdown-anchor">
+              <button class="markdown-toggle icon-button" type="button" aria-label="Markdown" aria-expanded="false" title="Markdown">
+                <span class="markdown-glyph" aria-hidden="true"></span>
+              </button>
+              <div class="markdown-pop" hidden>
+                <button type="button" data-markdown="bold" aria-label="Bold">B</button>
+                <button type="button" data-markdown="italic" aria-label="Italic">I</button>
+                <button type="button" data-markdown="title" aria-label="Title">T</button>
+                <button type="button" data-markdown="task" aria-label="Task list">[ ]</button>
+                <button type="button" data-markdown="code" aria-label="Code">&lt;&gt;</button>
+              </div>
             </div>
-            <div class="hue-slots">
-              <button type="button" class="hue-slot" aria-label="Saved color 1"></button>
-              <button type="button" class="hue-slot" aria-label="Saved color 2"></button>
-              <button type="button" class="hue-slot" aria-label="Saved color 3"></button>
-              <button type="button" class="hue-slot" aria-label="Saved color 4"></button>
-              <button type="button" class="hue-slot" aria-label="Saved color 5"></button>
-              <button type="button" class="hue-slot" aria-label="Saved color 6"></button>
-              <button class="hue-add" type="button" aria-label="Save hue">+</button>
+            <button class="mode-toggle icon-button" type="button" aria-label="Preview" aria-pressed="false" title="Preview">
+              <span class="preview-glyph" aria-hidden="true"></span>
+            </button>
+            <div class="theme-anchor">
+              <button class="theme-toggle icon-button" type="button" aria-label="Dark theme">
+                <svg class="theme-icon" viewBox="0 0 16 16" width="14" height="14" aria-hidden="true"></svg>
+              </button>
+              <div class="color-pop" hidden>
+                <div class="hue-track">
+                  <input class="hue-slider" type="range" min="0" max="359" value="48" aria-label="Hue" />
+                </div>
+                <div class="hue-slots">
+                  <button type="button" class="hue-slot" aria-label="Saved color 1"></button>
+                  <button type="button" class="hue-slot" aria-label="Saved color 2"></button>
+                  <button type="button" class="hue-slot" aria-label="Saved color 3"></button>
+                  <button type="button" class="hue-slot" aria-label="Saved color 4"></button>
+                  <button type="button" class="hue-slot" aria-label="Saved color 5"></button>
+                  <button type="button" class="hue-slot" aria-label="Saved color 6"></button>
+                  <button class="hue-add" type="button" aria-label="Save hue">+</button>
+                </div>
+              </div>
             </div>
           </div>
         </div>
@@ -150,6 +182,9 @@ export function stackHeaderHtml(): string {
           <span class="pin-glyph" aria-hidden="true"></span>
         </button>
       </div>
+      <button class="fold-toggle icon-button" type="button" aria-label="Fold memo" title="Fold memo">
+        <span class="collapsed-chevron" aria-hidden="true"></span>
+      </button>
     </header>
   `;
 }

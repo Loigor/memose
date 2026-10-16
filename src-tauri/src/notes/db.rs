@@ -42,13 +42,15 @@ impl Db {
                 key TEXT PRIMARY KEY,
                 value TEXT NOT NULL
             );
+            CREATE TABLE IF NOT EXISTS media_uploads (
+                local_name TEXT PRIMARY KEY,
+                remote_name TEXT NOT NULL,
+                remote_memo TEXT NOT NULL DEFAULT '',
+                filename TEXT NOT NULL DEFAULT ''
+            );
             ",
         )?;
-        ensure_pin_columns(&conn)?;
-        ensure_sync_columns(&conn)?;
-        ensure_look_columns(&conn)?;
-        ensure_audience_columns(&conn)?;
-        ensure_stack_columns(&conn)?;
+        ensure_note_columns(&conn)?;
         Ok(Self {
             conn: Arc::new(Mutex::new(conn)),
         })
@@ -314,8 +316,13 @@ impl Db {
     }
 
     pub fn set_stack_host(&self, id: &str, host: Option<&str>) -> Result<(), AppError> {
-        if host == Some(id) {
-            return Err(AppError::Message("a memo cannot stack on itself".into()));
+        if let Some(host_id) = host {
+            if host_id == id {
+                return Err(AppError::Message("a memo cannot stack on itself".into()));
+            }
+            if self.chain_after(id)?.iter().any(|note| note.id == host_id) {
+                return Err(AppError::Message("stack cycle detected".into()));
+            }
         }
         self.with(|conn| {
             conn.execute(
@@ -479,6 +486,7 @@ impl Db {
         })
     }
 
+    #[cfg(test)]
     pub fn mark_synced(&self, id: &str, remote_name: &str) -> Result<(), AppError> {
         self.with(|conn| {
             let now = now_ms();
@@ -537,6 +545,51 @@ impl Db {
     pub fn clear_meta(&self, key: &str) -> Result<(), AppError> {
         self.with(|conn| {
             conn.execute("DELETE FROM meta WHERE key = ?1", params![key])?;
+            Ok(())
+        })
+    }
+
+    pub fn media_upload_for_local(&self, local_name: &str) -> Result<Option<(String, String)>, AppError> {
+        self.with(|conn| {
+            conn.query_row(
+                "SELECT remote_name, remote_memo FROM media_uploads WHERE local_name = ?1",
+                params![local_name],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .optional()
+            .map_err(AppError::from)
+        })
+    }
+
+    pub fn media_local_for_remote(&self, remote_name: &str) -> Result<Option<(String, String)>, AppError> {
+        self.with(|conn| {
+            conn.query_row(
+                "SELECT local_name, filename FROM media_uploads WHERE remote_name = ?1 LIMIT 1",
+                params![remote_name],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .optional()
+            .map_err(AppError::from)
+        })
+    }
+
+    pub fn record_media_upload(
+        &self,
+        local_name: &str,
+        remote_name: &str,
+        remote_memo: &str,
+        filename: &str,
+    ) -> Result<(), AppError> {
+        self.with(|conn| {
+            conn.execute(
+                "INSERT INTO media_uploads (local_name, remote_name, remote_memo, filename)
+                 VALUES (?1, ?2, ?3, ?4)
+                 ON CONFLICT(local_name) DO UPDATE SET
+                     remote_name = excluded.remote_name,
+                     remote_memo = excluded.remote_memo,
+                     filename = excluded.filename",
+                params![local_name, remote_name, remote_memo, filename],
+            )?;
             Ok(())
         })
     }
@@ -821,62 +874,29 @@ fn note_by_id(conn: &Connection, id: &str) -> Result<Option<Note>, AppError> {
     }
 }
 
-fn ensure_pin_columns(conn: &Connection) -> Result<(), AppError> {
+fn ensure_note_columns(conn: &Connection) -> Result<(), AppError> {
     let mut stmt = conn.prepare("PRAGMA table_info(notes)")?;
     let names = stmt
         .query_map([], |row| row.get::<_, String>(1))?
         .collect::<Result<Vec<_>, _>>()?;
     for (name, ddl) in [
-        (
-            "pinned",
-            "ALTER TABLE notes ADD COLUMN pinned INTEGER NOT NULL DEFAULT 0",
-        ),
+        ("pinned", "ALTER TABLE notes ADD COLUMN pinned INTEGER NOT NULL DEFAULT 0"),
         ("win_x", "ALTER TABLE notes ADD COLUMN win_x INTEGER"),
         ("win_y", "ALTER TABLE notes ADD COLUMN win_y INTEGER"),
         ("win_w", "ALTER TABLE notes ADD COLUMN win_w INTEGER"),
         ("win_h", "ALTER TABLE notes ADD COLUMN win_h INTEGER"),
-    ] {
-        if !names.iter().any(|existing| existing == name) {
-            conn.execute(ddl, [])?;
-        }
-    }
-    Ok(())
-}
-
-fn ensure_sync_columns(conn: &Connection) -> Result<(), AppError> {
-    let mut stmt = conn.prepare("PRAGMA table_info(notes)")?;
-    let names = stmt
-        .query_map([], |row| row.get::<_, String>(1))?
-        .collect::<Result<Vec<_>, _>>()?;
-    for (name, ddl) in [
         ("base_content", "ALTER TABLE notes ADD COLUMN base_content TEXT"),
         ("remote_content", "ALTER TABLE notes ADD COLUMN remote_content TEXT"),
-        (
-            "remote_updated_at",
-            "ALTER TABLE notes ADD COLUMN remote_updated_at INTEGER",
-        ),
-    ] {
-        if !names.iter().any(|existing| existing == name) {
-            conn.execute(ddl, [])?;
-        }
-    }
-    Ok(())
-}
-
-fn ensure_look_columns(conn: &Connection) -> Result<(), AppError> {
-    let mut stmt = conn.prepare("PRAGMA table_info(notes)")?;
-    let names = stmt
-        .query_map([], |row| row.get::<_, String>(1))?
-        .collect::<Result<Vec<_>, _>>()?;
-    for (name, ddl) in [
-        (
-            "opacity",
-            "ALTER TABLE notes ADD COLUMN opacity INTEGER NOT NULL DEFAULT 100",
-        ),
+        ("remote_updated_at", "ALTER TABLE notes ADD COLUMN remote_updated_at INTEGER"),
+        ("opacity", "ALTER TABLE notes ADD COLUMN opacity INTEGER NOT NULL DEFAULT 100"),
         ("hue_light", "ALTER TABLE notes ADD COLUMN hue_light INTEGER"),
         ("hue_dark", "ALTER TABLE notes ADD COLUMN hue_dark INTEGER"),
         ("swatches", "ALTER TABLE notes ADD COLUMN swatches TEXT"),
         ("theme", "ALTER TABLE notes ADD COLUMN theme TEXT"),
+        ("visibility", "ALTER TABLE notes ADD COLUMN visibility TEXT"),
+        ("remote_space", "ALTER TABLE notes ADD COLUMN remote_space TEXT"),
+        ("collapsed", "ALTER TABLE notes ADD COLUMN collapsed INTEGER NOT NULL DEFAULT 0"),
+        ("stack_host", "ALTER TABLE notes ADD COLUMN stack_host TEXT"),
     ] {
         if !names.iter().any(|existing| existing == name) {
             conn.execute(ddl, [])?;
@@ -953,41 +973,6 @@ fn theme_column(value: Option<String>) -> Option<String> {
         Some("light") => Some("light".into()),
         _ => None,
     }
-}
-
-fn ensure_stack_columns(conn: &Connection) -> Result<(), AppError> {
-    let mut stmt = conn.prepare("PRAGMA table_info(notes)")?;
-    let names = stmt
-        .query_map([], |row| row.get::<_, String>(1))?
-        .collect::<Result<Vec<_>, _>>()?;
-    for (name, ddl) in [
-        (
-            "collapsed",
-            "ALTER TABLE notes ADD COLUMN collapsed INTEGER NOT NULL DEFAULT 0",
-        ),
-        ("stack_host", "ALTER TABLE notes ADD COLUMN stack_host TEXT"),
-    ] {
-        if !names.iter().any(|existing| existing == name) {
-            conn.execute(ddl, [])?;
-        }
-    }
-    Ok(())
-}
-
-fn ensure_audience_columns(conn: &Connection) -> Result<(), AppError> {
-    let mut stmt = conn.prepare("PRAGMA table_info(notes)")?;
-    let names = stmt
-        .query_map([], |row| row.get::<_, String>(1))?
-        .collect::<Result<Vec<_>, _>>()?;
-    for (name, ddl) in [
-        ("visibility", "ALTER TABLE notes ADD COLUMN visibility TEXT"),
-        ("remote_space", "ALTER TABLE notes ADD COLUMN remote_space TEXT"),
-    ] {
-        if !names.iter().any(|existing| existing == name) {
-            conn.execute(ddl, [])?;
-        }
-    }
-    Ok(())
 }
 
 #[cfg(test)]

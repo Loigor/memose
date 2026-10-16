@@ -57,8 +57,38 @@ pub fn commit_note(app: AppHandle, state: State<'_, AppState>, content: String) 
 }
 
 #[tauri::command]
-pub fn save_media(state: State<'_, AppState>, bytes: Vec<u8>) -> Result<String, AppError> {
-    crate::media::save(&state.media_dir, &bytes)
+pub fn save_media(
+    state: State<'_, AppState>,
+    bytes: Vec<u8>,
+    filename: Option<String>,
+    mime: Option<String>,
+) -> Result<String, AppError> {
+    crate::media::save_named(
+        &state.media_dir,
+        &bytes,
+        filename.as_deref(),
+        mime.as_deref(),
+    )
+}
+
+#[tauri::command]
+pub fn save_media_file(state: State<'_, AppState>, path: String) -> Result<String, AppError> {
+    crate::media::save_file_path(&state.media_dir, std::path::Path::new(&path))
+}
+
+#[tauri::command]
+pub fn paste_clipboard_media(state: State<'_, AppState>) -> Result<Vec<String>, AppError> {
+    crate::media::paste_clipboard(&state.media_dir)
+}
+
+#[tauri::command]
+pub fn reveal_media(state: State<'_, AppState>, name: String) -> Result<(), AppError> {
+    crate::media::reveal_in_folder(&state.media_dir, &name)
+}
+
+#[tauri::command]
+pub fn open_media_file(state: State<'_, AppState>, name: String) -> Result<(), AppError> {
+    crate::media::open_file(&state.media_dir, &name)
 }
 
 #[tauri::command]
@@ -137,30 +167,18 @@ pub fn set_collapsed(state: State<AppState>, id: String, collapsed: bool) -> Res
 }
 
 #[tauri::command]
-pub fn stack_guest(state: State<AppState>, host_id: String) -> Result<Option<Note>, AppError> {
-    state.db.guest_of(&host_id)
-}
-
-#[tauri::command]
 pub fn stack_chain(state: State<AppState>, host_id: String) -> Result<Vec<Note>, AppError> {
     state.db.chain_after(&host_id)
 }
 
 #[tauri::command]
-pub fn move_snap(app: AppHandle, label: String, x: i32, y: i32) -> Result<(), AppError> {
-    window_ctl::move_towards(&app, &label, x, y);
-    Ok(())
+pub fn set_window_height(app: AppHandle, label: String, height: i32) {
+    window_ctl::set_window_height(&app, &label, height);
 }
 
 #[tauri::command]
-pub fn end_snap_drag(app: AppHandle, label: String) -> Result<(), AppError> {
-    window_ctl::end_snap_drag(&app, &label);
-    Ok(())
-}
-
-#[tauri::command]
-pub fn begin_memo_drag(label: String) {
-    window_ctl::begin_memo_drag(&label);
+pub fn begin_memo_drag(app: AppHandle, label: String) {
+    window_ctl::begin_memo_drag(app, label);
 }
 
 #[tauri::command]
@@ -179,9 +197,16 @@ pub fn slide_back(app: AppHandle, label: String) {
 }
 
 #[tauri::command]
-pub async fn begin_corner_resize(app: AppHandle, label: String) {
+pub async fn begin_corner_resize(app: AppHandle, label: String, edge: Option<String>) {
     let (tx, rx) = std::sync::mpsc::channel();
-    window_ctl::begin_corner_resize(app, label, tx);
+    let resize_edge = match edge.as_deref() {
+        Some("w") => window_ctl::ResizeEdge::West,
+        Some("e") => window_ctl::ResizeEdge::East,
+        Some("s") => window_ctl::ResizeEdge::South,
+        Some("sw") => window_ctl::ResizeEdge::SouthWest,
+        _ => window_ctl::ResizeEdge::SouthEast,
+    };
+    window_ctl::begin_corner_resize(app, label, resize_edge, tx);
     let _ = tauri::async_runtime::spawn_blocking(move || rx.recv()).await;
 }
 
@@ -475,6 +500,8 @@ pub fn set_pinned(
 ) -> Result<(), AppError> {
     if pinned {
         window_ctl::place_for_pin(&app, &id);
+    } else {
+        window_ctl::prepare_remove(&app, &id);
     }
     state.db.set_pinned(&id, pinned)?;
     if pinned {
@@ -483,9 +510,9 @@ pub fn set_pinned(
             window_ctl::dismiss_composer(&app);
         }
     } else {
-        window_ctl::prepare_remove(&app, &id);
         window_ctl::close_pinned(&app, &id);
     }
+    let _ = app.emit("notes-changed", ());
     Ok(())
 }
 

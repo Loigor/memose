@@ -112,7 +112,7 @@ pub async fn request_materialize(app: &AppHandle, id: String) -> Result<Note, Ap
     let (tx, rx) = tokio::sync::oneshot::channel();
     if !send(app, Job::Materialize(id.clone(), tx)) {
         let state = app.state::<AppState>();
-        return materialize_remote(&state.db, &state.http, &id).await;
+        return materialize_remote(&state.db, &state.http, &state.media_dir, &id).await;
     }
     match rx.await {
         Ok(result) => result,
@@ -169,15 +169,17 @@ async fn finish_job(app: &AppHandle, job: Job) {
             let state = app.state::<AppState>();
             let db = state.db.clone();
             let http = state.http.clone();
+            let media_dir = state.media_dir.clone();
             drop(state);
-            let _ = reply.send(materialize_remote(&db, &http, &id).await);
+            let _ = reply.send(materialize_remote(&db, &http, &media_dir, &id).await);
         }
         Job::KeepLocal(id, reply) => {
             let state = app.state::<AppState>();
             let db = state.db.clone();
             let http = state.http.clone();
+            let media_dir = state.media_dir.clone();
             drop(state);
-            let _ = reply.send(push_local_choice(&db, &http, &id).await);
+            let _ = reply.send(push_local_choice(&db, &http, &media_dir, &id).await);
             let _ = app.emit("notes-changed", ());
         }
     }
@@ -208,11 +210,12 @@ async fn run_cycle(app: &AppHandle) {
     let state = app.state::<AppState>();
     let db = state.db.clone();
     let http = state.http.clone();
+    let media_dir = state.media_dir.clone();
     drop(state);
     let mut retries = 0;
     let mut report = DrainReport::default();
     loop {
-        match drain(db.clone(), &http, refresh && retries == 0).await {
+        match drain(db.clone(), &http, &media_dir, refresh && retries == 0).await {
             Ok(next) => {
                 report.pushed |= next.pushed;
                 report.indexed |= next.indexed;
@@ -243,7 +246,12 @@ struct DrainReport {
     pushed: bool,
 }
 
-async fn drain(db: Db, http: &reqwest::Client, refresh: bool) -> Result<DrainReport, AppError> {
+async fn drain(
+    db: Db,
+    http: &reqwest::Client,
+    media_dir: &std::path::Path,
+    refresh: bool,
+) -> Result<DrainReport, AppError> {
     let base = match db_call(db.clone(), |db| db.get_meta(BASE_URL)).await? {
         Some(url) if !url.is_empty() => url,
         _ => return Ok(DrainReport::default()),
@@ -260,7 +268,7 @@ async fn drain(db: Db, http: &reqwest::Client, refresh: bool) -> Result<DrainRep
     };
     let mut indexed = false;
     if refresh {
-        match refresh_index(http, &db, &base, &token, flavor).await {
+        match refresh_index(http, &db, media_dir, &base, &token, flavor).await {
             Ok(()) => indexed = true,
             Err(err) => eprintln!("memose: remote list failed: {err}"),
         }
@@ -269,8 +277,9 @@ async fn drain(db: Db, http: &reqwest::Client, refresh: bool) -> Result<DrainRep
     let mut retry = false;
     let mut did_push = false;
     for note in notes {
+        let refs = media::extract_refs(&note.content);
         let remote = media::content_for_remote(&note.content);
-        if remote.is_empty() && note.remote_name.is_none() {
+        if remote.is_empty() && refs.is_empty() && note.remote_name.is_none() {
             db_call(db.clone(), {
                 let id = note.id.clone();
                 move |db| {
@@ -314,6 +323,22 @@ async fn drain(db: Db, http: &reqwest::Client, refresh: bool) -> Result<DrainRep
         };
         match pushed {
             Ok(name) => {
+                if !refs.is_empty() {
+                    if let Err(err) = sync_memo_attachments(
+                        http,
+                        &db,
+                        media_dir,
+                        &base,
+                        flavor,
+                        &token,
+                        &name,
+                        &refs,
+                    )
+                    .await
+                    {
+                        eprintln!("memose: attachment upload failed: {err}");
+                    }
+                }
                 let id = note.id.clone();
                 let content = note.content.clone();
                 let stored = db_call(db.clone(), {
@@ -390,6 +415,7 @@ pub fn remote_change(local: Option<&RemoteLink>, remote_updated: i64) -> RemoteC
 async fn refresh_index(
     http: &reqwest::Client,
     db: &Db,
+    media_dir: &std::path::Path,
     base: &str,
     token: &str,
     flavor: ApiFlavor,
@@ -398,7 +424,7 @@ async fn refresh_index(
     for _ in 0..4 {
         let page = list_memos(http, base, flavor, token, &page_token).await?;
         for memo in page.memos {
-            apply_remote_memo(db, memo).await?;
+            apply_remote_memo(http, db, media_dir, base, token, memo).await?;
         }
         if page.next_page_token.is_empty() {
             break;
@@ -408,7 +434,14 @@ async fn refresh_index(
     Ok(())
 }
 
-async fn apply_remote_memo(db: &Db, memo: RemoteMemo) -> Result<(), AppError> {
+async fn apply_remote_memo(
+    http: &reqwest::Client,
+    db: &Db,
+    media_dir: &std::path::Path,
+    base: &str,
+    token: &str,
+    memo: RemoteMemo,
+) -> Result<(), AppError> {
     let link = db_call(db.clone(), {
         let name = memo.name.clone();
         move |db| db.remote_link(&name)
@@ -448,26 +481,42 @@ async fn apply_remote_memo(db: &Db, memo: RemoteMemo) -> Result<(), AppError> {
             };
             let id = link.id;
             let raw = link.content;
-            let server = memo.content;
+            let downloaded = download_remote_attachments(
+                http,
+                db,
+                media_dir,
+                base,
+                token,
+                &memo.name,
+                &memo.attachments,
+            )
+            .await;
+            let server_with_att = append_markdown_lines(&memo.content, &downloaded);
             let updated = memo.updated_at;
             let local_text = media::content_for_remote(&raw);
-            if local_text == server {
+            if local_text == memo.content.trim() && downloaded.is_empty() {
                 return db_call(db.clone(), move |db| db.acknowledge_remote(&id, updated)).await;
             }
-            if change == RemoteChange::Conflict || raw != local_text {
-                return db_call(db.clone(), move |db| db.store_conflict(&id, &server, updated)).await;
+            let merged = media::merge_local_media(&raw, &server_with_att);
+            if change == RemoteChange::Conflict {
+                return db_call(db.clone(), move |db| db.store_conflict(&id, &merged, updated)).await;
             }
             let visibility = memo.visibility.clone();
             let space = memo.space.clone();
             db_call(db.clone(), move |db| {
-                db.apply_server_body(&id, &server, updated, &visibility, &space)
+                db.apply_server_body(&id, &merged, updated, &visibility, &space)
             })
             .await
         }
     }
 }
 
-pub async fn materialize_remote(db: &Db, http: &reqwest::Client, id: &str) -> Result<super::model::Note, AppError> {
+pub async fn materialize_remote(
+    db: &Db,
+    http: &reqwest::Client,
+    media_dir: &std::path::Path,
+    id: &str,
+) -> Result<super::model::Note, AppError> {
     let id_owned = id.to_string();
     let note = db_call(db.clone(), move |db| db.get(&id_owned)).await?;
     let Some(note) = note else {
@@ -481,8 +530,18 @@ pub async fn materialize_remote(db: &Db, http: &reqwest::Client, id: &str) -> Re
     };
     let (base, token, flavor) = sync_context(db, http).await?;
     let full = get_memo(http, &base, flavor, &token, &name).await?;
+    let downloaded = download_remote_attachments(
+        http,
+        db,
+        media_dir,
+        &base,
+        &token,
+        &full.name,
+        &full.attachments,
+    )
+    .await;
     let updated = full.updated_at;
-    let content = full.content;
+    let content = append_markdown_lines(&full.content, &downloaded);
     let visibility = full.visibility.clone();
     let space = full.space.clone();
     let id_owned = note.id.clone();
@@ -498,7 +557,12 @@ pub async fn materialize_remote(db: &Db, http: &reqwest::Client, id: &str) -> Re
     .await
 }
 
-pub async fn push_local_choice(db: &Db, http: &reqwest::Client, id: &str) -> Result<super::model::Note, AppError> {
+pub async fn push_local_choice(
+    db: &Db,
+    http: &reqwest::Client,
+    media_dir: &std::path::Path,
+    id: &str,
+) -> Result<super::model::Note, AppError> {
     let id_owned = id.to_string();
     let note = db_call(db.clone(), move |db| {
         db.get(&id_owned)?
@@ -510,9 +574,13 @@ pub async fn push_local_choice(db: &Db, http: &reqwest::Client, id: &str) -> Res
         .clone()
         .ok_or_else(|| AppError::Message("memo has no server copy".into()))?;
     let (base, token, flavor) = sync_context(db, http).await?;
+    let refs = media::extract_refs(&note.content);
     let remote = media::content_for_remote(&note.content);
     let (visibility, space) = push_audience(note.visibility.as_deref(), note.space.as_deref(), "PRIVATE", "");
     update_memo(http, &base, flavor, &token, &name, &remote, &visibility, &space).await?;
+    if !refs.is_empty() {
+        let _ = sync_memo_attachments(http, db, media_dir, &base, flavor, &token, &name, &refs).await;
+    }
     let updated = now_ms();
     let id_owned = note.id.clone();
     db_call(db.clone(), move |db| db.resolve_local(&id_owned, updated)).await?;
@@ -626,6 +694,13 @@ pub async fn create_memo(
         .ok_or_else(|| AppError::Message("memos response missing name".into()))
 }
 
+#[derive(Clone, Debug)]
+struct RemoteAttachment {
+    name: String,
+    filename: String,
+    mime_type: String,
+}
+
 struct RemoteMemo {
     name: String,
     content: String,
@@ -633,6 +708,7 @@ struct RemoteMemo {
     updated_at: i64,
     visibility: String,
     space: String,
+    attachments: Vec<RemoteAttachment>,
 }
 
 struct MemoPage {
@@ -941,6 +1017,7 @@ fn parse_memo_object(value: &Value) -> Option<RemoteMemo> {
         .unwrap_or("")
         .trim()
         .to_string();
+    let attachments = parse_remote_attachments(value);
     Some(RemoteMemo {
         name,
         content,
@@ -948,7 +1025,268 @@ fn parse_memo_object(value: &Value) -> Option<RemoteMemo> {
         updated_at,
         visibility,
         space,
+        attachments,
     })
+}
+
+fn parse_remote_attachments(value: &Value) -> Vec<RemoteAttachment> {
+    let mut out = Vec::new();
+    for key in ["attachments", "resources", "resourceList"] {
+        let Some(items) = value.get(key).and_then(Value::as_array) else {
+            continue;
+        };
+        for item in items {
+            let name = item
+                .get("name")
+                .and_then(Value::as_str)
+                .map(str::to_string)
+                .or_else(|| {
+                    item.get("id")
+                        .and_then(|id| id.as_i64().map(|n| n.to_string()).or_else(|| id.as_str().map(str::to_string)))
+                        .map(|id| format!("resources/{id}"))
+                });
+            let Some(name) = name.filter(|s| !s.is_empty()) else {
+                continue;
+            };
+            let filename = item
+                .get("filename")
+                .and_then(Value::as_str)
+                .filter(|s| !s.is_empty())
+                .unwrap_or("attachment")
+                .to_string();
+            let mime_type = item
+                .get("type")
+                .and_then(Value::as_str)
+                .unwrap_or("")
+                .to_string();
+            if !out.iter().any(|existing: &RemoteAttachment| existing.name == name) {
+                out.push(RemoteAttachment {
+                    name,
+                    filename,
+                    mime_type,
+                });
+            }
+        }
+    }
+    out
+}
+
+fn append_markdown_lines(content: &str, lines: &[String]) -> String {
+    if lines.is_empty() {
+        return content.to_string();
+    }
+    let mut parts = Vec::new();
+    let trimmed = content.trim();
+    if !trimmed.is_empty() {
+        parts.push(trimmed.to_string());
+    }
+    for line in lines {
+        if !parts.iter().any(|p| p == line) {
+            parts.push(line.clone());
+        }
+    }
+    parts.join("\n")
+}
+
+async fn sync_memo_attachments(
+    http: &reqwest::Client,
+    db: &Db,
+    media_dir: &std::path::Path,
+    base: &str,
+    flavor: ApiFlavor,
+    token: &str,
+    memo_name: &str,
+    refs: &[media::MediaRef],
+) -> Result<(), AppError> {
+    let mut remote_names = Vec::new();
+    for item in refs {
+        let local_name = item.name.clone();
+        let existing = db_call(db.clone(), {
+            let local_name = local_name.clone();
+            move |db| db.media_upload_for_local(&local_name)
+        })
+        .await?;
+        if let Some((remote_name, uploaded_memo)) = existing {
+            remote_names.push(remote_name.clone());
+            if uploaded_memo == memo_name {
+                continue;
+            }
+        }
+        let Ok(path) = media::resolve(media_dir, &item.name) else {
+            continue;
+        };
+        let Ok(bytes) = std::fs::read(&path) else {
+            continue;
+        };
+        let filename = if !item.label.trim().is_empty() {
+            item.label.trim().to_string()
+        } else {
+            item.name.clone()
+        };
+        let mime_type = media::mime_for_name(&filename);
+        let remote_res = upload_attachment(
+            http,
+            base,
+            flavor,
+            token,
+            memo_name,
+            &filename,
+            mime_type,
+            &bytes,
+        )
+        .await?;
+        remote_names.push(remote_res.clone());
+        let memo_owned = memo_name.to_string();
+        let filename_owned = filename.clone();
+        let _ = db_call(db.clone(), move |db| {
+            db.record_media_upload(&local_name, &remote_res, &memo_owned, &filename_owned)
+        })
+        .await;
+    }
+    if !remote_names.is_empty() {
+        let _ = link_memo_attachments(http, base, flavor, token, memo_name, &remote_names).await;
+    }
+    Ok(())
+}
+
+async fn upload_attachment(
+    http: &reqwest::Client,
+    base: &str,
+    flavor: ApiFlavor,
+    token: &str,
+    memo_name: &str,
+    filename: &str,
+    mime_type: &str,
+    bytes: &[u8],
+) -> Result<String, AppError> {
+    let encoded = media::base64_encode(bytes);
+    let body = json!({
+        "filename": filename,
+        "type": mime_type,
+        "content": encoded,
+        "memo": memo_name,
+    });
+    let endpoints = match flavor {
+        ApiFlavor::Latest => [
+            "/api/v1/attachments",
+            "/api/v1/resources",
+            "/api/attachments",
+            "/api/resources",
+        ],
+        ApiFlavor::V1 => [
+            "/api/v1/resources",
+            "/api/v1/attachments",
+            "/api/resources",
+            "/api/attachments",
+        ],
+    };
+    let mut last_err = AppError::Message("attachment upload failed".into());
+    for endpoint in endpoints {
+        let url = format!("{}{}", trim_base(base), endpoint);
+        let Ok(response) = http.post(&url).bearer_auth(token).json(&body).send().await else {
+            continue;
+        };
+        let status = response.status();
+        if status.is_success() {
+            if let Ok(payload) = response.json::<Value>().await {
+                if let Some(name) = payload
+                    .get("name")
+                    .and_then(Value::as_str)
+                    .filter(|s| !s.is_empty())
+                {
+                    return Ok(name.to_string());
+                }
+            }
+        } else {
+            let text = response.text().await.unwrap_or_default();
+            last_err = AppError::Memos {
+                status: status.as_u16(),
+                body: truncate(&text),
+            };
+        }
+    }
+    Err(last_err)
+}
+
+async fn link_memo_attachments(
+    http: &reqwest::Client,
+    base: &str,
+    flavor: ApiFlavor,
+    token: &str,
+    memo_name: &str,
+    remote_names: &[String],
+) -> Result<(), AppError> {
+    let items: Vec<Value> = remote_names.iter().map(|n| json!({ "name": n })).collect();
+    let uses_attachments = remote_names.iter().any(|n| n.starts_with("attachments/"));
+    let field = if uses_attachments { "attachments" } else { "resources" };
+    let url = memo_url(base, flavor, memo_name);
+    let _ = http
+        .patch(&url)
+        .bearer_auth(token)
+        .query(&[("updateMask", field)])
+        .json(&json!({ field: items }))
+        .send()
+        .await;
+    Ok(())
+}
+
+async fn download_remote_attachments(
+    http: &reqwest::Client,
+    db: &Db,
+    media_dir: &std::path::Path,
+    base: &str,
+    token: &str,
+    memo_name: &str,
+    attachments: &[RemoteAttachment],
+) -> Vec<String> {
+    let mut lines = Vec::new();
+    for att in attachments {
+        let remote_name = att.name.clone();
+        let cached = db_call(db.clone(), {
+            let remote_name = remote_name.clone();
+            move |db| db.media_local_for_remote(&remote_name)
+        })
+        .await
+        .ok()
+        .flatten();
+        if let Some((local_name, filename)) = cached {
+            if media::resolve(media_dir, &local_name).is_ok() {
+                lines.push(media::format_markdown(&local_name, &filename));
+                continue;
+            }
+        }
+        let encoded_file = urlencoding_token(&att.filename);
+        let url = format!("{}/file/{}/{}", trim_base(base), att.name.trim_start_matches('/'), encoded_file);
+        let Ok(response) = http.get(&url).bearer_auth(token).send().await else {
+            continue;
+        };
+        if !response.status().is_success() {
+            continue;
+        }
+        let Ok(bytes) = response.bytes().await else {
+            continue;
+        };
+        let Ok(md) = media::save_named(
+            media_dir,
+            &bytes,
+            Some(&att.filename),
+            Some(&att.mime_type),
+        ) else {
+            continue;
+        };
+        if let Some(parsed) = media::parse_media_token(&md) {
+            let local_name = parsed.name;
+            let remote_owned = att.name.clone();
+            let memo_owned = memo_name.to_string();
+            let filename_owned = att.filename.clone();
+            let _ = db_call(db.clone(), move |db| {
+                db.record_media_upload(&local_name, &remote_owned, &memo_owned, &filename_owned)
+            })
+            .await;
+        }
+        lines.push(md);
+    }
+    lines
 }
 
 fn parse_time(value: &Value) -> Option<i64> {
