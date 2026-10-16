@@ -1164,7 +1164,6 @@ fn open_pin(app: &AppHandle, id: &str) {
             let handle = app.clone();
             let _ = app.run_on_main_thread(move || open_pin_window(&handle, &id));
         });
-        return;
     }
     #[cfg(not(target_os = "windows"))]
     open_pin_window(app, id);
