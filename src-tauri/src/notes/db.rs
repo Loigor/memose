@@ -1256,4 +1256,35 @@ mod tests {
         db.delete_note(&middle.id).unwrap();
         assert_eq!(db.get(&tail.id).unwrap().unwrap().stack_host.as_deref(), Some(host.id.as_str()));
     }
+
+    #[test]
+    fn conflict_resolution_and_media_upload_records_roundtrip() {
+        let db = db();
+        db.set_base_url("https://memos.example.com").unwrap();
+        db.set_access_token("token").unwrap();
+        let draft = db.upsert_draft("original").unwrap().unwrap();
+        db.finalize_content("original").unwrap();
+        db.mark_synced(&draft.id, "memos/1").unwrap();
+
+        // Simulate local edit + conflicting remote update
+        db.save_edit(&draft.id, "local edit").unwrap();
+        db.store_conflict(&draft.id, "remote edit", 2_000).unwrap();
+        assert_eq!(db.get(&draft.id).unwrap().unwrap().sync_state, CONFLICT);
+
+        db.resolve_remote(&draft.id).unwrap();
+        let resolved = db.get(&draft.id).unwrap().unwrap();
+        assert_eq!(resolved.sync_state, SYNCED);
+        assert_eq!(resolved.content, "remote edit");
+
+        db.record_media_upload("12345678-a.png", "attachments/99", "memos/1", "a.png")
+            .unwrap();
+        assert_eq!(
+            db.media_upload_for_local("12345678-a.png").unwrap(),
+            Some(("attachments/99".into(), "memos/1".into()))
+        );
+        assert_eq!(
+            db.media_local_for_remote("attachments/99").unwrap(),
+            Some(("12345678-a.png".into(), "a.png".into()))
+        );
+    }
 }

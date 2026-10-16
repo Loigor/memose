@@ -37,7 +37,6 @@ pub fn run() {
                         .lock()
                         .unwrap_or_else(|poisoned| poisoned.into_inner())
                         .clone();
-                    drop(state);
                     if shortcuts::same(shortcut, &binds.new_memo) {
                         window_ctl::show_fresh_memo(app);
                     } else if shortcuts::same(shortcut, &binds.toggle_pinned) {
@@ -99,7 +98,6 @@ pub fn run() {
             commands::clear_memos,
             commands::test_memos,
             commands::get_theme,
-            commands::set_theme,
             commands::save_look,
             commands::set_pinned_opacity,
             commands::publish_note,

@@ -211,6 +211,7 @@ pub async fn begin_corner_resize(app: AppHandle, label: String, edge: Option<Str
 }
 
 #[tauri::command]
+#[allow(clippy::too_many_arguments)]
 pub fn detach_stack(
     app: AppHandle,
     guest_id: String,
@@ -386,7 +387,6 @@ pub fn clear_memos(state: State<AppState>) -> Result<(), AppError> {
 pub async fn test_memos(state: State<'_, AppState>) -> Result<String, AppError> {
     let db = state.db.clone();
     let http = state.http.clone();
-    drop(state);
     let base = db
         .get_meta(notes::BASE_URL)?
         .filter(|url| !url.is_empty())
@@ -404,12 +404,6 @@ pub async fn test_memos(state: State<'_, AppState>) -> Result<String, AppError> 
 pub fn get_theme(state: State<AppState>) -> Result<String, AppError> {
     let theme = state.db.get_meta(notes::THEME)?.unwrap_or_else(|| "light".into());
     Ok(if theme == "dark" { "dark" } else { "light" }.into())
-}
-
-#[tauri::command]
-pub fn set_theme(state: State<AppState>, theme: String) -> Result<(), AppError> {
-    let theme = if theme == "dark" { "dark" } else { "light" };
-    state.db.set_meta(notes::THEME, theme)
 }
 
 #[tauri::command]
@@ -459,7 +453,6 @@ pub async fn get_note(
     materialize: Option<bool>,
 ) -> Result<Note, AppError> {
     let db = state.db.clone();
-    drop(state);
     let note = db
         .get(&id)?
         .ok_or_else(|| AppError::Message("note not found".into()))?;
@@ -478,7 +471,6 @@ pub async fn resolve_conflict(
     choice: String,
 ) -> Result<Note, AppError> {
     let db = state.db.clone();
-    drop(state);
     match choice.as_str() {
         "local" => notes::request_keep_local(&app, id).await,
         "remote" => {

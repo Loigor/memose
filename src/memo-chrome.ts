@@ -85,11 +85,7 @@ export function themeGlyph(dark: boolean): string {
     : `<path fill="currentColor" d="M8 1.6a6.2 6.2 0 1 0 5.6 8.7A4.7 4.7 0 0 1 8 1.6z"/>`;
 }
 
-export function colorGlyph(chip: string): string {
-  return `<circle cx="8" cy="8" r="5" fill="${chip}" stroke="currentColor" stroke-width="1.2"/>`;
-}
-
-export function paintThemeButton(button: HTMLElement, icon: Element, theme: ThemeName, colorMode: boolean, _chip: string) {
+export function paintThemeButton(button: HTMLElement, icon: Element, theme: ThemeName, colorMode: boolean) {
   button.classList.toggle("color-mode", colorMode);
   if (colorMode) {
     icon.innerHTML = "";

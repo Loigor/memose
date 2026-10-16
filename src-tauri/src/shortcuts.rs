@@ -166,7 +166,9 @@ struct MouseChord {
     meta: bool,
 }
 
-static LAST_MOUSE: Mutex<Option<(Instant, u8, bool, bool, bool, bool)>> = Mutex::new(None);
+type MouseBounce = (Instant, u8, bool, bool, bool, bool);
+
+static LAST_MOUSE: Mutex<Option<MouseBounce>> = Mutex::new(None);
 
 pub fn dispatch_mouse(app: &AppHandle, button: u8, alt: bool, ctrl: bool, shift: bool, meta: bool) {
     if !(3..=8).contains(&button) {
@@ -196,7 +198,6 @@ pub fn dispatch_mouse(app: &AppHandle, button: u8, alt: bool, ctrl: bool, shift:
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner())
         .clone();
-    drop(state);
     if mouse_matches(&binds.new_memo, button, alt, ctrl, shift, meta) {
         crate::window_ctl::show_fresh_memo(app);
         return;

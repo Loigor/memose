@@ -4,7 +4,29 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import DOMPurify from "dompurify";
 import { marked } from "marked";
 
-import { applyCode, applyTask, applyTitle, tabOnMarkdown, taskListOnEnter, toggleTask, wrapText, type Edit } from "./markdown-edit";
+import {
+  applyCode,
+  applyTask,
+  applyTitle,
+  displayFileName,
+  ensureTextSlots,
+  isAudio,
+  isImage,
+  isPreviewableMedia,
+  isVideo,
+  mediaPrefix,
+  mediaTokenRegex,
+  noteTitle,
+  parseBlocks,
+  parseMediaMeta,
+  serializeBlocks,
+  tabOnMarkdown,
+  taskListOnEnter,
+  toggleTask,
+  wrapText,
+  type Block,
+  type Edit,
+} from "./markdown-edit";
 import { paintSurface, paintThemeButton, palette, paperAt, stackHeaderHtml, type ThemeName } from "./memo-chrome";
 import { defaultBinds, formatBind, isModifierKey, matchBind, matchMouse, modifierDown, type ShortcutBinds } from "./shortcuts";
 
@@ -27,9 +49,6 @@ type Note = {
   stackHost?: string | null;
   theme?: string | null;
 };
-type TextBlock = { kind: "text"; text: string };
-type MediaBlock = { kind: "media"; name: string; label?: string; width?: number; inline?: boolean };
-type Block = TextBlock | MediaBlock;
 
 const card = document.querySelector<HTMLElement>("#card");
 const blocks = document.querySelector<HTMLDivElement>("#blocks");
@@ -261,181 +280,7 @@ const conflictLocalEl = requireEl(conflictLocal, "keep local");
 const conflictRemoteEl = requireEl(conflictRemote, "use server");
 let conflictId: string | null = null;
 
-const mediaPrefix = "memose-media/";
-const mediaTokenRegex = /(!?)\[([^\]]*)\]\(memose-media\/([A-Za-z0-9._-]+\.[A-Za-z0-9]+)(?:#([^)]*))?\)/;
-const mediaTokenGlobal = /(!?)\[([^\]]*)\]\(memose-media\/([A-Za-z0-9._-]+\.[A-Za-z0-9]+)(?:#([^)]*))?\)/g;
 const maxMediaBytes = 32 * 1024 * 1024;
-
-function isImage(name: string): boolean {
-  return /\.(png|jpe?g|gif|webp|svg|bmp|ico|avif|heic|heif|tiff?)$/i.test(name);
-}
-
-function isVideo(name: string): boolean {
-  return /\.(mp4|webm|mov|m4v|mkv|ogv|avi)$/i.test(name);
-}
-
-function isAudio(name: string): boolean {
-  return /\.(mp3|wav|ogg|m4a|aac|flac|opus|weba|wma)$/i.test(name);
-}
-
-function isPreviewableMedia(name: string): boolean {
-  return isImage(name) || isVideo(name) || isAudio(name);
-}
-
-function displayFileName(name: string, label?: string): string {
-  const trimmed = label?.trim();
-  if (trimmed) {
-    return trimmed;
-  }
-  const match = name.match(/^[0-9a-f]{8}-(.+)$/i);
-  return match ? match[1].replace(/_/g, " ") : name;
-}
-
-function parseMediaMeta(rawLabel?: string, rawFrag?: string): { label?: string; width?: number } {
-  let width: number | undefined;
-  let cleanLabel = rawLabel?.trim();
-  if (cleanLabel) {
-    const pipeMatch = cleanLabel.match(/^(.*?)\|(\d{2,4})$/);
-    if (pipeMatch) {
-      cleanLabel = pipeMatch[1].trim();
-      const parsedW = Number(pipeMatch[2]);
-      if (parsedW >= 40 && parsedW <= 2000) {
-        width = parsedW;
-      }
-    }
-  }
-  if (rawFrag) {
-    const params = new URLSearchParams(rawFrag);
-    const wParam = Number(params.get("w"));
-    if (wParam >= 40 && wParam <= 2000) {
-      width = Math.round(wParam);
-    }
-  }
-  return { label: cleanLabel || undefined, width };
-}
-
-function mediaMarkdown(name: string, label?: string, width?: number): string {
-  const cleanLabel = (label ?? "").replace(/[\r\n]/g, "").replace(/\[/g, "(").replace(/\]/g, ")").trim();
-  const frag = width && width >= 40 ? `#w=${Math.round(width)}` : "";
-  if (isPreviewableMedia(name)) {
-    return `![${cleanLabel}](${mediaPrefix}${name}${frag})`;
-  }
-  const shown = cleanLabel || displayFileName(name);
-  return `[${shown}](${mediaPrefix}${name}${frag})`;
-}
-
-function ensureTextSlots(items: Block[]): Block[] {
-  const next: Block[] = [];
-  for (const block of items) {
-    if (block.kind === "media" && (next.length === 0 || next[next.length - 1].kind === "media")) {
-      next.push({ kind: "text", text: "" });
-    }
-    const previous = next[next.length - 1];
-    if (block.kind === "text" && previous?.kind === "text") {
-      if (previous.text.length > 0 && block.text.length > 0) {
-        previous.text = `${previous.text}\n${block.text}`;
-      } else {
-        previous.text = previous.text || block.text;
-      }
-      continue;
-    }
-    next.push(
-      block.kind === "text"
-        ? { kind: "text", text: block.text }
-        : {
-            kind: "media",
-            name: block.name,
-            label: block.label,
-            width: block.width,
-            inline: block.inline,
-          },
-    );
-  }
-  if (next.length === 0 || next[next.length - 1].kind === "media") {
-    next.push({ kind: "text", text: "" });
-  }
-  if (next[0].kind === "media") {
-    next.unshift({ kind: "text", text: "" });
-  }
-  return next;
-}
-
-function parseBlocks(content: string): Block[] {
-  const next: Block[] = [];
-  let lastIndex = 0;
-  mediaTokenGlobal.lastIndex = 0;
-  let match: RegExpExecArray | null;
-  while ((match = mediaTokenGlobal.exec(content)) !== null) {
-    const tokenStart = match.index;
-    const tokenEnd = match.index + match[0].length;
-    const charBefore = tokenStart > 0 ? content[tokenStart - 1] : "\n";
-    const charAfter = tokenEnd < content.length ? content[tokenEnd] : "\n";
-    const hasInlineNeighbor = charBefore !== "\n" || (charAfter !== "\n" && charAfter !== "\r");
-    const meta = parseMediaMeta(match[2], match[4]);
-    const fragInline = Boolean(match[4] && new URLSearchParams(match[4]).get("inline") === "1");
-    const inline = hasInlineNeighbor || fragInline;
-
-    if (tokenStart > lastIndex) {
-      let before = content.slice(lastIndex, tokenStart);
-      if (lastIndex > 0 && next[next.length - 1]?.kind === "media" && !(next[next.length - 1] as MediaBlock).inline) {
-        before = before.replace(/^\r?\n/, "");
-      }
-      if (!inline) {
-        before = before.replace(/\r?\n$/, "");
-      }
-      if (before.length > 0) {
-        next.push({ kind: "text", text: before });
-      }
-    }
-    next.push({
-      kind: "media",
-      name: match[3],
-      label: meta.label,
-      width: meta.width,
-      inline,
-    });
-    lastIndex = tokenEnd;
-  }
-  if (lastIndex < content.length) {
-    let after = content.slice(lastIndex);
-    if (lastIndex > 0 && next[next.length - 1]?.kind === "media" && !(next[next.length - 1] as MediaBlock).inline) {
-      after = after.replace(/^\r?\n/, "");
-    }
-    if (after.length > 0) {
-      next.push({ kind: "text", text: after });
-    }
-  }
-  return ensureTextSlots(next);
-}
-
-function serializeBlocks(items: Block[]): string {
-  let out = "";
-  for (let i = 0; i < items.length; i += 1) {
-    const block = items[i];
-    if (block.kind === "text") {
-      if (block.text.length === 0) {
-        continue;
-      }
-      const prev = items[i - 1];
-      const prevIsInlineMedia = prev?.kind === "media" && Boolean(prev.inline);
-      if (out.length > 0 && !prevIsInlineMedia && !out.endsWith("\n")) {
-        out += "\n";
-      }
-      out += block.text;
-    } else {
-      const md = mediaMarkdown(block.name, block.label, block.width);
-      if (block.inline) {
-        out += md;
-      } else {
-        if (out.length > 0 && !out.endsWith("\n")) {
-          out += "\n";
-        }
-        out += md;
-      }
-    }
-  }
-  return out;
-}
 
 function publishBlocks(focusName?: string) {
   noteBlocks = ensureTextSlots(noteBlocks);
@@ -661,7 +506,10 @@ function createVideoPreviewElement(name: string, label?: string, resolvedUrl?: s
 
   const badge = document.createElement("div");
   badge.className = "media-video-badge";
-  badge.innerHTML = `<svg viewBox="0 0 16 16" width="12" height="12" aria-hidden="true"><path fill="currentColor" d="M4.5 3.5v9l8-4.5-8-4.5z"/></svg><span>${displayFileName(name, label)}</span>`;
+  badge.innerHTML = `<svg viewBox="0 0 16 16" width="12" height="12" aria-hidden="true"><path fill="currentColor" d="M4.5 3.5v9l8-4.5-8-4.5z"/></svg>`;
+  const badgeText = document.createElement("span");
+  badgeText.textContent = displayFileName(name, label);
+  badge.append(badgeText);
 
   video.addEventListener("play", () => {
     wrap.classList.add("is-playing");
@@ -946,6 +794,7 @@ previewEl.addEventListener("change", (event) => {
     }
     return;
   }
+  pushHostUndo(true);
   noteContent = next;
   noteBlocks = parseBlocks(next);
   scheduleDraft();
@@ -2326,36 +2175,6 @@ function filesFromTransfer(data: DataTransfer | null): File[] {
   return [...data.files];
 }
 
-function noteTitle(content: string): string {
-  const withoutMedia = content.replace(mediaTokenGlobal, "").trim();
-  const textLine = withoutMedia
-    .split("\n")
-    .map((part) => part.trim())
-    .find((part) => part.length > 0);
-  if (textLine) {
-    return textLine.replace(/^#+\s*/, "");
-  }
-  const match = content.match(mediaTokenRegex);
-  if (match?.[3]) {
-    const name = match[3];
-    const label = match[2]?.trim();
-    if (label) {
-      return label;
-    }
-    if (isVideo(name)) {
-      return "Video";
-    }
-    if (isAudio(name)) {
-      return "Audio";
-    }
-    if (isImage(name)) {
-      return "Image";
-    }
-    return displayFileName(name);
-  }
-  return "Note";
-}
-
 function syncNoteTitle() {
   const title = document.querySelector("#note-title");
   if (title) {
@@ -3008,18 +2827,9 @@ function activeHue(): number {
   return themeHue() ?? (currentTheme() === "dark" ? darkHue : lightHue);
 }
 
-function chipColor(): string {
-  const theme = currentTheme();
-  const hue = theme === "dark" ? look.hueDark : look.hueLight;
-  if (hue == null) {
-    return theme === "dark" ? "#25282c" : "#fff4b8";
-  }
-  return paperAt(theme, hue);
-}
-
 function paintThemeIcon() {
   const hostColorMode = hasStack() ? !altHeld : altHeld;
-  paintThemeButton(themeToggleEl, themeIconEl, currentTheme(), hostColorMode, chipColor());
+  paintThemeButton(themeToggleEl, themeIconEl, currentTheme(), hostColorMode);
   repaintStackColors();
 }
 
@@ -3512,7 +3322,10 @@ cardEl.addEventListener("dragover", (event) => {
   cardEl.classList.add("dropping");
 });
 
-cardEl.addEventListener("dragleave", () => {
+cardEl.addEventListener("dragleave", (event) => {
+  if (event.relatedTarget instanceof Node && cardEl.contains(event.relatedTarget)) {
+    return;
+  }
   cardEl.classList.remove("dropping");
 });
 
@@ -3526,7 +3339,11 @@ cardEl.addEventListener("drop", (event) => {
   }
   event.preventDefault();
   cardEl.classList.remove("dropping");
-  void attachFiles(files, null);
+  const targetSection =
+    (event.target instanceof Element ? event.target.closest<HTMLElement>(".stack-note") : null) ??
+    activeStackSection()?.section ??
+    null;
+  void attachFiles(files, targetSection);
 });
 
 function closeEditorMenu() {
@@ -4203,22 +4020,13 @@ function sectionHue(state: StackState): number | null {
   return theme === "dark" ? state.hueDark : state.hueLight;
 }
 
-function sectionChip(state: StackState): string {
-  const theme = sectionTheme(state);
-  const hue = sectionHue(state);
-  if (hue == null) {
-    return theme === "dark" ? "#25282c" : "#fff4b8";
-  }
-  return paperAt(theme, hue);
-}
-
 function paintSectionColor(section: HTMLElement, state: StackState) {
   const theme = sectionTheme(state);
   paintSurface(section, theme, sectionHue(state), look.opacity);
   const button = section.querySelector<HTMLElement>(".theme-toggle");
   const icon = section.querySelector(".theme-icon");
   if (button && icon) {
-    paintThemeButton(button, icon, theme, !altHeld, sectionChip(state));
+    paintThemeButton(button, icon, theme, !altHeld);
   }
 }
 
@@ -4449,11 +4257,13 @@ function renderSectionBlocks(section: HTMLElement, state: StackState, focusName?
   }
   state.blocks = ensureTextSlots(state.blocks);
   state.content = serializeBlocks(state.blocks);
-  const reuse = new Map<string, HTMLElement>();
+  const reuse = new Map<string, HTMLElement[]>();
   for (const node of container.querySelectorAll<HTMLElement>("[data-media]")) {
     const mediaName = node.dataset.media;
-    if (mediaName && !reuse.has(mediaName)) {
-      reuse.set(mediaName, node);
+    if (mediaName) {
+      const list = reuse.get(mediaName) ?? [];
+      list.push(node);
+      reuse.set(mediaName, list);
     }
   }
   container.replaceChildren();
@@ -4609,17 +4419,13 @@ function renderSectionBlocks(section: HTMLElement, state: StackState, focusName?
       area.addEventListener("input", () => {
         block.text = area.value;
         syncInlineLineSlot(area, prevBlock, assignedRow, container, index === lastIndex);
-        if (new RegExp(mediaTokenGlobal.source).test(area.value)) {
+        if (mediaTokenRegex.test(area.value)) {
           state.content = serializeBlocks(state.blocks);
           state.blocks = parseBlocks(state.content);
           renderSectionBlocks(section, state);
           scheduleSectionSave(section, state);
           return;
         }
-        area.classList.toggle(
-          "empty-slot",
-          area.value.length === 0 && state.blocks.length > 1 && !area.classList.contains("inline-line-slot"),
-        );
         sizeBlockTextarea(area);
         rememberCaret();
         state.content = serializeBlocks(state.blocks);
@@ -4635,20 +4441,10 @@ function renderSectionBlocks(section: HTMLElement, state: StackState, focusName?
       }
       return;
     }
-    const existing = reuse.get(block.name);
-    if (existing) {
-      reuse.delete(block.name);
-    }
-    const figure = existing ?? createMedia(block.name, block.label, section, block.width);
+    const existingList = reuse.get(block.name);
+    const figure = existingList?.shift() ?? createMedia(block.name, block.label, section, block.width);
     applyMediaFigureSize(figure, block.width);
     figure.dataset.index = String(index);
-    const removeButton = figure.querySelector<HTMLButtonElement>(".media-remove");
-    if (removeButton) {
-      removeButton.onclick = (event) => {
-        event.stopPropagation();
-        removeSectionMediaAt(section, index, block.name);
-      };
-    }
     const row = document.createElement("div");
     row.className = "media-row";
     row.append(figure);
@@ -4893,7 +4689,10 @@ function buildSection(note: Note): HTMLElement {
     event.stopPropagation();
     section.classList.add("dropping");
   });
-  section.addEventListener("dragleave", () => {
+  section.addEventListener("dragleave", (event) => {
+    if (event.relatedTarget instanceof Node && section.contains(event.relatedTarget)) {
+      return;
+    }
     section.classList.remove("dropping");
   });
   section.addEventListener("drop", (event) => {
@@ -5139,13 +4938,17 @@ function buildSection(note: Note): HTMLElement {
       }
       return;
     }
+    pushSectionUndo(state, true);
     state.content = next;
     state.blocks = parseBlocks(next);
     renderSectionBlocks(section, state);
     scheduleSectionSave(section, state);
   });
   preview?.addEventListener("dblclick", (event) => {
-    if (event.target instanceof Element && event.target.closest("a, input, img, video, audio, .file-attachment, button")) {
+    if (
+      event.target instanceof Element &&
+      event.target.closest("a, input, img, video, audio, .media-audio, .file-attachment, button")
+    ) {
       return;
     }
     const state = stackState.get(note.id);

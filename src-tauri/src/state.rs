@@ -41,7 +41,7 @@ impl AppState {
     pub fn new(db: Db, media_dir: PathBuf) -> Result<Self, reqwest::Error> {
         let http = reqwest::Client::builder()
             .timeout(std::time::Duration::from_secs(10))
-            .user_agent("memose/0.1.0")
+            .user_agent(concat!("memose/", env!("CARGO_PKG_VERSION")))
             .build()?;
         Ok(Self {
             db,

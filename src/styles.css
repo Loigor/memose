@@ -306,51 +306,6 @@ html.collapsed:not(.hover-open) #frame:not(.has-stack) #notes {
   opacity: 0.28;
 }
 
-.lift-preview {
-  position: fixed;
-  z-index: 20;
-  display: flex;
-  flex-direction: column;
-  overflow: hidden;
-  border-radius: 10px;
-  pointer-events: none;
-  box-shadow: 0 16px 28px var(--shadow);
-}
-
-.lift-preview .stack-note:first-child {
-  border-top: 1px solid var(--rule);
-  border-radius: 10px 10px 0 0;
-}
-
-.lift-preview .stack-note:last-child {
-  border-radius: 0 0 10px 10px;
-}
-
-.lift-preview .stack-note:only-child {
-  border-radius: 10px;
-}
-
-.stack-body {
-  flex: 1;
-  min-height: 0;
-  padding: 0 18px 16px;
-  border: 0;
-  background: transparent;
-  color: inherit;
-  font: inherit;
-  resize: none;
-}
-
-.stack-color-pop {
-  position: absolute;
-  top: 36px;
-  z-index: 3;
-  padding: 8px;
-  background: var(--paper);
-  border: 1px solid var(--rule);
-  border-radius: 8px;
-}
-
 header {
   position: relative;
   z-index: 2;
@@ -518,10 +473,6 @@ header.compact-meta #edited-sep {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-
-header.detach-hold {
-  cursor: grabbing;
 }
 
 #audience-pop,
@@ -1276,20 +1227,6 @@ body.is-resizing-media * {
   opacity: 0.94;
 }
 
-.media-drag-ghost-thumb {
-  width: 28px;
-  height: 28px;
-  border-radius: 4px;
-  object-fit: cover;
-  flex: none;
-}
-
-.media-drag-ghost-label {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
 .media img,
 .media video {
   display: block;
@@ -1665,12 +1602,6 @@ html.lightbox-window #lightbox {
 #recent .empty {
   color: var(--muted);
   border-top: 0;
-}
-
-#recent .state {
-  flex: none;
-  color: var(--muted);
-  text-transform: lowercase;
 }
 
 #composer-view[hidden],

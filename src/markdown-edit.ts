@@ -127,7 +127,7 @@ function indentCols(indent: string): number {
   return indent.replace(/\t/g, "    ").length;
 }
 
-function renumberOrderedLists(value: string, start: number, end: number): Edit {
+export function renumberOrderedLists(value: string, start: number, end: number): Edit {
   const lines = value.split("\n");
   const counters = new Map<number, number>();
   let fenced = false;
@@ -377,4 +377,214 @@ export function tabOnMarkdown(value: string, start: number, end: number, shiftKe
   const nextEnd = Math.max(nextStart, end + totalDelta);
   return renumberOrderedLists(next, nextStart, nextEnd);
 }
+
+export type TextBlock = { kind: "text"; text: string };
+export type MediaBlock = { kind: "media"; name: string; label?: string; width?: number; inline?: boolean };
+export type Block = TextBlock | MediaBlock;
+
+export const mediaPrefix = "memose-media/";
+export const mediaTokenRegex = /(!?)\[([^\]]*)\]\(memose-media\/([A-Za-z0-9._-]+\.[A-Za-z0-9]+)(?:#([^)]*))?\)/;
+export const mediaTokenGlobal = /(!?)\[([^\]]*)\]\(memose-media\/([A-Za-z0-9._-]+\.[A-Za-z0-9]+)(?:#([^)]*))?\)/g;
+
+export function isImage(name: string): boolean {
+  return /\.(png|jpe?g|gif|webp|svg|bmp|ico|avif|heic|heif|tiff?)$/i.test(name);
+}
+
+export function isVideo(name: string): boolean {
+  return /\.(mp4|webm|mov|m4v|mkv|ogv|avi)$/i.test(name);
+}
+
+export function isAudio(name: string): boolean {
+  return /\.(mp3|wav|ogg|m4a|aac|flac|opus|weba|wma)$/i.test(name);
+}
+
+export function isPreviewableMedia(name: string): boolean {
+  return isImage(name) || isVideo(name) || isAudio(name);
+}
+
+export function displayFileName(name: string, label?: string): string {
+  const trimmed = label?.trim();
+  if (trimmed) {
+    return trimmed;
+  }
+  const match = name.match(/^[0-9a-f]{8}-(.+)$/i);
+  return match ? match[1].replace(/_/g, " ") : name;
+}
+
+export function parseMediaMeta(rawLabel?: string, rawFrag?: string): { label?: string; width?: number } {
+  let width: number | undefined;
+  let cleanLabel = rawLabel?.trim();
+  if (cleanLabel) {
+    const pipeMatch = cleanLabel.match(/^(.*?)\|(\d{2,4})$/);
+    if (pipeMatch) {
+      cleanLabel = pipeMatch[1].trim();
+      const parsedW = Number(pipeMatch[2]);
+      if (parsedW >= 40 && parsedW <= 2000) {
+        width = parsedW;
+      }
+    }
+  }
+  if (rawFrag) {
+    const params = new URLSearchParams(rawFrag);
+    const wParam = Number(params.get("w"));
+    if (wParam >= 40 && wParam <= 2000) {
+      width = Math.round(wParam);
+    }
+  }
+  return { label: cleanLabel || undefined, width };
+}
+
+export function mediaMarkdown(name: string, label?: string, width?: number): string {
+  const cleanLabel = (label ?? "").replace(/[\r\n]/g, "").replace(/\[/g, "(").replace(/\]/g, ")").trim();
+  const frag = width && width >= 40 ? `#w=${Math.round(width)}` : "";
+  if (isPreviewableMedia(name)) {
+    return `![${cleanLabel}](${mediaPrefix}${name}${frag})`;
+  }
+  const shown = cleanLabel || displayFileName(name);
+  return `[${shown}](${mediaPrefix}${name}${frag})`;
+}
+
+export function ensureTextSlots(items: Block[]): Block[] {
+  const next: Block[] = [];
+  for (const block of items) {
+    if (block.kind === "media" && (next.length === 0 || next[next.length - 1].kind === "media")) {
+      next.push({ kind: "text", text: "" });
+    }
+    const previous = next[next.length - 1];
+    if (block.kind === "text" && previous?.kind === "text") {
+      if (previous.text.length > 0 && block.text.length > 0) {
+        previous.text = `${previous.text}\n${block.text}`;
+      } else {
+        previous.text = previous.text || block.text;
+      }
+      continue;
+    }
+    next.push(
+      block.kind === "text"
+        ? { kind: "text", text: block.text }
+        : {
+            kind: "media",
+            name: block.name,
+            label: block.label,
+            width: block.width,
+            inline: block.inline,
+          },
+    );
+  }
+  if (next.length === 0 || next[next.length - 1].kind === "media") {
+    next.push({ kind: "text", text: "" });
+  }
+  if (next[0].kind === "media") {
+    next.unshift({ kind: "text", text: "" });
+  }
+  return next;
+}
+
+export function parseBlocks(content: string): Block[] {
+  const next: Block[] = [];
+  let lastIndex = 0;
+  mediaTokenGlobal.lastIndex = 0;
+  let match: RegExpExecArray | null;
+  while ((match = mediaTokenGlobal.exec(content)) !== null) {
+    const tokenStart = match.index;
+    const tokenEnd = match.index + match[0].length;
+    const charBefore = tokenStart > 0 ? content[tokenStart - 1] : "\n";
+    const charAfter = tokenEnd < content.length ? content[tokenEnd] : "\n";
+    const hasInlineNeighbor = charBefore !== "\n" || (charAfter !== "\n" && charAfter !== "\r");
+    const meta = parseMediaMeta(match[2], match[4]);
+    const fragInline = Boolean(match[4] && new URLSearchParams(match[4]).get("inline") === "1");
+    const inline = hasInlineNeighbor || fragInline;
+
+    if (tokenStart > lastIndex) {
+      let before = content.slice(lastIndex, tokenStart);
+      if (lastIndex > 0 && next[next.length - 1]?.kind === "media" && !(next[next.length - 1] as MediaBlock).inline) {
+        before = before.replace(/^\r?\n/, "");
+      }
+      if (!inline) {
+        before = before.replace(/\r?\n$/, "");
+      }
+      if (before.length > 0) {
+        next.push({ kind: "text", text: before });
+      }
+    }
+    next.push({
+      kind: "media",
+      name: match[3],
+      label: meta.label,
+      width: meta.width,
+      inline,
+    });
+    lastIndex = tokenEnd;
+  }
+  if (lastIndex < content.length) {
+    let after = content.slice(lastIndex);
+    if (lastIndex > 0 && next[next.length - 1]?.kind === "media" && !(next[next.length - 1] as MediaBlock).inline) {
+      after = after.replace(/^\r?\n/, "");
+    }
+    if (after.length > 0) {
+      next.push({ kind: "text", text: after });
+    }
+  }
+  return ensureTextSlots(next);
+}
+
+export function serializeBlocks(items: Block[]): string {
+  let out = "";
+  for (let i = 0; i < items.length; i += 1) {
+    const block = items[i];
+    if (block.kind === "text") {
+      if (block.text.length === 0) {
+        continue;
+      }
+      const prev = items[i - 1];
+      const prevIsInlineMedia = prev?.kind === "media" && Boolean(prev.inline);
+      if (out.length > 0 && !prevIsInlineMedia && !out.endsWith("\n")) {
+        out += "\n";
+      }
+      out += block.text;
+    } else {
+      const md = mediaMarkdown(block.name, block.label, block.width);
+      if (block.inline) {
+        out += md;
+      } else {
+        if (out.length > 0 && !out.endsWith("\n")) {
+          out += "\n";
+        }
+        out += md;
+      }
+    }
+  }
+  return out;
+}
+
+export function noteTitle(content: string): string {
+  const withoutMedia = content.replace(mediaTokenGlobal, "").trim();
+  const textLine = withoutMedia
+    .split("\n")
+    .map((part) => part.trim())
+    .find((part) => part.length > 0);
+  if (textLine) {
+    return textLine.replace(/^#+\s*/, "");
+  }
+  const match = content.match(mediaTokenRegex);
+  if (match?.[3]) {
+    const name = match[3];
+    const meta = parseMediaMeta(match[2], match[4]);
+    if (meta.label) {
+      return meta.label;
+    }
+    if (isVideo(name)) {
+      return "Video";
+    }
+    if (isAudio(name)) {
+      return "Audio";
+    }
+    if (isImage(name)) {
+      return "Image";
+    }
+    return displayFileName(name);
+  }
+  return "Note";
+}
+
 

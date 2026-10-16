@@ -282,10 +282,8 @@ pub fn extract_refs(content: &str) -> Vec<MediaRef> {
 pub fn parse_media_token(trimmed: &str) -> Option<MediaRef> {
     let (is_bang, rest) = if let Some(r) = trimmed.strip_prefix("![") {
         (true, r)
-    } else if let Some(r) = trimmed.strip_prefix('[') {
-        (false, r)
     } else {
-        return None;
+        (false, trimmed.strip_prefix('[')?)
     };
     let (label, after_bracket) = rest.split_once("](memose-media/")?;
     let name_part = after_bracket.strip_suffix(')')?;
@@ -590,10 +588,36 @@ fn sniff(bytes: &[u8]) -> Option<&'static str> {
         Some("tiff")
     } else if bytes.starts_with(b"BM") && bytes.len() >= 14 {
         Some("bmp")
-    } else if bytes.starts_with(b"PK\x03\x04") {
-        None
     } else {
+        // ZIP-based Office formats (PK\x03\x04) and unknown binary formats fall back to filename/MIME hints.
         None
+    }
+}
+
+#[cfg(target_os = "macos")]
+struct AutoreleasePool(*mut std::ffi::c_void);
+
+#[cfg(target_os = "macos")]
+impl AutoreleasePool {
+    unsafe fn new() -> Self {
+        #[link(name = "objc", kind = "dylib")]
+        extern "C" {
+            fn objc_autoreleasePoolPush() -> *mut std::ffi::c_void;
+        }
+        Self(objc_autoreleasePoolPush())
+    }
+}
+
+#[cfg(target_os = "macos")]
+impl Drop for AutoreleasePool {
+    fn drop(&mut self) {
+        #[link(name = "objc", kind = "dylib")]
+        extern "C" {
+            fn objc_autoreleasePoolPop(pool: *mut std::ffi::c_void);
+        }
+        unsafe {
+            objc_autoreleasePoolPop(self.0);
+        }
     }
 }
 
@@ -615,6 +639,7 @@ fn tiff_to_png(bytes: &[u8]) -> Option<Vec<u8>> {
     }
 
     unsafe {
+        let _pool = AutoreleasePool::new();
         let send_data: unsafe extern "C" fn(*mut c_void, *mut c_void, *const u8, usize) -> *mut c_void =
             std::mem::transmute(objc_msgSend as *const ());
         let send_obj1: unsafe extern "C" fn(*mut c_void, *mut c_void, *mut c_void) -> *mut c_void =
@@ -674,6 +699,7 @@ fn paste_clipboard_macos(dir: &Path) -> Result<Vec<String>, AppError> {
     }
 
     unsafe {
+        let _pool = AutoreleasePool::new();
         let send0: unsafe extern "C" fn(*mut c_void, *mut c_void) -> *mut c_void =
             std::mem::transmute(objc_msgSend as *const ());
         let send_str: unsafe extern "C" fn(*mut c_void, *mut c_void, *const c_char) -> *mut c_void =
@@ -811,6 +837,15 @@ fn paste_clipboard_windows(dir: &Path) -> Result<Vec<String>, AppError> {
         fn DragQueryFileW(hdrop: *mut std::ffi::c_void, index: u32, buf: *mut u16, size: u32) -> u32;
     }
 
+    struct ClipboardGuard;
+    impl Drop for ClipboardGuard {
+        fn drop(&mut self) {
+            unsafe {
+                CloseClipboard();
+            }
+        }
+    }
+
     unsafe {
         if IsClipboardFormatAvailable(CF_HDROP) == 0 {
             return Ok(Vec::new());
@@ -818,6 +853,7 @@ fn paste_clipboard_windows(dir: &Path) -> Result<Vec<String>, AppError> {
         if OpenClipboard(std::ptr::null_mut()) == 0 {
             return Ok(Vec::new());
         }
+        let _guard = ClipboardGuard;
         let mut results = Vec::new();
         let hdrop = GetClipboardData(CF_HDROP);
         if !hdrop.is_null() {
@@ -839,7 +875,6 @@ fn paste_clipboard_windows(dir: &Path) -> Result<Vec<String>, AppError> {
                 }
             }
         }
-        CloseClipboard();
         Ok(results)
     }
 }
@@ -896,5 +931,52 @@ mod tests {
         assert_eq!(refs.len(), 1);
         assert_eq!(refs[0].name, "abc.png");
         assert_eq!(refs[0].label, "photo.jpg");
+    }
+
+    #[test]
+    fn resolve_rejects_path_traversal_and_invalid_names() {
+        let dir = std::env::temp_dir().join(format!("memose-media-{}", Uuid::new_v4()));
+        fs::create_dir_all(&dir).unwrap();
+        let valid_file = "12345678-valid_file.png";
+        fs::write(dir.join(valid_file), b"png").unwrap();
+
+        assert!(resolve(&dir, "../etc/passwd").is_err());
+        assert!(resolve(&dir, "sub/file.png").is_err());
+        assert!(resolve(&dir, "sub\\file.png").is_err());
+        assert!(resolve(&dir, ".hidden.png").is_err());
+        assert!(resolve(&dir, "noextension").is_err());
+        assert!(resolve(&dir, "bad$char.png").is_err());
+        assert!(resolve(&dir, "12345678-missing.png").is_err());
+        assert!(resolve(&dir, valid_file).is_ok());
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn parse_media_token_handles_pipe_widths_fragments_and_rejects_traversal() {
+        let piped = parse_media_token("![diagram.png|320](memose-media/12345678-diagram.png#w=320)").unwrap();
+        assert_eq!(piped.name, "12345678-diagram.png");
+        assert_eq!(piped.label, "diagram.png");
+        assert!(piped.is_media);
+
+        assert!(parse_media_token("![](memose-media/../secret.png)").is_none());
+        assert!(parse_media_token("![label](https://example.com/a.png)").is_none());
+    }
+
+    #[test]
+    fn base64_encode_and_magic_detection_cover_common_formats() {
+        assert_eq!(base64_encode(b""), "");
+        assert_eq!(base64_encode(b"f"), "Zg==");
+        assert_eq!(base64_encode(b"fo"), "Zm8=");
+        assert_eq!(base64_encode(b"foo"), "Zm9v");
+        assert_eq!(base64_encode(b"hello memose 1.0!"), "aGVsbG8gbWVtb3NlIDEuMCE=");
+
+        // Office ZIP containers (PK\x03\x04) defer to the filename extension instead of misclassifying.
+        let dir = std::env::temp_dir().join(format!("memose-media-{}", Uuid::new_v4()));
+        let docx_bytes = b"PK\x03\x04fake-docx-archive";
+        let docx_md = save_named(&dir, docx_bytes, Some("Spec.docx"), None).unwrap();
+        assert!(docx_md.starts_with("[Spec.docx](memose-media/"));
+        assert!(docx_md.ends_with("-Spec.docx)"));
+        let _ = fs::remove_dir_all(&dir);
     }
 }

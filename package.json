@@ -10,6 +10,11 @@
     "dev": "vite",
     "build": "tsc && vite build",
     "preview": "vite preview",
+    "test:ts": "node --test tests/*.test.ts",
+    "test:rust": "cargo test --manifest-path src-tauri/Cargo.toml",
+    "test": "npm run test:ts && npm run test:rust",
+    "lint:rust": "cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings",
+    "check": "node release/sync-version.mjs && npm run build && npm run test:ts && npm run lint:rust && npm run test:rust",
     "pretauri": "node release/sync-version.mjs",
     "tauri": "tauri",
     "release": "node release/build.mjs"

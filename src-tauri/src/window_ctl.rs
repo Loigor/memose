@@ -224,7 +224,6 @@ fn hide_and_save(app: &AppHandle, from_blur: bool) {
             .unwrap_or_else(|poisoned| poisoned.into_inner())
             .take();
         let db = state.db.clone();
-        drop(state);
         let committed = tokio::task::spawn_blocking(move || match (content, note_id) {
             (Some(content), Some(id)) => db.save_edit(&id, &content).map(|(_changed, sync)| sync),
             (Some(content), None) => db.finalize_content(&content),
@@ -238,13 +237,11 @@ fn hide_and_save(app: &AppHandle, from_blur: bool) {
         state.handled_flush.store(generation, Ordering::SeqCst);
         if reopened {
             state.hiding.store(false, Ordering::SeqCst);
-            drop(state);
             if committed {
                 request_sync(&app);
             }
             return;
         }
-        drop(state);
         hide_window(&app);
         if committed {
             request_sync(&app);
@@ -440,6 +437,7 @@ fn place_near_tray(
     Some((x, y))
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn tray_card_origin(
     icon_x: i32,
     icon_y: i32,
@@ -611,6 +609,7 @@ fn pin_label(id: &str) -> String {
     format!("pin-{id}")
 }
 
+#[allow(clippy::too_many_arguments)]
 fn rects_overlap(
     x: i32,
     y: i32,
@@ -635,6 +634,7 @@ const STACK_LIMIT: usize = 8;
 
 /// Move the window origin so a card edge that is against the work area sticks to it.
 /// Other positions stay where the pointer put them.
+#[allow(clippy::too_many_arguments)]
 pub fn snap_screen_edges(
     origin_x: i32,
     origin_y: i32,
@@ -685,6 +685,7 @@ fn axis_gap(start: i32, end: i32, other_start: i32, other_end: i32) -> i32 {
 
 /// Nudge a card so a nearby memo's left, right, top, or bottom edge lines up.
 /// A deep overlap is left alone so a memo can still be dropped onto another.
+#[allow(clippy::too_many_arguments)]
 pub fn snap_memo_edges(
     origin_x: i32,
     origin_y: i32,
@@ -762,6 +763,7 @@ struct OrganizeGrid {
     rows: usize,
 }
 
+#[allow(clippy::too_many_arguments)]
 fn organize_grid(
     area_x: i32,
     area_y: i32,
@@ -808,6 +810,7 @@ fn visual_card(
     )
 }
 
+#[allow(clippy::too_many_arguments)]
 fn first_open_tile(
     occupied: &[(i32, i32, i32, i32)],
     origin_x: i32,
@@ -1263,8 +1266,11 @@ fn open_pin_window(app: &AppHandle, id: &str) {
     });
 }
 
-fn place_at() -> &'static Mutex<HashMap<String, (i32, i32, i32, i32)>> {
-    static PLACE: LazyLock<Mutex<HashMap<String, (i32, i32, i32, i32)>>> =
+type FrameRect = (i32, i32, i32, i32);
+type PlaceMap = HashMap<String, FrameRect>;
+
+fn place_at() -> &'static Mutex<PlaceMap> {
+    static PLACE: LazyLock<Mutex<PlaceMap>> =
         LazyLock::new(|| Mutex::new(HashMap::new()));
     &PLACE
 }
@@ -1437,16 +1443,12 @@ fn closer_snap(current: i32, screen: i32, memo: i32) -> i32 {
     let memo_move = (memo - current).abs();
     if screen_move == 0 {
         memo
-    } else if memo_move == 0 {
-        screen
-    } else if screen_move < memo_move {
+    } else if memo_move == 0 || screen_move < memo_move {
         screen
     } else if memo_move < screen_move {
         memo
-    } else if memo >= screen {
-        memo
     } else {
-        screen
+        memo.max(screen)
     }
 }
 
@@ -1461,9 +1463,7 @@ fn closer_snap_x(current: i32, screen: i32, memo: i32) -> i32 {
         // When caught between a screen edge on the left and a memo on the right,
         // prioritize snapping to the right.
         memo
-    } else if screen > current && memo < current {
-        screen
-    } else if screen_move < memo_move {
+    } else if (screen > current && memo < current) || screen_move < memo_move {
         screen
     } else if memo_move < screen_move {
         memo
@@ -1508,9 +1508,7 @@ fn snap_target_for_origin(
     let Ok(scale) = window.scale_factor() else {
         return None;
     };
-    let Some(monitor) = monitor_containing(app, raw_x, raw_y) else {
-        return None;
-    };
+    let monitor = monitor_containing(app, raw_x, raw_y)?;
     let area = monitor.work_area();
     let pad_x = (CARD_PAD_X * scale).round() as i32;
     let pad_top = (CARD_PAD_TOP * scale).round() as i32;
@@ -1695,6 +1693,7 @@ pub enum ResizeEdge {
     SouthWest,
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn resize_frame(
     start_x: i32,
     start_y: i32,
@@ -2268,6 +2267,7 @@ fn follow_active(id: &str) -> bool {
         .is_some()
 }
 
+#[allow(clippy::too_many_arguments)]
 fn follow_detached(
     app: AppHandle,
     guest_id: String,
@@ -2440,6 +2440,7 @@ fn overlap_span(start: i32, length: i32, area_start: i32, area_end: i32) -> i32 
 
 /// Where to put a card that is even slightly, or almost entirely, off the left, right, or bottom.
 /// `None` when the card is fully on screen or fully past that edge.
+#[allow(clippy::too_many_arguments)]
 pub fn slide_card_into_view(
     left: i32,
     top: i32,
@@ -2492,6 +2493,7 @@ fn park_quiet(label: &str) -> bool {
         .unwrap_or(false)
 }
 
+#[allow(clippy::too_many_arguments)]
 fn glide_window(app: AppHandle, label: String, ticket: u64, from_x: i32, from_y: i32, to_x: i32, to_y: i32, clear: bool) {
     tauri::async_runtime::spawn(async move {
         let steps = 8;
@@ -2855,6 +2857,7 @@ fn save_pin_frame(app: &AppHandle, id: &str, window: &WebviewWindow) {
     );
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn clamp_position(
     cursor_x: i32,
     cursor_y: i32,

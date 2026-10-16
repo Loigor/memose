@@ -170,7 +170,6 @@ async fn finish_job(app: &AppHandle, job: Job) {
             let db = state.db.clone();
             let http = state.http.clone();
             let media_dir = state.media_dir.clone();
-            drop(state);
             let _ = reply.send(materialize_remote(&db, &http, &media_dir, &id).await);
         }
         Job::KeepLocal(id, reply) => {
@@ -178,7 +177,6 @@ async fn finish_job(app: &AppHandle, job: Job) {
             let db = state.db.clone();
             let http = state.http.clone();
             let media_dir = state.media_dir.clone();
-            drop(state);
             let _ = reply.send(push_local_choice(&db, &http, &media_dir, &id).await);
             let _ = app.emit("notes-changed", ());
         }
@@ -211,7 +209,6 @@ async fn run_cycle(app: &AppHandle) {
     let db = state.db.clone();
     let http = state.http.clone();
     let media_dir = state.media_dir.clone();
-    drop(state);
     let mut retries = 0;
     let mut report = DrainReport::default();
     loop {
@@ -574,9 +571,21 @@ pub async fn push_local_choice(
         .clone()
         .ok_or_else(|| AppError::Message("memo has no server copy".into()))?;
     let (base, token, flavor) = sync_context(db, http).await?;
+    let (default_visibility, default_space) = db_call(db.clone(), |db| {
+        Ok((
+            db.get_meta(MEMO_VISIBILITY)?.unwrap_or_else(|| "PRIVATE".into()),
+            db.get_meta(MEMO_SPACE)?.unwrap_or_default(),
+        ))
+    })
+    .await?;
     let refs = media::extract_refs(&note.content);
     let remote = media::content_for_remote(&note.content);
-    let (visibility, space) = push_audience(note.visibility.as_deref(), note.space.as_deref(), "PRIVATE", "");
+    let (visibility, space) = push_audience(
+        note.visibility.as_deref(),
+        note.space.as_deref(),
+        &default_visibility,
+        &default_space,
+    );
     update_memo(http, &base, flavor, &token, &name, &remote, &visibility, &space).await?;
     if !refs.is_empty() {
         let _ = sync_memo_attachments(http, db, media_dir, &base, flavor, &token, &name, &refs).await;
@@ -782,6 +791,7 @@ async fn get_memo(
         .ok_or_else(|| AppError::Message("memos response missing memo".into()))
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn update_memo(
     http: &reqwest::Client,
     base: &str,
@@ -964,7 +974,7 @@ fn parse_memo_page(body: &str) -> Result<MemoPage, AppError> {
             next_page_token: String::new(),
         });
     };
-    let memos = items.iter().filter_map(|item| parse_memo_object(item)).collect();
+    let memos = items.iter().filter_map(parse_memo_object).collect();
     Ok(MemoPage {
         memos,
         next_page_token: next,
@@ -1081,13 +1091,15 @@ fn append_markdown_lines(content: &str, lines: &[String]) -> String {
         parts.push(trimmed.to_string());
     }
     for line in lines {
-        if !parts.iter().any(|p| p == line) {
+        let already_in_content = trimmed.lines().any(|existing| existing.trim() == line.trim());
+        if !already_in_content && !parts.iter().any(|p| p == line) {
             parts.push(line.clone());
         }
     }
     parts.join("\n")
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn sync_memo_attachments(
     http: &reqwest::Client,
     db: &Db,
@@ -1149,6 +1161,7 @@ async fn sync_memo_attachments(
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn upload_attachment(
     http: &reqwest::Client,
     base: &str,
@@ -1328,20 +1341,34 @@ fn parse_rfc3339_ms(value: &str) -> Option<i64> {
     let days = days_from_civil(year, month, day);
     let mut unix = days * 86_400 + i64::from(hour) * 3_600 + i64::from(minute) * 60 + i64::from(second);
     let rest = value.get(19..).unwrap_or("");
+    let mut millis: i64 = 0;
     let rest = if let Some(stripped) = rest.strip_prefix('.') {
         let digits = stripped.chars().take_while(|ch| ch.is_ascii_digit()).count();
+        if digits == 0 {
+            return None;
+        }
+        let frac = &stripped[..digits.min(3)];
+        let parsed: i64 = frac.parse().ok()?;
+        millis = match frac.len() {
+            1 => parsed * 100,
+            2 => parsed * 10,
+            _ => parsed,
+        };
         stripped.get(digits..).unwrap_or("")
     } else {
         rest
     };
     if rest != "Z" && !rest.is_empty() {
         let sign = rest.chars().next()?;
+        if sign != '+' && sign != '-' {
+            return None;
+        }
         let hours: i64 = rest.get(1..3)?.parse().ok()?;
         let minutes: i64 = rest.get(4..6)?.parse().ok()?;
         let offset = hours * 3_600 + minutes * 60;
         unix -= if sign == '+' { offset } else { -offset };
     }
-    Some(unix.saturating_mul(1000))
+    Some(unix.saturating_mul(1000).saturating_add(millis))
 }
 
 fn days_from_civil(mut year: i32, month: u32, day: u32) -> i64 {
@@ -1509,6 +1536,27 @@ mod tests {
         assert!(captured.contains("\"content\":\"note body\""));
         assert!(captured.contains("\"visibility\":\"PRIVATE\""));
         assert!(!captured.contains("memos_pat_test"));
+    }
+
+    #[test]
+    fn rfc3339_timestamps_and_local_media_merging_stay_consistent() {
+        assert_eq!(parse_rfc3339_ms("1970-01-01T00:00:01Z"), Some(1_000));
+        assert_eq!(parse_rfc3339_ms("1970-01-01T00:00:01.250Z"), Some(1_250));
+        assert_eq!(parse_rfc3339_ms("1970-01-01T02:00:00+02:00"), Some(0));
+        assert_eq!(parse_rfc3339_ms("invalid-date"), None);
+
+        let local = "hello\n![pic](memose-media/12345678-pic.png)";
+        let merged = crate::media::merge_local_media(local, "updated remote text");
+        assert_eq!(merged, "updated remote text\n![pic](memose-media/12345678-pic.png)");
+
+        let appended = append_markdown_lines(
+            &merged,
+            &["![pic](memose-media/12345678-pic.png)".to_string(), "[doc.pdf](memose-media/87654321-doc.pdf)".to_string()],
+        );
+        assert_eq!(
+            appended,
+            "updated remote text\n![pic](memose-media/12345678-pic.png)\n[doc.pdf](memose-media/87654321-doc.pdf)"
+        );
     }
 
     fn test_client() -> reqwest::Client {
