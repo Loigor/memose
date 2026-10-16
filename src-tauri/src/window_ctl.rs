@@ -1124,6 +1124,7 @@ pub fn close_pinned(app: &AppHandle, id: &str) {
     }
 }
 
+#[cfg(target_os = "macos")]
 fn pin_windows_visible(app: &AppHandle) -> bool {
     app.webview_windows().into_iter().any(|(label, window)| {
         label.starts_with("pin-") && window.is_visible().unwrap_or(false)
@@ -2369,11 +2370,22 @@ fn left_button_down() -> bool {
 
 #[cfg(target_os = "windows")]
 fn left_button_down() -> bool {
+    const VK_LBUTTON: i32 = 0x01;
+    const VK_RBUTTON: i32 = 0x02;
+    const SM_SWAPBUTTON: i32 = 23;
     #[link(name = "user32")]
     extern "system" {
         fn GetAsyncKeyState(key: i32) -> i16;
+        fn GetSystemMetrics(index: i32) -> i32;
     }
-    unsafe { GetAsyncKeyState(0x01) < 0 }
+    unsafe {
+        let vk = if GetSystemMetrics(SM_SWAPBUTTON) != 0 {
+            VK_RBUTTON
+        } else {
+            VK_LBUTTON
+        };
+        GetAsyncKeyState(vk) < 0
+    }
 }
 
 #[cfg(not(any(target_os = "macos", target_os = "windows")))]

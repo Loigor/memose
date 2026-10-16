@@ -1,9 +1,11 @@
 // Copies package.json "version" into the Cargo manifest and lockfiles.
+// Pass --check to verify all manifests and lockfiles already match package.json.
 // The Tauri config reads package.json itself.
 import { readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
+const checkOnly = process.argv.includes("--check");
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const version = JSON.parse(readFileSync(path.join(root, "package.json"), "utf8")).version;
 
@@ -12,10 +14,17 @@ if (typeof version !== "string" || !/^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9
   process.exit(1);
 }
 
+let outOfSync = false;
+
 function writeIfChanged(file, next) {
   const full = path.join(root, file);
   const current = readFileSync(full, "utf8");
   if (current === next) {
+    return;
+  }
+  if (checkOnly) {
+    console.error(`${file} is out of sync with package.json (${version}). Run: node release/sync-version.mjs`);
+    outOfSync = true;
     return;
   }
   writeFileSync(full, next);
@@ -56,3 +65,7 @@ if (!workspaceVersion.test(packageLockNext)) {
   process.exit(1);
 }
 writeIfChanged("package-lock.json", packageLockNext);
+
+if (outOfSync) {
+  process.exit(1);
+}

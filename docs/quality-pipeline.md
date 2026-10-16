@@ -120,13 +120,15 @@ Desktop WebView runtimes and window managers differ significantly across **macOS
 
 ---
 
-## 4. Pre-1.0 Release Checklist
+## 4. Release Checklist & GitHub Release Pipeline
 
-Before running `npm run release` to cut the 1.0 installers:
+Before cutting a release:
 
-- [ ] Bump `"version"` in `package.json` (e.g., `"1.0.0"`).
-- [ ] Run `npm run check` and confirm zero TypeScript errors, zero Clippy warnings, and 100% passing frontend + Rust tests.
+- [x] Bump `"version"` in `package.json` (currently `"1.0.0"`).
+- [x] Run `npm run check` and confirm zero TypeScript errors, zero Clippy warnings, and 100% passing frontend + Rust tests.
 - [ ] Verify main composer flow: create draft, markdown toolbar formatting, inline & block media paste/drop/resize, preview toggle (`Cmd/Ctrl+Enter`), and undo/redo (`Cmd/Ctrl+Z`).
 - [ ] Verify pinned memos & stacks: pin/unpin, drag onto another memo to stack, fold/unfold headers, detach from stack, edge snapping, and grid auto-organize.
 - [ ] Verify useMemos sync: probe server (`Latest` and `V1`), private/workspace visibility, attachment upload/download, and conflict resolution (`Keep local` vs `Use server`).
-- [ ] Run `npm run release` on target OS builders and verify output artifacts in `release/`.
+- [ ] Publish release via GitHub Actions (`.github/workflows/release.yml`):
+  - Push tag `v1.0.0` (`git tag v1.0.0 && git push origin main --tags`) **or** trigger **Release** via `workflow_dispatch` in GitHub Actions.
+  - Confirm GitHub Release includes macOS (`aarch64` & `x64` `.dmg`), Windows (`x64` `-setup.exe` & `.msi`), Linux (`x64` `.deb`, `.rpm`, & `.AppImage`), and `SHA256SUMS.txt`.

@@ -1,6 +1,6 @@
 [package]
 name = "memose"
-version = "0.1.2"
+version = "1.0.0"
 description = "Tray post-it notes"
 authors = ["memose"]
 edition = "2021"

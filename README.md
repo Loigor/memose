@@ -41,6 +41,11 @@ npm run tauri dev
 - `npm run check` — Run the full quality gate: version sync, strict TypeScript typecheck (`tsc`), Vite bundle build, frontend unit & Tauri IPC contract tests (`node --test`), Cargo Clippy (`-D warnings`), and Rust backend unit tests (`cargo test`).
 - `npm test` — Run both frontend (`npm run test:ts`) and Rust (`npm run test:rust`) test suites.
 - `npm run lint:rust` — Run `cargo clippy --all-targets -- -D warnings`.
-- `npm run release` — Synchronize versions from `package.json` (`version` is the single source of truth) and build installable release bundles for the host platform into `release/<platform>/`.
+- `npm run release` — Synchronize versions from `package.json` (`version` is the single source of truth) and build installable release bundles for the host platform (or explicit `--target <triple>`) into `release/<platform>/`.
+
+### GitHub Actions Release Pipeline
+
+- **CI (`.github/workflows/ci.yml`)**: Runs `npm run check` across Linux (`ubuntu-22.04`), macOS (`macos-latest`), and Windows (`windows-latest`) on every push to `main` and pull request.
+- **Release (`.github/workflows/release.yml`)**: Triggered by pushing a `v*` tag (e.g. `git tag v1.0.0 && git push origin main --tags`) or manually via **Actions -> Release -> Run workflow**. Builds installers for macOS (`aarch64` & `x64` `.dmg`), Windows (`x64` `-setup.exe` & `.msi`), and Linux (`x64` `.deb`, `.rpm`, & `.AppImage`), generates `SHA256SUMS.txt`, and publishes the GitHub Release.
 
 See [`docs/quality-pipeline.md`](docs/quality-pipeline.md) for architecture guardrails, Tauri IPC rules, and platform-specific notes for macOS, Windows, and Linux.

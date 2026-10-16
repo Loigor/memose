@@ -32,6 +32,7 @@ pub fn start(app: AppHandle) {
     std::thread::spawn(listen);
 }
 
+#[cfg_attr(not(any(target_os = "macos", target_os = "windows")), allow(dead_code))]
 fn emit(button: u8, alt: bool, ctrl: bool, shift: bool, meta: bool) {
     let Ok(slot) = TX.lock() else {
         return;
@@ -150,12 +151,14 @@ fn listen() {
     const VK_RWIN: i32 = 0x5C;
 
     #[repr(C)]
+    #[allow(dead_code)]
     struct Point {
         x: i32,
         y: i32,
     }
 
     #[repr(C)]
+    #[allow(dead_code)]
     struct Hook {
         pt: Point,
         mouse_data: u32,
@@ -165,6 +168,7 @@ fn listen() {
     }
 
     #[repr(C)]
+    #[allow(dead_code)]
     struct Msg {
         hwnd: *mut c_void,
         message: u32,

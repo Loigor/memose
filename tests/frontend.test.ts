@@ -215,17 +215,41 @@ test("memo-chrome computes palettes and renders stack header template", () => {
 test("release versions and Tauri IPC command contracts stay in sync without dangling handlers", () => {
   const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
   const pkg = JSON.parse(fs.readFileSync(path.join(root, "package.json"), "utf8")) as { version: string };
+  const pkgLock = JSON.parse(fs.readFileSync(path.join(root, "package-lock.json"), "utf8")) as {
+    version: string;
+    packages?: Record<string, { version?: string }>;
+  };
   const tauriConf = JSON.parse(fs.readFileSync(path.join(root, "src-tauri/tauri.conf.json"), "utf8")) as {
     version: string;
   };
   const cargoToml = fs.readFileSync(path.join(root, "src-tauri/Cargo.toml"), "utf8");
   const cargoVersion = cargoToml.match(/^version\s*=\s*"([^"]+)"/m)?.[1];
+  const cargoLock = fs.readFileSync(path.join(root, "src-tauri/Cargo.lock"), "utf8");
+  const cargoLockVersion = cargoLock.match(/name = "memose"\r?\nversion = "([^"]+)"/)?.[1];
 
+  assert.match(pkg.version, /^\d+\.\d+\.\d+/);
   assert.ok(
     tauriConf.version === pkg.version || tauriConf.version === "../package.json",
     "tauri.conf.json version must match package.json or reference ../package.json",
   );
   assert.equal(pkg.version, cargoVersion, "package.json and Cargo.toml versions must match");
+  assert.equal(pkg.version, cargoLockVersion, "package.json and Cargo.lock versions must match");
+  assert.equal(pkg.version, pkgLock.version, "package.json and package-lock.json root versions must match");
+  assert.equal(
+    pkg.version,
+    pkgLock.packages?.[""]?.version,
+    "package.json and package-lock.json workspace versions must match",
+  );
+
+  const releaseWorkflow = fs.readFileSync(path.join(root, ".github/workflows/release.yml"), "utf8");
+  for (const target of [
+    "aarch64-apple-darwin",
+    "x86_64-apple-darwin",
+    "x86_64-pc-windows-msvc",
+    "x86_64-unknown-linux-gnu",
+  ]) {
+    assert.ok(releaseWorkflow.includes(target), `release.yml must build target ${target}`);
+  }
 
   const libRs = fs.readFileSync(path.join(root, "src-tauri/src/lib.rs"), "utf8");
   const handlerBlock = libRs.match(/generate_handler!\[([\s\S]*?)\]/)?.[1] ?? "";
