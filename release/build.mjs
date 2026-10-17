@@ -214,7 +214,11 @@ const buildEnv =
         NO_STRIP: process.env.NO_STRIP ?? "true",
         APPIMAGE_EXTRACT_AND_RUN: process.env.APPIMAGE_EXTRACT_AND_RUN ?? "1",
       }
-    : {};
+    : platform() === "darwin"
+      ? {
+          APPLE_SIGNING_IDENTITY: process.env.APPLE_SIGNING_IDENTITY ?? "-",
+        }
+      : {};
 
 const targets = targetsForThisMachine();
 const copied = [];
@@ -226,6 +230,13 @@ for (const triple of targets) {
   }
   tauriArgs.push("--target", triple);
   run("npm", tauriArgs, buildEnv);
+
+  if (platform() === "darwin") {
+    const apps = findApps(path.join(bundleDir(triple), "macos"));
+    for (const app of apps) {
+      run("codesign", ["--verify", "--deep", "--strict", app]);
+    }
+  }
 
   const files = collectFiles(bundleDir(triple), family.extensions);
   if (files.length === 0 && platform() === "darwin") {

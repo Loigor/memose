@@ -253,6 +253,11 @@ test("release versions and Tauri IPC command contracts stay in sync without dang
   };
   const tauriConf = JSON.parse(fs.readFileSync(path.join(root, "src-tauri/tauri.conf.json"), "utf8")) as {
     version: string;
+    bundle?: {
+      macOS?: {
+        signingIdentity?: string;
+      };
+    };
   };
   const cargoToml = fs.readFileSync(path.join(root, "src-tauri/Cargo.toml"), "utf8");
   const cargoVersion = cargoToml.match(/^version\s*=\s*"([^"]+)"/m)?.[1];
@@ -263,6 +268,10 @@ test("release versions and Tauri IPC command contracts stay in sync without dang
   assert.ok(
     tauriConf.version === pkg.version || tauriConf.version === "../package.json",
     "tauri.conf.json version must match package.json or reference ../package.json",
+  );
+  assert.ok(
+    Boolean(tauriConf.bundle?.macOS?.signingIdentity),
+    "tauri.conf.json bundle.macOS.signingIdentity must be set so macOS app bundles are signed",
   );
   assert.equal(pkg.version, cargoVersion, "package.json and Cargo.toml versions must match");
   assert.equal(pkg.version, cargoLockVersion, "package.json and Cargo.lock versions must match");
