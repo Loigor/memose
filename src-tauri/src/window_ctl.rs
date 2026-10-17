@@ -1726,6 +1726,24 @@ pub fn resize_frame(
     (x, start_y, width, height)
 }
 
+#[cfg_attr(any(target_os = "macos", target_os = "windows"), allow(dead_code))]
+fn start_native_resize(window: &WebviewWindow, edge: ResizeEdge) {
+    use serde::de::{
+        value::{Error, StrDeserializer},
+        Deserialize,
+    };
+    let name = match edge {
+        ResizeEdge::East => "East",
+        ResizeEdge::South => "South",
+        ResizeEdge::West => "West",
+        ResizeEdge::SouthEast => "SouthEast",
+        ResizeEdge::SouthWest => "SouthWest",
+    };
+    if let Ok(direction) = Deserialize::deserialize(StrDeserializer::<Error>::new(name)) {
+        let _ = window.as_ref().window().start_resize_dragging(direction);
+    }
+}
+
 pub fn begin_corner_resize(
     app: AppHandle,
     label: String,
@@ -1746,17 +1764,7 @@ pub fn begin_corner_resize(
         window.scale_factor(),
     ) else {
         #[cfg(not(any(target_os = "macos", target_os = "windows")))]
-        {
-            use tauri::window::ResizeDirection;
-            let direction = match edge {
-                ResizeEdge::East => ResizeDirection::East,
-                ResizeEdge::South => ResizeDirection::South,
-                ResizeEdge::West => ResizeDirection::West,
-                ResizeEdge::SouthEast => ResizeDirection::SouthEast,
-                ResizeEdge::SouthWest => ResizeDirection::SouthWest,
-            };
-            let _ = window.start_resizing(direction);
-        }
+        start_native_resize(&window, edge);
         finish(done);
         return;
     };
@@ -1822,7 +1830,25 @@ pub fn begin_corner_resize(
                 last_rect = rect;
                 if down {
                     saw_down = true;
-                } else if saw_down || started.elapsed() > Duration::from_millis(200) {
+                } else if saw_down {
+                    break;
+                } else if started.elapsed() > Duration::from_millis(200) {
+                    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+                    {
+                        if let Ok(mut labels) = corner_resizing().lock() {
+                            labels.remove(&label);
+                        }
+                        let app2 = app.clone();
+                        let label2 = label.clone();
+                        let _ = app.run_on_main_thread(move || {
+                            if let Some(window) = app2.get_webview_window(&label2) {
+                                start_native_resize(&window, edge);
+                            }
+                        });
+                        finish(done);
+                        return;
+                    }
+                    #[cfg(any(target_os = "macos", target_os = "windows"))]
                     break;
                 }
             }
