@@ -28,7 +28,7 @@ import {
   type Edit,
 } from "./markdown-edit";
 import { paintSurface, paintThemeButton, palette, paperAt, stackHeaderHtml, type ThemeName } from "./memo-chrome";
-import { defaultBinds, formatBind, isModifierKey, matchBind, matchMouse, modifierDown, type ShortcutBinds } from "./shortcuts";
+import { defaultBinds, domMouseButton, formatBind, isModifierKey, matchBind, matchMouse, modifierDown, type ShortcutBinds } from "./shortcuts";
 
 type Note = {
   id: string;
@@ -2243,16 +2243,22 @@ async function openRecent(item: Note) {
     return;
   }
   if (editingId === item.id) {
-    focusNote();
+    await returnToNewMemo(openGen);
     return;
   }
   clearTimeout(draftTimer);
   const typed = noteContent;
   const savingNewMemo = editingId === null && typed.trim().length > 0;
   if (inTauri() && savingNewMemo) {
+    if (audienceDirty) {
+      await persistDraft();
+    }
     await attachPendingLook();
     await invoke("commit_note", { content: typed });
   } else {
+    if (inTauri() && editingId !== null && typed.trim().length > 0) {
+      await invoke("save_edit", { id: editingId, content: typed });
+    }
     await flushLook();
   }
   let opened = item;
@@ -2477,7 +2483,7 @@ function paintAudience(note: { visibility?: string | null; space?: string | null
   if (chosenSpace && !knownSpaces.some((space) => space.name === chosenSpace)) {
     chosenSpace = "";
   }
-  visibilityLabelEl.hidden = !syncEnabled;
+  visibilityLabelEl.hidden = false;
   visibilityLabelEl.textContent = visibilityShort(chosenVisibility, chosenSpace);
   paintAudienceMenu();
   refreshMetaSep();
@@ -2530,11 +2536,11 @@ async function loadAudience() {
     syncEnabled = false;
     knownSpaces = [];
   }
-  if (!audiencePainted) {
+  if (!audiencePainted || (!pinnedNoteId && !editingId && !audienceDirty)) {
     paintAudience(null);
     return;
   }
-  visibilityLabelEl.hidden = !syncEnabled;
+  visibilityLabelEl.hidden = false;
   visibilityLabelEl.textContent = visibilityShort(chosenVisibility, chosenSpace);
   paintAudienceMenu();
   refreshMetaSep();
@@ -3083,7 +3089,10 @@ async function openLastModified() {
     return;
   }
   const typed = noteContent;
-  if (typed.trim().length > 0) {
+  if (editingId === null && typed.trim().length > 0) {
+    if (audienceDirty) {
+      await persistDraft();
+    }
     await attachPendingLook();
     await invoke("commit_note", { content: typed });
     showStored("");
@@ -3118,9 +3127,21 @@ async function startFresh(generation: number) {
   setConflict(null);
   listHidden = false;
   recentExpanded = false;
-  await attachPendingLook();
-  if (noteContent.trim().length > 0 && !pinnedNoteId) {
+  clearTimeout(draftTimer);
+  const noteId = editingId;
+  if (noteId) {
+    if (noteContent.trim().length > 0) {
+      await invoke("save_edit", { id: noteId, content: noteContent });
+    }
+    await flushLook();
+  } else if (noteContent.trim().length > 0 && !pinnedNoteId) {
+    if (audienceDirty) {
+      await persistDraft();
+    }
+    await attachPendingLook();
     await invoke("commit_note", { content: noteContent });
+  } else {
+    await flushLook();
   }
   editingId = null;
   draftId = null;
@@ -3492,7 +3513,13 @@ pinToggleEl.addEventListener("click", () => {
       await refreshRecent();
       return;
     }
+    if (!editingId && audienceDirty && draftId) {
+      await saveNoteAudience(draftId);
+    }
     const note = await invoke<Note>("publish_note", { id: editingId || draftId || null, content: noteContent });
+    if (!editingId && audienceDirty) {
+      await saveNoteAudience(note.id);
+    }
     clearTimeout(lookTimer);
     lookTimer = undefined;
     lookUnsaved = false;
@@ -3500,8 +3527,11 @@ pinToggleEl.addEventListener("click", () => {
     await invoke("set_pinned", { id: note.id, pinned: true, fromComposer: !pinnedNoteId });
     if (!pinnedNoteId) {
       editingId = null;
+      draftId = null;
       showStored("");
       setPinPressed(false);
+      setEditedAt(null);
+      paintAudience(null);
       await invoke("hide_composer");
     } else {
       setPinPressed(true);
@@ -4057,7 +4087,7 @@ function paintSectionAudience(section: HTMLElement, state: StackState) {
   state.space = space;
   const label = section.querySelector<HTMLButtonElement>(".visibility-label");
   if (label) {
-    label.hidden = !syncEnabled;
+    label.hidden = false;
     label.textContent = visibilityShort(visibility, space);
   }
   const edited = section.querySelector<HTMLElement>(".edited-at");
@@ -5985,18 +6015,26 @@ if (!isPreviewWindow()) {
     window.addEventListener(
       "pointerdown",
       (event) => {
-        if (event.button < 1 || event.button === 2) {
+        const button = domMouseButton(event.button);
+        if (button === null) {
           return;
         }
+        const chord = {
+          button: button - 1,
+          altKey: event.altKey,
+          ctrlKey: event.ctrlKey,
+          shiftKey: event.shiftKey,
+          metaKey: event.metaKey,
+        };
         const matched = [binds.newMemo, binds.togglePinned, binds.preview, binds.hide, binds.randomHue].some((binding) =>
-          matchMouse(event, binding),
+          matchMouse(chord, binding),
         );
         if (!matched) {
           return;
         }
         event.preventDefault();
         void invoke("mouse_chord", {
-          button: event.button + 1,
+          button,
           alt: event.altKey,
           ctrl: event.ctrlKey,
           shift: event.shiftKey,
@@ -6008,6 +6046,9 @@ if (!isPreviewWindow()) {
       true,
     );
     void listen<{ button: number; alt: boolean; ctrl: boolean; shift: boolean; meta: boolean }>("mouse-chord", (event) => {
+      if (!document.hasFocus()) {
+        return;
+      }
       const chord = {
         button: event.payload.button - 1,
         altKey: event.payload.alt,
@@ -6135,6 +6176,11 @@ if (isPreviewWindow()) {
   void loadAudience().catch((error: unknown) => {
     console.error(error);
   });
+  void listen("settings-changed", () => {
+    void loadAudience().catch((error: unknown) => {
+      console.error(error);
+    });
+  });
   void loadPinned(pinnedNoteId).catch((error: unknown) => {
     console.error(error);
   });
@@ -6171,6 +6217,12 @@ if (isPreviewWindow()) {
     scheduleRecent();
   });
 
+  void listen("settings-changed", () => {
+    void loadAudience().catch((error: unknown) => {
+      console.error(error);
+    });
+  });
+
   void listen<number>("composer-fresh", (event) => {
     void startFresh(event.payload).catch((error: unknown) => {
       console.error(error);
@@ -6193,8 +6245,10 @@ if (isPreviewWindow()) {
     if (generation === openGen) {
       showStored("");
       editingId = null;
+      draftId = null;
       setPinPressed(false);
       setEditedAt(null);
+      paintAudience(null);
     }
     void invoke("finalize_composer", { generation, content, noteId })
       .then(() => refreshRecent())

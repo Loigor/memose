@@ -8,46 +8,162 @@
     <script type="module" src="/src/settings.ts" defer></script>
   </head>
   <body>
-    <main>
-      <h1>Settings</h1>
-      <label>
-        Server URL
-        <input id="base-url" type="url" placeholder="https://memos.example.com" autocomplete="off" />
-      </label>
-      <label>
-        Access token
-        <input id="token" type="password" placeholder="Leave blank to keep the saved token" autocomplete="off" />
-      </label>
-      <p id="token-hint"></p>
-      <div class="actions">
-        <button id="save-settings" type="button">Save</button>
-        <button id="test-connection" type="button">Test</button>
-        <button id="clear-memos" type="button">Disconnect</button>
+    <main class="settings-shell">
+      <header class="settings-header">
+        <h1>Settings</h1>
+        <nav class="settings-tabs" role="tablist" aria-label="Settings sections">
+          <button
+            id="tab-visibility"
+            class="settings-tab"
+            type="button"
+            role="tab"
+            aria-selected="true"
+            aria-controls="panel-visibility"
+            data-tab="visibility"
+          >
+            Visibility
+          </button>
+          <button
+            id="tab-shortcuts"
+            class="settings-tab"
+            type="button"
+            role="tab"
+            aria-selected="false"
+            aria-controls="panel-shortcuts"
+            data-tab="shortcuts"
+          >
+            Shortcuts
+          </button>
+          <button
+            id="tab-sync"
+            class="settings-tab"
+            type="button"
+            role="tab"
+            aria-selected="false"
+            aria-controls="panel-sync"
+            data-tab="sync"
+          >
+            Sync (useMemos)
+          </button>
+        </nav>
+      </header>
+
+      <div class="settings-panels">
+        <section
+          id="panel-visibility"
+          class="settings-panel"
+          role="tabpanel"
+          aria-labelledby="tab-visibility"
+          data-panel="visibility"
+        >
+          <div id="memos-audience" class="settings-card">
+            <div class="card-header">
+              <h2>Default memo visibility</h2>
+              <p class="hint">
+                New memos use this default visibility. Selecting an existing memo shows its own visibility, and switching back to a new memo uses this default.
+              </p>
+            </div>
+            <div id="visibility-choices" class="choices"></div>
+            <p id="memo-space-field" class="field-label" hidden>Default space</p>
+            <div id="space-choices" class="choices" hidden></div>
+          </div>
+
+          <div class="settings-card">
+            <div class="card-header">
+              <h2>Window &amp; behavior</h2>
+            </div>
+            <label class="toggle-row" for="snap-memos">
+              <span class="toggle-copy">
+                <span class="toggle-title">Window snap</span>
+                <span class="hint">
+                  Snap memos to screen edges and nearby memos when released, or hold a dragged memo over another memo to stack them.
+                </span>
+              </span>
+              <input id="snap-memos" type="checkbox" />
+            </label>
+            <label class="toggle-row" for="autostart">
+              <span class="toggle-copy">
+                <span class="toggle-title">Launch at login</span>
+                <span class="hint">Start Memose automatically when you sign in.</span>
+              </span>
+              <input id="autostart" type="checkbox" />
+            </label>
+          </div>
+        </section>
+
+        <section
+          id="panel-shortcuts"
+          class="settings-panel"
+          role="tabpanel"
+          aria-labelledby="tab-shortcuts"
+          data-panel="shortcuts"
+          hidden
+        >
+          <div class="settings-card">
+            <div class="card-header">
+              <h2>On a memo</h2>
+              <p class="hint">Hold this modifier key while interacting with a memo window.</p>
+            </div>
+            <p class="field-label">Modifier</p>
+            <div id="gesture" class="choices"></div>
+            <p id="gesture-hint" class="hint"></p>
+          </div>
+
+          <div class="settings-card">
+            <div class="card-header">
+              <h2>Shortcuts</h2>
+              <p class="hint">
+                Click + and press keys or a mouse button (such as Alt+Mouse 4). An action can have more than one shortcut. New memo and Toggle pinned also work from other apps.
+              </p>
+            </div>
+            <div id="shortcuts"></div>
+          </div>
+        </section>
+
+        <section
+          id="panel-sync"
+          class="settings-panel"
+          role="tabpanel"
+          aria-labelledby="tab-sync"
+          data-panel="sync"
+          hidden
+        >
+          <div class="settings-card">
+            <div class="card-header">
+              <h2>useMemos sync</h2>
+              <p class="hint">Connect your useMemos server to sync memos and spaces.</p>
+            </div>
+            <label>
+              Server URL
+              <input
+                id="base-url"
+                type="url"
+                placeholder="https://memos.example.com"
+                autocomplete="off"
+              />
+            </label>
+            <label>
+              Access token
+              <input
+                id="token"
+                type="password"
+                placeholder="Leave blank to keep the saved token"
+                autocomplete="off"
+              />
+            </label>
+            <p id="token-hint"></p>
+            <div class="actions">
+              <button id="save-settings" class="primary" type="button">Save</button>
+              <button id="test-connection" type="button">Test connection</button>
+              <button id="clear-memos" class="danger" type="button">Disconnect</button>
+            </div>
+          </div>
+        </section>
       </div>
-      <div id="memos-audience" hidden>
-        <p class="field-label">Visibility</p>
-        <div id="visibility-choices" class="choices"></div>
-        <p id="memo-space-field" class="field-label">Space</p>
-        <div id="space-choices" class="choices"></div>
-        <p class="hint">New memos use this audience. A memo you already synced keeps its own audience until you change it on the note.</p>
-      </div>
-      <label class="check">
-        <input id="autostart" type="checkbox" />
-        Launch at login
-      </label>
-      <label class="check">
-        <input id="snap-memos" type="checkbox" />
-        Snap memos to screen and neighbor edges
-      </label>
-      <p class="hint">Memos align cleanly with screen edges and nearby memos when released. Hold a dragged memo over another memo to attach it to the bottom of the stack, or drag a stacked memo's header away to detach it.</p>
-      <h2>On a memo</h2>
-      <p class="field-label">Modifier</p>
-      <div id="gesture" class="choices"></div>
-      <p id="gesture-hint" class="hint"></p>
-      <h2>Shortcuts</h2>
-      <p class="hint">Click + and press keys or a mouse button, such as Alt+Mouse 4. An action can have more than one shortcut. New memo and Toggle pinned also work from other apps. On Mac, a side button from another app needs Accessibility permission for Memose.</p>
-      <div id="shortcuts"></div>
-      <p id="settings-status" role="status"></p>
+
+      <footer class="settings-footer">
+        <p id="settings-status" role="status"></p>
+      </footer>
     </main>
   </body>
 </html>

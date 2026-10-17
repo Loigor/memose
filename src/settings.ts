@@ -1,13 +1,15 @@
 import { invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
 
 import {
   eventToBind,
   eventToMouse,
   formatBind,
-  splitBinds,
   gestureSnippet,
   modifierChoices,
+  mouseChordToBind,
   shortcutFields,
+  splitBinds,
   type ShortcutBinds,
 } from "./shortcuts";
 
@@ -25,6 +27,8 @@ type MemoSpace = {
   title: string;
 };
 
+type TabId = "visibility" | "shortcuts" | "sync";
+
 const baseUrl = document.querySelector<HTMLInputElement>("#base-url");
 const token = document.querySelector<HTMLInputElement>("#token");
 const tokenHint = document.querySelector<HTMLParagraphElement>("#token-hint");
@@ -38,6 +42,8 @@ const memoSpaceField = document.querySelector<HTMLParagraphElement>("#memo-space
 const shortcuts = document.querySelector<HTMLDivElement>("#shortcuts");
 const gesture = document.querySelector<HTMLDivElement>("#gesture");
 const gestureHint = document.querySelector<HTMLParagraphElement>("#gesture-hint");
+const tabButtons = Array.from(document.querySelectorAll<HTMLButtonElement>("[data-tab]"));
+const tabPanels = Array.from(document.querySelectorAll<HTMLElement>("[data-panel]"));
 
 if (
   !baseUrl ||
@@ -52,7 +58,9 @@ if (
   !audience ||
   !visibilityChoices ||
   !spaceChoices ||
-  !memoSpaceField
+  !memoSpaceField ||
+  tabButtons.length === 0 ||
+  tabPanels.length === 0
 ) {
   throw new Error("settings form is incomplete");
 }
@@ -63,7 +71,6 @@ const tokenHintEl = tokenHint;
 const statusEl = status;
 const autostartEl = autostart;
 const snapMemosEl = snapMemos;
-const audienceEl = audience;
 const visibilityChoicesEl = visibilityChoices;
 const spaceChoicesEl = spaceChoices;
 const memoSpaceFieldEl = memoSpaceField;
@@ -75,6 +82,13 @@ let recording: keyof ShortcutBinds | null = null;
 let chosenVisibility = "PRIVATE";
 let chosenSpace = "";
 let knownSpaces: MemoSpace[] = [];
+let hasSyncConfigured = false;
+const heldMods = {
+  alt: false,
+  ctrl: false,
+  shift: false,
+  meta: false,
+};
 
 const visibilityOptions = [
   { value: "PRIVATE", label: "Private" },
@@ -82,6 +96,47 @@ const visibilityOptions = [
   { value: "PUBLIC", label: "Public" },
   { value: "SPACE", label: "Space members" },
 ];
+
+function selectTab(nextTab: TabId) {
+  if (recording) {
+    recording = null;
+    paintShortcuts();
+  }
+  for (const button of tabButtons) {
+    const active = button.dataset.tab === nextTab;
+    button.setAttribute("aria-selected", String(active));
+    button.tabIndex = active ? 0 : -1;
+  }
+  for (const panel of tabPanels) {
+    panel.hidden = panel.dataset.panel !== nextTab;
+  }
+}
+
+for (const button of tabButtons) {
+  button.addEventListener("click", () => {
+    const tab = button.dataset.tab as TabId | undefined;
+    if (tab) {
+      selectTab(tab);
+    }
+  });
+  button.addEventListener("keydown", (event) => {
+    if (recording) {
+      return;
+    }
+    if (event.key !== "ArrowRight" && event.key !== "ArrowLeft") {
+      return;
+    }
+    event.preventDefault();
+    const index = tabButtons.indexOf(button);
+    const delta = event.key === "ArrowRight" ? 1 : -1;
+    const target = tabButtons[(index + delta + tabButtons.length) % tabButtons.length];
+    const tab = target?.dataset.tab as TabId | undefined;
+    if (target && tab) {
+      selectTab(tab);
+      target.focus();
+    }
+  });
+}
 
 function paintGesture() {
   const current = binds?.gesture ?? "Alt";
@@ -198,7 +253,7 @@ async function loadSettings() {
   snapMemosEl.checked = settings.snapMemos;
   chosenVisibility = settings.visibility || "PRIVATE";
   chosenSpace = settings.space || "";
-  audienceEl.hidden = settings.baseUrl.trim() === "";
+  hasSyncConfigured = settings.baseUrl.trim() !== "" && settings.hasToken;
   await loadSpaces(chosenSpace);
   statusEl.textContent = "";
 }
@@ -252,7 +307,7 @@ function paintAudienceChoices() {
 
 async function loadSpaces(selected: string) {
   knownSpaces = [];
-  if (!audienceEl.hidden) {
+  if (hasSyncConfigured) {
     try {
       knownSpaces = await invoke<MemoSpace[]>("list_memo_spaces");
     } catch (error) {
@@ -273,12 +328,12 @@ async function saveAudience() {
   }
   try {
     await invoke("save_settings", {
-      baseUrl: baseUrlEl.value.trim(),
+      baseUrl: null,
       token: null,
       visibility: chosenVisibility,
       space: chosenSpace,
     });
-    statusEl.textContent = "Audience saved.";
+    statusEl.textContent = "Default memo visibility saved.";
   } catch (error) {
     statusEl.textContent = String(error);
   }
@@ -318,8 +373,8 @@ document.querySelector("#test-connection")?.addEventListener("click", () => {
         });
       }
       const flavor = await invoke<string>("test_memos");
-      statusEl.textContent = `Connected (${flavor}).`;
       await loadSettings();
+      statusEl.textContent = `Connected (${flavor}).`;
     } catch (error) {
       statusEl.textContent = String(error);
     }
@@ -339,32 +394,60 @@ document.querySelector("#clear-memos")?.addEventListener("click", () => {
 });
 
 snapMemosEl.addEventListener("change", () => {
-  void invoke("set_snap_memos", { enabled: snapMemosEl.checked }).catch((error: unknown) => {
-    statusEl.textContent = String(error);
-    snapMemosEl.checked = !snapMemosEl.checked;
-  });
+  const enabled = snapMemosEl.checked;
+  void invoke("set_snap_memos", { enabled })
+    .then(() => {
+      statusEl.textContent = enabled ? "Window snap enabled." : "Window snap disabled.";
+    })
+    .catch((error: unknown) => {
+      statusEl.textContent = String(error);
+      snapMemosEl.checked = !enabled;
+    });
 });
 
 autostartEl.addEventListener("change", () => {
   void (async () => {
+    const enabled = autostartEl.checked;
     try {
-      await invoke("set_autostart", { enabled: autostartEl.checked });
+      await invoke("set_autostart", { enabled });
+      statusEl.textContent = enabled ? "Launch at login enabled." : "Launch at login disabled.";
     } catch (error) {
       statusEl.textContent = String(error);
-      autostartEl.checked = !autostartEl.checked;
+      autostartEl.checked = !enabled;
     }
   })();
+});
+
+function syncHeldMods(event: KeyboardEvent) {
+  heldMods.alt = event.altKey;
+  heldMods.ctrl = event.ctrlKey;
+  heldMods.shift = event.shiftKey;
+  heldMods.meta = event.metaKey;
+}
+
+window.addEventListener("keyup", syncHeldMods, true);
+window.addEventListener("blur", () => {
+  heldMods.alt = false;
+  heldMods.ctrl = false;
+  heldMods.shift = false;
+  heldMods.meta = false;
 });
 
 window.addEventListener(
   "keydown",
   (event) => {
+    syncHeldMods(event);
     if (!recording || !binds) {
       return;
     }
     event.preventDefault();
     event.stopPropagation();
     if (event.repeat) {
+      return;
+    }
+    if (event.key === "Escape" && !event.altKey && !event.ctrlKey && !event.shiftKey && !event.metaKey) {
+      recording = null;
+      paintShortcuts();
       return;
     }
     const binding = eventToBind(event);
@@ -377,31 +460,70 @@ window.addEventListener(
   true,
 );
 
+function handleDomMouseRecord(event: MouseEvent) {
+  if (event.button >= 3) {
+    event.preventDefault();
+  }
+  if (!recording || !binds) {
+    return;
+  }
+  const mouse = eventToMouse(event, heldMods);
+  if (mouse) {
+    event.preventDefault();
+    event.stopPropagation();
+    const id = recording;
+    saveBind(id, [...splitBinds(binds[id]), mouse].join(", "));
+    return;
+  }
+  if (event.type !== "mousedown" || event.button !== 0) {
+    return;
+  }
+  const target = event.target;
+  if (target instanceof Node && shortcutsEl.contains(target)) {
+    return;
+  }
+  recording = null;
+  paintShortcuts();
+}
+
+document.addEventListener("pointerdown", handleDomMouseRecord, true);
+document.addEventListener("mousedown", handleDomMouseRecord, true);
 document.addEventListener(
-  "mousedown",
+  "auxclick",
   (event) => {
-    if (!recording || !binds) {
-      return;
-    }
-    const mouse = eventToMouse(event);
-    if (mouse) {
+    if (recording || event.button >= 3) {
       event.preventDefault();
-      const id = recording;
-      saveBind(id, [...splitBinds(binds[id]), mouse].join(", "));
-      return;
     }
-    if (event.button !== 0) {
-      return;
-    }
-    const target = event.target;
-    if (target instanceof Node && shortcutsEl.contains(target)) {
-      return;
-    }
-    recording = null;
-    paintShortcuts();
   },
   true,
 );
+
+void listen<{
+  button: number;
+  alt: boolean;
+  ctrl: boolean;
+  shift: boolean;
+  meta: boolean;
+}>("mouse-chord", (event) => {
+  if (!recording || !binds) {
+    return;
+  }
+  const payload = event.payload;
+  const mouse = mouseChordToBind(
+    payload.button,
+    payload.alt || heldMods.alt,
+    payload.ctrl || heldMods.ctrl,
+    payload.shift || heldMods.shift,
+    payload.meta || heldMods.meta,
+  );
+  if (!mouse) {
+    return;
+  }
+  const id = recording;
+  saveBind(id, [...splitBinds(binds[id]), mouse].join(", "));
+});
+
+selectTab("visibility");
 
 void loadSettings().catch((error: unknown) => {
   statusEl.textContent = String(error);

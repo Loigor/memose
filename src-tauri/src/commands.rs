@@ -240,12 +240,14 @@ pub fn detach_stack(
 pub fn save_settings(
     app: AppHandle,
     state: State<AppState>,
-    base_url: String,
+    base_url: Option<String>,
     token: Option<String>,
     visibility: Option<String>,
     space: Option<String>,
 ) -> Result<(), AppError> {
-    state.db.set_base_url(&base_url)?;
+    if let Some(base_url) = base_url {
+        state.db.set_base_url(&base_url)?;
+    }
     match token.as_deref().map(str::trim) {
         Some("") => state.db.clear_access_token()?,
         Some(value) => state.db.set_access_token(value)?,
@@ -262,6 +264,7 @@ pub fn save_settings(
         state.db.set_meta(notes::MEMO_VISIBILITY, &visibility)?;
         state.db.set_meta(notes::MEMO_SPACE, space.trim())?;
     }
+    let _ = app.emit("settings-changed", ());
     request_sync(&app);
     Ok(())
 }
@@ -377,14 +380,15 @@ pub fn save_shortcut(
 }
 
 #[tauri::command]
-pub fn clear_memos(state: State<AppState>) -> Result<(), AppError> {
+pub fn clear_memos(app: AppHandle, state: State<AppState>) -> Result<(), AppError> {
     state.db.set_base_url("")?;
     state.db.clear_access_token()?;
+    let _ = app.emit("settings-changed", ());
     Ok(())
 }
 
 #[tauri::command]
-pub async fn test_memos(state: State<'_, AppState>) -> Result<String, AppError> {
+pub async fn test_memos(app: AppHandle, state: State<'_, AppState>) -> Result<String, AppError> {
     let db = state.db.clone();
     let http = state.http.clone();
     let base = db
@@ -397,6 +401,7 @@ pub async fn test_memos(state: State<'_, AppState>) -> Result<String, AppError> 
         .ok_or_else(|| AppError::Message("access token is not set".into()))?;
     let flavor = notes::probe(&http, &base, &token).await?;
     db.set_meta(notes::API_FLAVOR, flavor.as_str())?;
+    let _ = app.emit("settings-changed", ());
     Ok(flavor.as_str().to_string())
 }
 

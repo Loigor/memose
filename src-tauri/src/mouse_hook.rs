@@ -52,6 +52,7 @@ fn emit(button: u8, alt: bool, ctrl: bool, shift: bool, meta: bool) {
 fn listen() {
     use std::ffi::c_void;
     use std::sync::atomic::{AtomicPtr, Ordering};
+    use std::time::Duration;
 
     type MachPort = *mut c_void;
     type Event = *mut c_void;
@@ -63,6 +64,7 @@ fn listen() {
     const BUTTON_NUMBER: u32 = 3;
     const DISABLED_BY_TIMEOUT: u32 = 0xFFFF_FFFE;
     const DISABLED_BY_USER: u32 = 0xFFFF_FFFF;
+    const COMBINED_SESSION_STATE: i32 = 0;
     const SHIFT: u64 = 0x0002_0000;
     const CONTROL: u64 = 0x0004_0000;
     const ALTERNATE: u64 = 0x0008_0000;
@@ -86,7 +88,7 @@ fn listen() {
         let button = CGEventGetIntegerValueField(event, BUTTON_NUMBER) as u8;
         let mouse = button.saturating_add(1);
         if (3..=8).contains(&mouse) {
-            let flags = CGEventGetFlags(event);
+            let flags = CGEventGetFlags(event) | CGEventSourceFlagsState(COMBINED_SESSION_STATE);
             emit(
                 mouse,
                 flags & ALTERNATE != 0,
@@ -111,6 +113,8 @@ fn listen() {
         fn CGEventTapEnable(tap: MachPort, enable: bool);
         fn CGEventGetFlags(event: Event) -> u64;
         fn CGEventGetIntegerValueField(event: Event, field: u32) -> i64;
+        fn CGEventSourceButtonState(state_id: i32, button: u32) -> u8;
+        fn CGEventSourceFlagsState(state_id: i32) -> u64;
     }
 
     #[link(name = "CoreFoundation", kind = "framework")]
@@ -122,11 +126,34 @@ fn listen() {
         fn CFRunLoopRun();
     }
 
+    std::thread::spawn(|| {
+        let mut prev = [false; 6];
+        loop {
+            std::thread::sleep(Duration::from_millis(16));
+            unsafe {
+                for (idx, button) in (2u32..=7u32).enumerate() {
+                    let down = CGEventSourceButtonState(COMBINED_SESSION_STATE, button) != 0;
+                    if down && !prev[idx] {
+                        let flags = CGEventSourceFlagsState(COMBINED_SESSION_STATE);
+                        let mouse = (button as u8).saturating_add(1);
+                        emit(
+                            mouse,
+                            flags & ALTERNATE != 0,
+                            flags & CONTROL != 0,
+                            flags & SHIFT != 0,
+                            flags & COMMAND != 0,
+                        );
+                    }
+                    prev[idx] = down;
+                }
+            }
+        }
+    });
+
     unsafe {
         let mask = 1u64 << OTHER_MOUSE_DOWN;
         let tap = CGEventTapCreate(SESSION, HEAD, LISTEN_ONLY, mask, callback, std::ptr::null_mut());
         if tap.is_null() {
-            eprintln!("memose: side-button shortcuts from other apps need Accessibility permission");
             return;
         }
         TAP.store(tap, Ordering::Relaxed);

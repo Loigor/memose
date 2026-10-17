@@ -193,6 +193,23 @@ pub fn dispatch_mouse(app: &AppHandle, button: u8, alt: bool, ctrl: bool, shift:
     let Some(state) = app.try_state::<crate::state::AppState>() else {
         return;
     };
+    let settings_focused = app
+        .get_webview_window("settings")
+        .and_then(|win| win.is_focused().ok())
+        .unwrap_or(false);
+    if settings_focused {
+        let _ = app.emit(
+            "mouse-chord",
+            MouseChord {
+                button,
+                alt,
+                ctrl,
+                shift,
+                meta,
+            },
+        );
+        return;
+    }
     let binds = state
         .shortcuts
         .lock()

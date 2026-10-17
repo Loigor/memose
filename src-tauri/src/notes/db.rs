@@ -101,20 +101,26 @@ impl Db {
                 return Ok(false);
             }
             let state = commit_state(has_base_url(conn)?);
+            let (default_vis, default_space) = default_audience(conn)?;
             let now = now_ms();
             if let Some(existing) = draft(conn)? {
                 conn.execute(
                     "UPDATE notes
-                     SET content = ?1, updated_at = ?2, sync_state = ?3, last_error = NULL
+                     SET content = ?1,
+                         updated_at = ?2,
+                         sync_state = ?3,
+                         last_error = NULL,
+                         visibility = COALESCE(NULLIF(visibility, ''), ?5),
+                         remote_space = COALESCE(remote_space, ?6)
                      WHERE id = ?4",
-                    params![trimmed, now, state, existing.id],
+                    params![trimmed, now, state, existing.id, default_vis, default_space],
                 )?;
             } else {
                 let id = Uuid::new_v4().to_string();
                 conn.execute(
-                    "INSERT INTO notes (id, content, created_at, updated_at, sync_state, remote_name, last_error)
-                     VALUES (?1, ?2, ?3, ?3, ?4, NULL, NULL)",
-                    params![id, trimmed, now, state],
+                    "INSERT INTO notes (id, content, created_at, updated_at, sync_state, remote_name, last_error, visibility, remote_space)
+                     VALUES (?1, ?2, ?3, ?3, ?4, NULL, NULL, ?5, ?6)",
+                    params![id, trimmed, now, state, default_vis, default_space],
                 )?;
             }
             Ok(true)
@@ -217,11 +223,17 @@ impl Db {
             if let Some(existing) = self.get(id)? {
                 if existing.sync_state == DRAFT {
                     self.with(|conn| {
+                        let (default_vis, default_space) = default_audience(conn)?;
                         conn.execute(
                             "UPDATE notes
-                             SET content = '', updated_at = ?1, sync_state = ?2, last_error = NULL
+                             SET content = '',
+                                 updated_at = ?1,
+                                 sync_state = ?2,
+                                 last_error = NULL,
+                                 visibility = COALESCE(NULLIF(visibility, ''), ?4),
+                                 remote_space = COALESCE(remote_space, ?5)
                              WHERE id = ?3",
-                            params![now_ms(), LOCAL, id],
+                            params![now_ms(), LOCAL, id, default_vis, default_space],
                         )?;
                         Ok(())
                     })?;
@@ -233,11 +245,12 @@ impl Db {
         }
         let id = Uuid::new_v4().to_string();
         self.with(|conn| {
+            let (default_vis, default_space) = default_audience(conn)?;
             let now = now_ms();
             conn.execute(
-                "INSERT INTO notes (id, content, created_at, updated_at, sync_state, remote_name, last_error)
-                 VALUES (?1, '', ?2, ?2, ?3, NULL, NULL)",
-                params![id, now, LOCAL],
+                "INSERT INTO notes (id, content, created_at, updated_at, sync_state, remote_name, last_error, visibility, remote_space)
+                 VALUES (?1, '', ?2, ?2, ?3, NULL, NULL, ?4, ?5)",
+                params![id, now, LOCAL, default_vis, default_space],
             )?;
             note_by_id(conn, &id)?.ok_or_else(|| AppError::Message("note disappeared".into()))
         })
@@ -825,6 +838,18 @@ fn has_base_url(conn: &Connection) -> Result<bool, AppError> {
         .unwrap_or(false))
 }
 
+fn default_audience(conn: &Connection) -> Result<(String, String), AppError> {
+    let visibility = canonical_visibility(
+        &get_meta(conn, MEMO_VISIBILITY)?.unwrap_or_else(|| "PRIVATE".into()),
+    );
+    let space = get_meta(conn, MEMO_SPACE)?.unwrap_or_default().trim().to_string();
+    if visibility == "SPACE" && space.is_empty() {
+        Ok(("PRIVATE".into(), String::new()))
+    } else {
+        Ok((visibility, space))
+    }
+}
+
 fn get_meta(conn: &Connection, key: &str) -> Result<Option<String>, AppError> {
     let mut stmt = conn.prepare("SELECT value FROM meta WHERE key = ?1")?;
     let mut rows = stmt.query(params![key])?;
@@ -1286,5 +1311,25 @@ mod tests {
             db.media_local_for_remote("attachments/99").unwrap(),
             Some(("12345678-a.png".into(), "a.png".into()))
         );
+    }
+
+    #[test]
+    fn default_memo_visibility_applies_to_new_memos_without_changing_existing_memos() {
+        let db = db();
+        let first_draft = db.upsert_draft("first memo").unwrap().unwrap();
+        assert!(first_draft.visibility.is_none());
+        db.finalize_content("first memo").unwrap();
+        let first = db.get(&first_draft.id).unwrap().unwrap();
+        assert_eq!(first.visibility.as_deref(), Some("PRIVATE"));
+
+        db.set_meta(MEMO_VISIBILITY, "PUBLIC").unwrap();
+
+        let first_again = db.get(&first.id).unwrap().unwrap();
+        assert_eq!(first_again.visibility.as_deref(), Some("PRIVATE"));
+
+        let second_draft = db.upsert_draft("second memo").unwrap().unwrap();
+        db.finalize_content("second memo").unwrap();
+        let second = db.get(&second_draft.id).unwrap().unwrap();
+        assert_eq!(second.visibility.as_deref(), Some("PUBLIC"));
     }
 }

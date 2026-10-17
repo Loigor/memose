@@ -110,7 +110,8 @@ pub fn show_settings(app: &AppHandle) {
         tauri::WebviewUrl::App("settings.html".into()),
     )
     .title("Settings")
-    .inner_size(420.0, 600.0)
+    .inner_size(580.0, 640.0)
+    .min_inner_size(480.0, 480.0)
     .resizable(true)
     .decorations(true)
     .always_on_top(true)

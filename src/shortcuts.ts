@@ -274,23 +274,60 @@ export function eventToBind(event: KeyboardEvent): string | null {
   return parts.join("+");
 }
 
-export function eventToMouse(event: MouseEvent): string | null {
-  if (event.button < 1 || event.button === 2) {
+export interface MouseMods {
+  alt?: boolean;
+  ctrl?: boolean;
+  shift?: boolean;
+  meta?: boolean;
+}
+
+export function domMouseButton(button: number): number | null {
+  if (button === 1) {
+    return 3;
+  }
+  if (button >= 3 && button <= 7) {
+    return button + 1;
+  }
+  return null;
+}
+
+export function mouseChordToBind(
+  button: number,
+  alt: boolean,
+  ctrl: boolean,
+  shift: boolean,
+  meta: boolean,
+): string | null {
+  if (button < 3 || button > 8) {
     return null;
   }
   const parts: string[] = [];
-  if (event.shiftKey) {
+  if (shift) {
     parts.push("Shift");
   }
-  if (event.ctrlKey) {
+  if (ctrl) {
     parts.push("Control");
   }
-  if (event.altKey) {
+  if (alt) {
     parts.push("Alt");
   }
-  if (event.metaKey) {
+  if (meta) {
     parts.push("Super");
   }
-  parts.push(`Mouse${event.button + 1}`);
+  parts.push(`Mouse${button}`);
   return parts.join("+");
+}
+
+export function eventToMouse(event: MouseEvent, mods?: MouseMods): string | null {
+  const button = domMouseButton(event.button);
+  if (button === null) {
+    return null;
+  }
+  return mouseChordToBind(
+    button,
+    Boolean(event.altKey || mods?.alt),
+    Boolean(event.ctrlKey || mods?.ctrl),
+    Boolean(event.shiftKey || mods?.shift),
+    Boolean(event.metaKey || mods?.meta),
+  );
 }

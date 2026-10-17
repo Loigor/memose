@@ -28,6 +28,7 @@ import {
 import { baseColors, palette, paperAt, stackHeaderHtml, themeGlyph } from "../src/memo-chrome.ts";
 import {
   defaultBinds,
+  domMouseButton,
   eventToBind,
   eventToMouse,
   formatBind,
@@ -35,6 +36,7 @@ import {
   matchBind,
   matchMouse,
   modifierDown,
+  mouseChordToBind,
 } from "../src/shortcuts.ts";
 
 test("wrapText wraps selection and places cursor inside empty markers", () => {
@@ -198,6 +200,36 @@ test("shortcuts module formats and matches keyboard and mouse chords", () => {
   assert.equal(matchMouse(mouseEvent, "Alt+N, Alt+Mouse4"), true);
   assert.equal(matchMouse(mouseEvent, "Alt+Mouse5"), false);
   assert.equal(eventToMouse(mouseEvent as MouseEvent), "Alt+Mouse4");
+  assert.equal(domMouseButton(0), null);
+  assert.equal(domMouseButton(2), null);
+  assert.equal(domMouseButton(1), 3);
+  assert.equal(domMouseButton(3), 4);
+  assert.equal(domMouseButton(4), 5);
+  assert.equal(
+    eventToMouse({ button: 1, altKey: false, ctrlKey: false, shiftKey: false, metaKey: false } as MouseEvent, {
+      alt: true,
+    }),
+    "Alt+Mouse3",
+  );
+  assert.equal(mouseChordToBind(4, true, false, true, false), "Shift+Alt+Mouse4");
+});
+
+test("settings window html has Visibility, Shortcuts, and Sync (useMemos) tabs with Default memo visibility and Window snap", () => {
+  const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+  const html = fs.readFileSync(path.join(root, "settings.html"), "utf8");
+  const tabs = [...html.matchAll(/data-tab="([^"]+)"[\s\S]*?>\s*([^<]+?)\s*<\/button>/g)].map((m) => ({
+    id: m[1],
+    label: m[2],
+  }));
+  assert.deepEqual(tabs, [
+    { id: "visibility", label: "Visibility" },
+    { id: "shortcuts", label: "Shortcuts" },
+    { id: "sync", label: "Sync (useMemos)" },
+  ]);
+  assert.match(html, /id="tab-visibility"[\s\S]*?aria-selected="true"/);
+  assert.match(html, /Default memo visibility/);
+  assert.match(html, /Window snap/);
+  assert.match(html, /id="snap-memos"/);
 });
 
 test("memo-chrome computes palettes and renders stack header template", () => {
