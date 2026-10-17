@@ -1744,6 +1744,18 @@ pub fn begin_corner_resize(
         window.outer_size(),
         window.scale_factor(),
     ) else {
+        #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+        {
+            use tauri::window::ResizeDirection;
+            let direction = match edge {
+                ResizeEdge::East => ResizeDirection::East,
+                ResizeEdge::South => ResizeDirection::South,
+                ResizeEdge::West => ResizeDirection::West,
+                ResizeEdge::SouthEast => ResizeDirection::SouthEast,
+                ResizeEdge::SouthWest => ResizeDirection::SouthWest,
+            };
+            let _ = window.start_resizing(direction);
+        }
         finish(done);
         return;
     };
@@ -1766,17 +1778,12 @@ pub fn begin_corner_resize(
         let mut saw_down = false;
         let mut last_rect = (start_win_x, start_win_y, start_w, start_h);
         while started.elapsed() < Duration::from_secs(20) {
-            let down = left_button_down();
-            if down {
-                saw_down = true;
-            } else if saw_down || started.elapsed() > Duration::from_millis(200) {
-                break;
-            }
             let (tx, rx) = std::sync::mpsc::channel();
             let app2 = app.clone();
             let label2 = label.clone();
             let prev_rect = last_rect;
             let posted = app.run_on_main_thread(move || {
+                let down = left_button_down();
                 let mut next_rect = prev_rect;
                 if let (Ok(cursor), Some(window)) =
                     (app2.cursor_position(), app2.get_webview_window(&label2))
@@ -1805,13 +1812,18 @@ pub fn begin_corner_resize(
                     }
                     next_rect = (x, y, width, height);
                 }
-                let _ = tx.send(next_rect);
+                let _ = tx.send((down, next_rect));
             });
             if posted.is_err() {
                 break;
             }
-            if let Ok(rect) = rx.recv_timeout(Duration::from_millis(80)) {
+            if let Ok((down, rect)) = rx.recv_timeout(Duration::from_millis(80)) {
                 last_rect = rect;
+                if down {
+                    saw_down = true;
+                } else if saw_down || started.elapsed() > Duration::from_millis(200) {
+                    break;
+                }
             }
             std::thread::sleep(Duration::from_millis(12));
         }
@@ -1856,6 +1868,8 @@ pub fn begin_memo_drag(app: AppHandle, label: String) {
         return;
     };
     let (Ok(cursor), Ok(start_pos)) = (app.cursor_position(), window.outer_position()) else {
+        #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+        let _ = window.start_dragging();
         return;
     };
     let inserted = dragging()
@@ -1875,17 +1889,12 @@ pub fn begin_memo_drag(app: AppHandle, label: String) {
             if !drag_active(&label) {
                 return;
             }
-            let down = left_button_down();
-            if down {
-                saw_down = true;
-            } else if saw_down || started.elapsed() > Duration::from_millis(200) {
-                break;
-            }
             let (tx, rx) = std::sync::mpsc::channel();
             let app2 = app.clone();
             let label2 = label.clone();
             let prev_pos = last_pos;
             let posted = app.run_on_main_thread(move || {
+                let down = left_button_down();
                 let mut next_pos = prev_pos;
                 if drag_active(&label2) {
                     if let (Ok(cursor), Some(window)) =
@@ -1910,13 +1919,32 @@ pub fn begin_memo_drag(app: AppHandle, label: String) {
                         }
                     }
                 }
-                let _ = tx.send(next_pos);
+                let _ = tx.send((down, next_pos));
             });
             if posted.is_err() {
                 break;
             }
-            if let Ok(pos) = rx.recv_timeout(Duration::from_millis(80)) {
+            if let Ok((down, pos)) = rx.recv_timeout(Duration::from_millis(80)) {
                 last_pos = pos;
+                if down {
+                    saw_down = true;
+                } else if saw_down {
+                    break;
+                } else if started.elapsed() > Duration::from_millis(200) {
+                    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+                    if drag_active(&label) {
+                        let app2 = app.clone();
+                        let label2 = label.clone();
+                        let _ = app.run_on_main_thread(move || {
+                            finish_memo_drag(&app2, &label2);
+                            if let Some(window) = app2.get_webview_window(&label2) {
+                                let _ = window.start_dragging();
+                            }
+                        });
+                        return;
+                    }
+                    break;
+                }
             }
             std::thread::sleep(Duration::from_millis(12));
         }
@@ -2282,11 +2310,13 @@ fn follow_detached(
     std::thread::spawn(move || {
         let mut last = (origin_x, origin_y);
         let started = Instant::now();
-        while left_button_down() && started.elapsed() < Duration::from_secs(20) {
+        let mut saw_down = false;
+        while started.elapsed() < Duration::from_secs(20) {
             let (tx, rx) = std::sync::mpsc::channel();
             let app2 = app.clone();
             let id = guest_id.clone();
             let posted = app.run_on_main_thread(move || {
+                let down = left_button_down();
                 let point = app2.cursor_position().ok().map(|cursor| {
                     let raw_x = cursor.x.round() as i32 - grab_x;
                     let raw_y = cursor.y.round() as i32 - grab_y;
@@ -2310,13 +2340,20 @@ fn follow_detached(
                     }
                     (raw_x, raw_y)
                 });
-                let _ = tx.send(point);
+                let _ = tx.send((down, point));
             });
             if posted.is_err() {
                 break;
             }
-            if let Ok(Some(point)) = rx.recv_timeout(Duration::from_millis(80)) {
-                last = point;
+            if let Ok((down, maybe_point)) = rx.recv_timeout(Duration::from_millis(80)) {
+                if let Some(point) = maybe_point {
+                    last = point;
+                }
+                if down {
+                    saw_down = true;
+                } else if saw_down || started.elapsed() > Duration::from_millis(200) {
+                    break;
+                }
             }
             std::thread::sleep(Duration::from_millis(12));
         }
@@ -2389,7 +2426,45 @@ fn left_button_down() -> bool {
 
 #[cfg(not(any(target_os = "macos", target_os = "windows")))]
 fn left_button_down() -> bool {
-    false
+    use std::ffi::c_void;
+
+    const GDK_BUTTON1_MASK: u32 = 1 << 8;
+
+    #[link(name = "gdk-3")]
+    unsafe extern "C" {
+        fn gdk_display_get_default() -> *mut c_void;
+        fn gdk_display_get_default_seat(display: *mut c_void) -> *mut c_void;
+        fn gdk_seat_get_pointer(seat: *mut c_void) -> *mut c_void;
+        fn gdk_get_default_root_window() -> *mut c_void;
+        fn gdk_device_get_state(
+            device: *mut c_void,
+            window: *mut c_void,
+            axes: *mut f64,
+            mask: *mut u32,
+        );
+    }
+
+    unsafe {
+        let display = gdk_display_get_default();
+        if display.is_null() {
+            return false;
+        }
+        let seat = gdk_display_get_default_seat(display);
+        if seat.is_null() {
+            return false;
+        }
+        let pointer = gdk_seat_get_pointer(seat);
+        if pointer.is_null() {
+            return false;
+        }
+        let root = gdk_get_default_root_window();
+        if root.is_null() {
+            return false;
+        }
+        let mut mask: u32 = 0;
+        gdk_device_get_state(pointer, root, std::ptr::null_mut(), &mut mask);
+        mask & GDK_BUTTON1_MASK != 0
+    }
 }
 
 pub fn prepare_remove(app: &AppHandle, id: &str) {
@@ -2805,7 +2880,11 @@ pub fn watch_offscreen_hover(app: AppHandle) {
     std::thread::spawn(move || {
         loop {
             std::thread::sleep(Duration::from_millis(40));
-            if gesture_blocks_hover() || left_button_down() {
+            if gesture_blocks_hover() {
+                continue;
+            }
+            #[cfg(any(target_os = "macos", target_os = "windows"))]
+            if left_button_down() {
                 continue;
             }
             let state = app.state::<AppState>();
