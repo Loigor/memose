@@ -2086,29 +2086,44 @@ function activeStackSection(): { section: HTMLElement; state: StackState } | nul
   return null;
 }
 
-function randomHue() {
+type RandomStrategy = "golden-ratio" | "analogous" | "clamped-random" | "complementary";
+
+function randomHue(strategy: RandomStrategy = "golden-ratio") {
   const target = activeStackSection();
-  if (target) {
-    const { section, state } = target;
-    const theme = sectionTheme(state);
-    const current = sectionHue(state) ?? (theme === "dark" ? darkHue : lightHue);
-    let hue = Math.floor(Math.random() * 360);
-    if (hue === current) {
-      hue = (hue + 137) % 360;
+  const current = target
+    ? (sectionHue(target.state) ?? (sectionTheme(target.state) === "dark" ? darkHue : lightHue))
+    : activeHue();
+
+  let hue = current;
+  switch (strategy) {
+    case "golden-ratio": {
+      const jitter = Math.random() * 36 - 18;
+      hue = Math.floor((current + 222.5 + jitter + 360) % 360);
+      break;
     }
-    const slider = section.querySelector<HTMLInputElement>(".hue-slider");
+    case "analogous": {
+      const shift = Math.random() > 0.5 ? 35 : -35;
+      hue = Math.floor((current + shift + 360) % 360);
+      break;
+    }
+    case "complementary":
+      hue = Math.floor((current + 180) % 360);
+      break;
+    case "clamped-random":
+    default:
+      hue = (current + 45 + Math.floor(Math.random() * 270)) % 360;
+      break;
+  }
+
+  if (target) {
+    const slider = target.section.querySelector<HTMLInputElement>(".hue-slider");
     if (slider) {
       slider.value = String(hue);
     }
-    setSectionHue(section, state, hue);
-    return;
+    setSectionHue(target.section, target.state, hue);
+  } else {
+    setThemeHue(hue);
   }
-  const current = themeHue() ?? activeHue();
-  let hue = Math.floor(Math.random() * 360);
-  if (hue === current) {
-    hue = (hue + 137) % 360;
-  }
-  setThemeHue(hue);
 }
 
 function setThemeHue(hue: number) {
