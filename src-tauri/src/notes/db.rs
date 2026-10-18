@@ -1760,4 +1760,63 @@ mod tests {
         assert_eq!(note.hue_light, Some(200));
         assert_eq!(note.hue_dark, Some(200));
     }
+
+    #[test]
+    #[ignore]
+    fn scale_stress_ten_thousand_memos_and_stack_chains() {
+        let db = db();
+        db.with(|conn| {
+            let tx = conn.unchecked_transaction()?;
+            let now = now_ms();
+            for i in 0..10_000 {
+                let id = Uuid::new_v4().to_string();
+                let state = if i < 50 {
+                    PENDING
+                } else if i < 60 {
+                    ERROR
+                } else {
+                    LOCAL
+                };
+                tx.execute(
+                    "INSERT INTO notes (id, content, created_at, updated_at, sync_state, remote_name, last_error)
+                     VALUES (?1, ?2, ?3, ?4, ?5, NULL, NULL)",
+                    params![id, format!("memo {i}"), now, now + i as i64, state],
+                )?;
+            }
+            tx.commit()?;
+            Ok(())
+        })
+        .unwrap();
+
+        let started = std::time::Instant::now();
+        let recent = db.list_recent(200).unwrap();
+        let recent_ms = started.elapsed();
+        assert_eq!(recent.len(), 200);
+        assert!(
+            recent_ms < std::time::Duration::from_millis(100),
+            "list_recent(200) over 10k rows took {recent_ms:?}"
+        );
+
+        let started = std::time::Instant::now();
+        let pending = db.pending_and_errors().unwrap();
+        let pending_ms = started.elapsed();
+        assert_eq!(pending.len(), 60);
+        assert!(
+            pending_ms < std::time::Duration::from_millis(200),
+            "pending_and_errors over 10k rows took {pending_ms:?}"
+        );
+
+        let mut ids = Vec::new();
+        for i in 0..10 {
+            let note = db.upsert_draft(&format!("stack {i}")).unwrap().unwrap();
+            db.finalize_content(&format!("stack {i}")).unwrap();
+            ids.push(note.id);
+        }
+        for i in 1..ids.len() {
+            db.set_stack_host(&ids[i], Some(&ids[i - 1])).unwrap();
+        }
+        assert_eq!(db.chain_after(&ids[0]).unwrap().len(), 8);
+        assert!(db.set_stack_host(&ids[0], Some(&ids[0])).is_err());
+        assert!(db.set_stack_host(&ids[0], Some(&ids[1])).is_err());
+    }
 }
