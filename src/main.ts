@@ -2363,7 +2363,7 @@ function setPinPressed(on: boolean) {
   pinToggleEl.setAttribute("aria-pressed", String(on));
 }
 
-type MemoSpace = { name: string; title: string };
+type MemoSpace = { name: string; title: string; synced?: boolean; hue?: number | null };
 
 let syncEnabled = false;
 let defaultVisibility = "PRIVATE";
@@ -2446,9 +2446,14 @@ function paintAudienceMenu() {
   );
   for (const space of knownSpaces) {
     spaceChoicesEl.append(
-      audienceChoice(space.title, "", chosenSpace === space.name, () => {
-        chooseSpace(space.name);
-      }),
+      audienceChoice(
+        space.title,
+        space.synced === false ? "Not on server" : "",
+        chosenSpace === space.name,
+        () => {
+          chooseSpace(space.name);
+        },
+      ),
     );
   }
   if (!audiencePopEl.hidden) {
@@ -2480,14 +2485,38 @@ function paintAudience(note: { visibility?: string | null; space?: string | null
   }
   chosenVisibility = visibility;
   chosenSpace = note?.space ?? (note?.visibility ? "" : defaultSpace);
-  if (chosenSpace && !knownSpaces.some((space) => space.name === chosenSpace)) {
-    chosenSpace = "";
-  }
   visibilityLabelEl.hidden = false;
   visibilityLabelEl.textContent = visibilityShort(chosenVisibility, chosenSpace);
   paintAudienceMenu();
   refreshMetaSep();
   audienceDirty = false;
+  if (!note && look.hueLight == null && look.hueDark == null) {
+    applySpaceDefaultLook(chosenSpace);
+  }
+}
+
+function composerIsNewMemo() {
+  return !pinnedNoteId && !editingId;
+}
+
+function spaceDefaultHue(name: string): number | null {
+  if (!name) {
+    return null;
+  }
+  const hue = knownSpaces.find((item) => item.name === name)?.hue;
+  return typeof hue === "number" ? hue : null;
+}
+
+function applySpaceDefaultLook(space: string) {
+  if (!composerIsNewMemo()) {
+    return;
+  }
+  const hue = spaceDefaultHue(space);
+  look.hueLight = hue;
+  look.hueDark = hue;
+  paintLook();
+  syncSlider();
+  scheduleLook();
 }
 
 function chooseVisibility(value: string) {
@@ -2498,6 +2527,7 @@ function chooseVisibility(value: string) {
   visibilityLabelEl.textContent = visibilityShort(chosenVisibility, chosenSpace);
   paintAudienceMenu();
   persistAudience();
+  applySpaceDefaultLook(chosenSpace);
 }
 
 function chooseSpace(value: string) {
@@ -2508,6 +2538,7 @@ function chooseSpace(value: string) {
   visibilityLabelEl.textContent = visibilityShort(chosenVisibility, chosenSpace);
   paintAudienceMenu();
   persistAudience();
+  applySpaceDefaultLook(chosenSpace);
 }
 
 function persistAudience() {
@@ -2746,6 +2777,9 @@ async function loadDraft() {
   setEditedAt(draft?.updatedAt ?? null);
   paintAudience(draft);
   adoptLook(draft ? lookFromNote(draft) : defaultLook());
+  if (!draft || (draft.hueLight == null && draft.hueDark == null)) {
+    applySpaceDefaultLook(draft?.space || chosenSpace);
+  }
 }
 
 type Look = {
@@ -4079,10 +4113,7 @@ function paintSectionAudience(section: HTMLElement, state: StackState) {
   if (!visibilityOptions.some((option) => option.value === visibility)) {
     visibility = "PRIVATE";
   }
-  let space = state.space || "";
-  if (space && !knownSpaces.some((item) => item.name === space)) {
-    space = "";
-  }
+  const space = state.space || "";
   state.visibility = visibility;
   state.space = space;
   const label = section.querySelector<HTMLButtonElement>(".visibility-label");
@@ -4147,7 +4178,7 @@ function paintSectionAudience(section: HTMLElement, state: StackState) {
   );
   for (const item of knownSpaces) {
     spaceChoices.append(
-      audienceChoice(item.title, "", state.space === item.name, () => {
+      audienceChoice(item.title, item.synced === false ? "Not on server" : "", state.space === item.name, () => {
         state.space = item.name;
         paintSectionAudience(section, state);
         void invoke("set_note_audience", {
@@ -6181,6 +6212,11 @@ if (isPreviewWindow()) {
       console.error(error);
     });
   });
+  void listen("spaces-changed", () => {
+    void loadAudience().catch((error: unknown) => {
+      console.error(error);
+    });
+  });
   void loadPinned(pinnedNoteId).catch((error: unknown) => {
     console.error(error);
   });
@@ -6218,6 +6254,12 @@ if (isPreviewWindow()) {
   });
 
   void listen("settings-changed", () => {
+    void loadAudience().catch((error: unknown) => {
+      console.error(error);
+    });
+  });
+
+  void listen("spaces-changed", () => {
     void loadAudience().catch((error: unknown) => {
       console.error(error);
     });

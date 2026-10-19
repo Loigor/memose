@@ -3,7 +3,7 @@ use tauri::{AppHandle, Emitter, State};
 use tauri_plugin_autostart::ManagerExt;
 
 use crate::error::AppError;
-use crate::notes::{self, request_sync, Note};
+use crate::notes::{self, request_sync, Note, SpaceView};
 use crate::shortcuts::{self, ShortcutBinds};
 use crate::state::AppState;
 use crate::tray;
@@ -18,13 +18,6 @@ pub(crate) struct SettingsView {
     visibility: String,
     space: String,
     snap_memos: bool,
-}
-
-#[derive(Serialize)]
-#[serde(rename_all = "camelCase")]
-pub(crate) struct SpaceView {
-    name: String,
-    title: String,
 }
 
 #[tauri::command]
@@ -49,7 +42,11 @@ pub fn finalize_composer(
 }
 
 #[tauri::command]
-pub fn commit_note(app: AppHandle, state: State<'_, AppState>, content: String) -> Result<(), AppError> {
+pub fn commit_note(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    content: String,
+) -> Result<(), AppError> {
     if state.db.finalize_content(&content)? {
         request_sync(&app);
     }
@@ -155,8 +152,14 @@ pub fn get_settings(app: AppHandle, state: State<AppState>) -> Result<SettingsVi
 }
 
 #[tauri::command]
-pub fn set_snap_memos(app: AppHandle, state: State<AppState>, enabled: bool) -> Result<(), AppError> {
-    state.db.set_meta(notes::SNAP_MEMOS, if enabled { "1" } else { "0" })?;
+pub fn set_snap_memos(
+    app: AppHandle,
+    state: State<AppState>,
+    enabled: bool,
+) -> Result<(), AppError> {
+    state
+        .db
+        .set_meta(notes::SNAP_MEMOS, if enabled { "1" } else { "0" })?;
     let _ = app.emit("snap-changed", enabled);
     Ok(())
 }
@@ -270,13 +273,93 @@ pub fn save_settings(
 }
 
 #[tauri::command]
-pub async fn list_memo_spaces(state: State<'_, AppState>) -> Result<Vec<SpaceView>, AppError> {
+pub async fn list_memo_spaces(
+    app: AppHandle,
+    state: State<'_, AppState>,
+) -> Result<Vec<SpaceView>, AppError> {
+    if let Some((base, token, flavor)) = memos_context(&state)? {
+        match notes::list_spaces(&state.http, &base, flavor, &token).await {
+            Ok(remote) => {
+                if state.db.store_space_catalog(&remote)? {
+                    let _ = app.emit("spaces-changed", ());
+                }
+            }
+            Err(err) => eprintln!("memose: space list failed: {err}"),
+        }
+    }
+    state.db.list_known_spaces()
+}
+
+#[tauri::command]
+pub async fn create_memo_space(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    title: String,
+    name: Option<String>,
+) -> Result<SpaceView, AppError> {
+    let (base, token, flavor) = memos_context(&state)?
+        .ok_or_else(|| AppError::Message("connect useMemos to create a space".into()))?;
+    let space_id = name
+        .as_deref()
+        .and_then(notes::space_uid)
+        .map(str::to_string);
+    let created = notes::create_space(
+        &state.http,
+        &base,
+        flavor,
+        &token,
+        &title,
+        space_id.as_deref(),
+    )
+    .await?;
+    state.db.remember_space(&created.name, &created.title)?;
+    let _ = app.emit("spaces-changed", ());
+    request_sync(&app);
+    state
+        .db
+        .list_known_spaces()?
+        .into_iter()
+        .find(|space| space.name == created.name)
+        .ok_or_else(|| AppError::Message("space disappeared".into()))
+}
+
+#[tauri::command]
+pub fn forget_memo_space(
+    app: AppHandle,
+    state: State<AppState>,
+    name: String,
+) -> Result<(), AppError> {
+    let queued = state.db.forget_space(&name)?;
+    if queued {
+        request_sync(&app);
+    }
+    let _ = app.emit("spaces-changed", ());
+    let _ = app.emit("settings-changed", ());
+    let _ = app.emit("notes-changed", ());
+    Ok(())
+}
+
+#[tauri::command]
+pub fn set_space_hue(
+    app: AppHandle,
+    state: State<AppState>,
+    name: String,
+    hue: Option<u16>,
+) -> Result<(), AppError> {
+    state.db.set_space_hue(&name, hue)?;
+    let _ = app.emit("spaces-changed", ());
+    Ok(())
+}
+
+fn memos_context(
+    state: &State<'_, AppState>,
+) -> Result<Option<(String, String, notes::ApiFlavor)>, AppError> {
     let base = state.db.get_meta(notes::BASE_URL)?.unwrap_or_default();
     let Some(token) = state.db.access_token()? else {
-        return Ok(Vec::new());
+        return Ok(None);
     };
     if base.is_empty() {
-        return Ok(Vec::new());
+        return Ok(None);
     }
     let flavor = state
         .db
@@ -284,14 +367,7 @@ pub async fn list_memo_spaces(state: State<'_, AppState>) -> Result<Vec<SpaceVie
         .as_deref()
         .and_then(notes::ApiFlavor::parse)
         .unwrap_or(notes::ApiFlavor::Latest);
-    let spaces = notes::list_spaces(&state.http, &base, flavor, &token).await?;
-    Ok(spaces
-        .into_iter()
-        .map(|space| SpaceView {
-            name: space.name,
-            title: space.title,
-        })
-        .collect())
+    Ok(Some((base, token, flavor)))
 }
 
 #[tauri::command]
@@ -310,7 +386,11 @@ pub fn set_note_audience(
 }
 
 #[tauri::command]
-pub async fn delete_note(app: AppHandle, state: State<'_, AppState>, id: String) -> Result<(), AppError> {
+pub async fn delete_note(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    id: String,
+) -> Result<(), AppError> {
     let note = state.db.get(&id)?;
     let Some(note) = note else {
         return Ok(());
@@ -407,7 +487,10 @@ pub async fn test_memos(app: AppHandle, state: State<'_, AppState>) -> Result<St
 
 #[tauri::command]
 pub fn get_theme(state: State<AppState>) -> Result<String, AppError> {
-    let theme = state.db.get_meta(notes::THEME)?.unwrap_or_else(|| "light".into());
+    let theme = state
+        .db
+        .get_meta(notes::THEME)?
+        .unwrap_or_else(|| "light".into());
     Ok(if theme == "dark" { "dark" } else { "light" }.into())
 }
 
@@ -421,9 +504,14 @@ pub fn save_look(
     swatches: Vec<u16>,
     theme: Option<String>,
 ) -> Result<(), AppError> {
-    state
-        .db
-        .save_look(&id, opacity, hue_light, hue_dark, &swatches, theme.as_deref())
+    state.db.save_look(
+        &id,
+        opacity,
+        hue_light,
+        hue_dark,
+        &swatches,
+        theme.as_deref(),
+    )
 }
 
 #[tauri::command]

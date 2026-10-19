@@ -10,8 +10,10 @@ use crate::error::AppError;
 use crate::media;
 use crate::state::AppState;
 
-use super::db::{canonical_visibility, Db, RemoteLink, API_FLAVOR, BASE_URL, MEMO_SPACE, MEMO_VISIBILITY};
-use super::model::{Note, MEMOS_CONTENT_LIMIT, REMOTE};
+use super::db::{
+    canonical_visibility, Db, RemoteLink, API_FLAVOR, BASE_URL, MEMO_SPACE, MEMO_VISIBILITY,
+};
+use super::model::{MemoSpace, Note, MEMOS_CONTENT_LIMIT, REMOTE};
 
 pub enum Job {
     Cycle,
@@ -138,11 +140,7 @@ fn send(app: &AppHandle, job: Job) -> bool {
     guard.as_ref().is_some_and(|tx| tx.send(job).is_ok())
 }
 
-async fn run_job(
-    app: &AppHandle,
-    rx: &mut tokio::sync::mpsc::UnboundedReceiver<Job>,
-    job: Job,
-) {
+async fn run_job(app: &AppHandle, rx: &mut tokio::sync::mpsc::UnboundedReceiver<Job>, job: Job) {
     match job {
         Job::Cycle => {
             tokio::time::sleep(Duration::from_millis(400)).await;
@@ -216,6 +214,7 @@ async fn run_cycle(app: &AppHandle) {
             Ok(next) => {
                 report.pushed |= next.pushed;
                 report.indexed |= next.indexed;
+                report.spaces |= next.spaces;
                 if next.retry && retries < 2 {
                     retries += 1;
                     continue;
@@ -234,6 +233,9 @@ async fn run_cycle(app: &AppHandle) {
     if report.indexed || report.pushed {
         let _ = app.emit("notes-changed", ());
     }
+    if report.spaces {
+        let _ = app.emit("spaces-changed", ());
+    }
 }
 
 #[derive(Default)]
@@ -241,6 +243,7 @@ struct DrainReport {
     retry: bool,
     indexed: bool,
     pushed: bool,
+    spaces: bool,
 }
 
 async fn drain(
@@ -264,10 +267,15 @@ async fn drain(
         None => detect_and_store(http, &db, &base, &token).await?,
     };
     let mut indexed = false;
+    let mut spaces = false;
     if refresh {
         match refresh_index(http, &db, media_dir, &base, &token, flavor).await {
             Ok(()) => indexed = true,
             Err(err) => eprintln!("memose: remote list failed: {err}"),
+        }
+        match refresh_spaces(http, &db, &base, &token, flavor).await {
+            Ok(changed) => spaces = changed,
+            Err(err) => eprintln!("memose: space list failed: {err}"),
         }
     }
     let notes = db_call(db.clone(), |db| db.pending_and_errors()).await?;
@@ -300,7 +308,8 @@ async fn drain(
         }
         let (default_visibility, default_space) = db_call(db.clone(), |db| {
             Ok((
-                db.get_meta(MEMO_VISIBILITY)?.unwrap_or_else(|| "PRIVATE".into()),
+                db.get_meta(MEMO_VISIBILITY)?
+                    .unwrap_or_else(|| "PRIVATE".into()),
                 db.get_meta(MEMO_SPACE)?.unwrap_or_default(),
             ))
         })
@@ -312,9 +321,18 @@ async fn drain(
             &default_space,
         );
         let pushed = if let Some(name) = note.remote_name.clone() {
-            update_memo(http, &base, flavor, &token, &name, &remote, &visibility, &space)
-                .await
-                .map(|()| name)
+            update_memo(
+                http,
+                &base,
+                flavor,
+                &token,
+                &name,
+                &remote,
+                &visibility,
+                &space,
+            )
+            .await
+            .map(|()| name)
         } else {
             create_memo(http, &base, flavor, &token, &remote, &visibility, &space).await
         };
@@ -322,14 +340,7 @@ async fn drain(
             Ok(name) => {
                 if !refs.is_empty() {
                     if let Err(err) = sync_memo_attachments(
-                        http,
-                        &db,
-                        media_dir,
-                        &base,
-                        flavor,
-                        &token,
-                        &name,
-                        &refs,
+                        http, &db, media_dir, &base, flavor, &token, &name, &refs,
                     )
                     .await
                     {
@@ -374,6 +385,7 @@ async fn drain(
         retry,
         indexed,
         pushed: did_push,
+        spaces,
     })
 }
 
@@ -399,7 +411,10 @@ pub fn remote_change(local: Option<&RemoteLink>, remote_updated: i64) -> RemoteC
     if local.sync_state == REMOTE {
         return RemoteChange::UpdateStub;
     }
-    let base = local.base_content.as_deref().unwrap_or(local.content.as_str());
+    let base = local
+        .base_content
+        .as_deref()
+        .unwrap_or(local.content.as_str());
     let local_text = media::content_for_remote(&local.content);
     let base_text = media::content_for_remote(base);
     if local_text == base_text {
@@ -496,7 +511,10 @@ async fn apply_remote_memo(
             }
             let merged = media::merge_local_media(&raw, &server_with_att);
             if change == RemoteChange::Conflict {
-                return db_call(db.clone(), move |db| db.store_conflict(&id, &merged, updated)).await;
+                return db_call(db.clone(), move |db| {
+                    db.store_conflict(&id, &merged, updated)
+                })
+                .await;
             }
             let visibility = memo.visibility.clone();
             let space = memo.space.clone();
@@ -573,7 +591,8 @@ pub async fn push_local_choice(
     let (base, token, flavor) = sync_context(db, http).await?;
     let (default_visibility, default_space) = db_call(db.clone(), |db| {
         Ok((
-            db.get_meta(MEMO_VISIBILITY)?.unwrap_or_else(|| "PRIVATE".into()),
+            db.get_meta(MEMO_VISIBILITY)?
+                .unwrap_or_else(|| "PRIVATE".into()),
             db.get_meta(MEMO_SPACE)?.unwrap_or_default(),
         ))
     })
@@ -586,9 +605,20 @@ pub async fn push_local_choice(
         &default_visibility,
         &default_space,
     );
-    update_memo(http, &base, flavor, &token, &name, &remote, &visibility, &space).await?;
+    update_memo(
+        http,
+        &base,
+        flavor,
+        &token,
+        &name,
+        &remote,
+        &visibility,
+        &space,
+    )
+    .await?;
     if !refs.is_empty() {
-        let _ = sync_memo_attachments(http, db, media_dir, &base, flavor, &token, &name, &refs).await;
+        let _ =
+            sync_memo_attachments(http, db, media_dir, &base, flavor, &token, &name, &refs).await;
     }
     let updated = now_ms();
     let id_owned = note.id.clone();
@@ -601,7 +631,10 @@ pub async fn push_local_choice(
     .await
 }
 
-async fn sync_context(db: &Db, _http: &reqwest::Client) -> Result<(String, String, ApiFlavor), AppError> {
+async fn sync_context(
+    db: &Db,
+    _http: &reqwest::Client,
+) -> Result<(String, String, ApiFlavor), AppError> {
     let base = db_call(db.clone(), |db| db.get_meta(BASE_URL))
         .await?
         .filter(|url| !url.is_empty())
@@ -641,11 +674,7 @@ async fn detect_and_store(
 }
 
 pub async fn probe(http: &reqwest::Client, base: &str, token: &str) -> Result<ApiFlavor, AppError> {
-    let latest = format!(
-        "{}{}?pageSize=1",
-        trim_base(base),
-        ApiFlavor::Latest.path()
-    );
+    let latest = format!("{}{}?pageSize=1", trim_base(base), ApiFlavor::Latest.path());
     let latest_status = request_status(http, &latest, token).await?;
     if latest_status == StatusCode::NOT_FOUND || latest_status == StatusCode::GONE {
         let v1 = format!("{}{}", trim_base(base), ApiFlavor::V1.path());
@@ -685,7 +714,10 @@ pub async fn create_memo(
         .await?;
     let status = response.status();
     if status == StatusCode::BAD_REQUEST && !space.is_empty() {
-        return Box::pin(create_memo(http, base, flavor, token, content, visibility, "")).await;
+        return Box::pin(create_memo(
+            http, base, flavor, token, content, visibility, "",
+        ))
+        .await;
     }
     if !status.is_success() {
         let body = response.text().await.unwrap_or_default();
@@ -732,11 +764,7 @@ async fn list_memos(
     token: &str,
     page_token: &str,
 ) -> Result<MemoPage, AppError> {
-    let mut url = format!(
-        "{}{}?pageSize=50",
-        trim_base(base),
-        flavor.path()
-    );
+    let mut url = format!("{}{}?pageSize=50", trim_base(base), flavor.path());
     if !page_token.is_empty() {
         url.push_str("&pageToken=");
         url.push_str(&urlencoding_token(page_token));
@@ -845,28 +873,124 @@ async fn update_memo(
     })
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct MemoSpace {
-    pub name: String,
-    pub title: String,
-}
-
 pub async fn list_spaces(
     http: &reqwest::Client,
     base: &str,
     flavor: ApiFlavor,
     token: &str,
 ) -> Result<Vec<MemoSpace>, AppError> {
-    let url = format!(
-        "{}{}?pageSize=100",
-        trim_base(base),
-        flavor.spaces_path()
-    );
-    let response = http.get(&url).bearer_auth(token).send().await?;
-    let status = response.status();
-    if status == StatusCode::NOT_FOUND || status == StatusCode::GONE {
-        return Ok(Vec::new());
+    let mut out = Vec::new();
+    let mut page_token = String::new();
+    for _ in 0..4 {
+        let url = {
+            let mut url = format!("{}{}?pageSize=100", trim_base(base), flavor.spaces_path());
+            if !page_token.is_empty() {
+                url.push_str("&pageToken=");
+                url.push_str(&urlencoding_token(&page_token));
+            }
+            url
+        };
+        let response = http.get(&url).bearer_auth(token).send().await?;
+        let status = response.status();
+        if status == StatusCode::NOT_FOUND || status == StatusCode::GONE {
+            return Ok(out);
+        }
+        if !status.is_success() {
+            let body = response.text().await.unwrap_or_default();
+            return Err(AppError::Memos {
+                status: status.as_u16(),
+                body: truncate(&body),
+            });
+        }
+        let body = response.text().await?;
+        let (items, next) = parse_space_page(&body);
+        out.extend(items);
+        if next.is_empty() {
+            break;
+        }
+        page_token = next;
     }
+    Ok(out)
+}
+
+fn parse_space_page(body: &str) -> (Vec<MemoSpace>, String) {
+    let value: Value = serde_json::from_str(body).unwrap_or(Value::Null);
+    let items = value
+        .get("spaces")
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+    let spaces = items.iter().filter_map(parse_space_item).collect();
+    let next = value
+        .get("nextPageToken")
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .to_string();
+    (spaces, next)
+}
+
+fn parse_space_item(item: &Value) -> Option<MemoSpace> {
+    let name = item.get("name").and_then(Value::as_str)?.trim();
+    if name.is_empty() {
+        return None;
+    }
+    let title = item
+        .get("title")
+        .and_then(Value::as_str)
+        .filter(|title| !title.is_empty())
+        .unwrap_or(name);
+    Some(MemoSpace {
+        name: name.to_string(),
+        title: title.to_string(),
+    })
+}
+
+pub fn create_space_body(title: &str, flavor: ApiFlavor, space_id: &str) -> Value {
+    match flavor {
+        ApiFlavor::Latest => json!({ "title": title }),
+        ApiFlavor::V1 => {
+            let mut body = json!({ "space": { "title": title } });
+            if !space_id.is_empty() {
+                body["spaceId"] = json!(space_id);
+            }
+            body
+        }
+    }
+}
+
+pub fn space_uid(name: &str) -> Option<&str> {
+    name.strip_prefix("spaces/")
+        .map(str::trim)
+        .filter(|id| !id.is_empty() && !id.contains('/'))
+}
+
+pub async fn create_space(
+    http: &reqwest::Client,
+    base: &str,
+    flavor: ApiFlavor,
+    token: &str,
+    title: &str,
+    space_id: Option<&str>,
+) -> Result<MemoSpace, AppError> {
+    let title = title.trim();
+    if title.is_empty() {
+        return Err(AppError::Message("space needs a title".into()));
+    }
+    let space_id = space_id.map(str::trim).filter(|id| !id.is_empty());
+    let mut url = format!("{}{}", trim_base(base), flavor.spaces_path());
+    if flavor == ApiFlavor::Latest {
+        if let Some(id) = space_id {
+            url.push_str("?spaceId=");
+            url.push_str(&urlencoding_token(id));
+        }
+    }
+    let response = http
+        .post(&url)
+        .bearer_auth(token)
+        .json(&create_space_body(title, flavor, space_id.unwrap_or("")))
+        .send()
+        .await?;
+    let status = response.status();
     if !status.is_success() {
         let body = response.text().await.unwrap_or_default();
         return Err(AppError::Memos {
@@ -876,29 +1000,18 @@ pub async fn list_spaces(
     }
     let body = response.text().await?;
     let value: Value = serde_json::from_str(&body).unwrap_or(Value::Null);
-    let items = value
-        .get("spaces")
-        .and_then(Value::as_array)
-        .cloned()
-        .unwrap_or_default();
-    Ok(items
-        .iter()
-        .filter_map(|item| {
-            let name = item.get("name").and_then(Value::as_str)?.trim();
-            if name.is_empty() {
-                return None;
-            }
-            let title = item
-                .get("title")
-                .and_then(Value::as_str)
-                .filter(|title| !title.is_empty())
-                .unwrap_or(name);
-            Some(MemoSpace {
-                name: name.to_string(),
-                title: title.to_string(),
-            })
-        })
-        .collect())
+    parse_space_item(&value).ok_or_else(|| AppError::Message("memos response missing space".into()))
+}
+
+async fn refresh_spaces(
+    http: &reqwest::Client,
+    db: &Db,
+    base: &str,
+    token: &str,
+    flavor: ApiFlavor,
+) -> Result<bool, AppError> {
+    let remote = list_spaces(http, base, flavor, token).await?;
+    db_call(db.clone(), move |db| db.store_space_catalog(&remote)).await
 }
 
 pub async fn delete_remote_memo(
@@ -929,7 +1042,11 @@ pub async fn delete_remote_memo(
     })
 }
 
-async fn delete_once(http: &reqwest::Client, token: &str, url: &str) -> Result<StatusCode, AppError> {
+async fn delete_once(
+    http: &reqwest::Client,
+    token: &str,
+    url: &str,
+) -> Result<StatusCode, AppError> {
     let response = http.delete(url).bearer_auth(token).send().await?;
     let status = response.status();
     if status.is_success() || status == StatusCode::NOT_FOUND || status == StatusCode::BAD_REQUEST {
@@ -943,7 +1060,11 @@ async fn delete_once(http: &reqwest::Client, token: &str, url: &str) -> Result<S
 }
 
 fn memo_url(base: &str, flavor: ApiFlavor, name: &str) -> String {
-    let uid = name.rsplit('/').next().filter(|part| !part.is_empty()).unwrap_or(name);
+    let uid = name
+        .rsplit('/')
+        .next()
+        .filter(|part| !part.is_empty())
+        .unwrap_or(name);
     format!("{}{}/{}", trim_base(base), flavor.path(), uid)
 }
 
@@ -986,7 +1107,9 @@ fn parse_memo_object(value: &Value) -> Option<RemoteMemo> {
         .get("state")
         .or_else(|| value.get("rowStatus"))
         .and_then(Value::as_str)
-        .is_some_and(|state| state.eq_ignore_ascii_case("ARCHIVED") || state.eq_ignore_ascii_case("DELETED"))
+        .is_some_and(|state| {
+            state.eq_ignore_ascii_case("ARCHIVED") || state.eq_ignore_ascii_case("DELETED")
+        })
     {
         return None;
     }
@@ -997,13 +1120,21 @@ fn parse_memo_object(value: &Value) -> Option<RemoteMemo> {
         .or_else(|| {
             value
                 .get("id")
-                .and_then(|id| id.as_i64().map(|id| id.to_string()).or_else(|| id.as_str().map(str::to_string)))
+                .and_then(|id| {
+                    id.as_i64()
+                        .map(|id| id.to_string())
+                        .or_else(|| id.as_str().map(str::to_string))
+                })
                 .map(|id| format!("memos/{id}"))
         })?;
     if name.is_empty() {
         return None;
     }
-    let content = value.get("content").and_then(Value::as_str).unwrap_or("").to_string();
+    let content = value
+        .get("content")
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .to_string();
     let created_at = value
         .get("createTime")
         .or_else(|| value.get("createdTs"))
@@ -1052,7 +1183,11 @@ fn parse_remote_attachments(value: &Value) -> Vec<RemoteAttachment> {
                 .map(str::to_string)
                 .or_else(|| {
                     item.get("id")
-                        .and_then(|id| id.as_i64().map(|n| n.to_string()).or_else(|| id.as_str().map(str::to_string)))
+                        .and_then(|id| {
+                            id.as_i64()
+                                .map(|n| n.to_string())
+                                .or_else(|| id.as_str().map(str::to_string))
+                        })
                         .map(|id| format!("resources/{id}"))
                 });
             let Some(name) = name.filter(|s| !s.is_empty()) else {
@@ -1069,7 +1204,10 @@ fn parse_remote_attachments(value: &Value) -> Vec<RemoteAttachment> {
                 .and_then(Value::as_str)
                 .unwrap_or("")
                 .to_string();
-            if !out.iter().any(|existing: &RemoteAttachment| existing.name == name) {
+            if !out
+                .iter()
+                .any(|existing: &RemoteAttachment| existing.name == name)
+            {
                 out.push(RemoteAttachment {
                     name,
                     filename,
@@ -1091,7 +1229,9 @@ fn append_markdown_lines(content: &str, lines: &[String]) -> String {
         parts.push(trimmed.to_string());
     }
     for line in lines {
-        let already_in_content = trimmed.lines().any(|existing| existing.trim() == line.trim());
+        let already_in_content = trimmed
+            .lines()
+            .any(|existing| existing.trim() == line.trim());
         if !already_in_content && !parts.iter().any(|p| p == line) {
             parts.push(line.clone());
         }
@@ -1137,14 +1277,7 @@ async fn sync_memo_attachments(
         };
         let mime_type = media::mime_for_name(&filename);
         let remote_res = upload_attachment(
-            http,
-            base,
-            flavor,
-            token,
-            memo_name,
-            &filename,
-            mime_type,
-            &bytes,
+            http, base, flavor, token, memo_name, &filename, mime_type, &bytes,
         )
         .await?;
         remote_names.push(remote_res.clone());
@@ -1231,7 +1364,11 @@ async fn link_memo_attachments(
 ) -> Result<(), AppError> {
     let items: Vec<Value> = remote_names.iter().map(|n| json!({ "name": n })).collect();
     let uses_attachments = remote_names.iter().any(|n| n.starts_with("attachments/"));
-    let field = if uses_attachments { "attachments" } else { "resources" };
+    let field = if uses_attachments {
+        "attachments"
+    } else {
+        "resources"
+    };
     let url = memo_url(base, flavor, memo_name);
     let _ = http
         .patch(&url)
@@ -1269,7 +1406,12 @@ async fn download_remote_attachments(
             }
         }
         let encoded_file = urlencoding_token(&att.filename);
-        let url = format!("{}/file/{}/{}", trim_base(base), att.name.trim_start_matches('/'), encoded_file);
+        let url = format!(
+            "{}/file/{}/{}",
+            trim_base(base),
+            att.name.trim_start_matches('/'),
+            encoded_file
+        );
         let Ok(response) = http.get(&url).bearer_auth(token).send().await else {
             continue;
         };
@@ -1279,12 +1421,9 @@ async fn download_remote_attachments(
         let Ok(bytes) = response.bytes().await else {
             continue;
         };
-        let Ok(md) = media::save_named(
-            media_dir,
-            &bytes,
-            Some(&att.filename),
-            Some(&att.mime_type),
-        ) else {
+        let Ok(md) =
+            media::save_named(media_dir, &bytes, Some(&att.filename), Some(&att.mime_type))
+        else {
             continue;
         };
         if let Some(parsed) = media::parse_media_token(&md) {
@@ -1335,15 +1474,24 @@ fn parse_rfc3339_ms(value: &str) -> Option<i64> {
     let hour: u32 = value.get(11..13)?.parse().ok()?;
     let minute: u32 = value.get(14..16)?.parse().ok()?;
     let second: u32 = value.get(17..19)?.parse().ok()?;
-    if !(1..=12).contains(&month) || !(1..=31).contains(&day) || hour > 23 || minute > 59 || second > 60 {
+    if !(1..=12).contains(&month)
+        || !(1..=31).contains(&day)
+        || hour > 23
+        || minute > 59
+        || second > 60
+    {
         return None;
     }
     let days = days_from_civil(year, month, day);
-    let mut unix = days * 86_400 + i64::from(hour) * 3_600 + i64::from(minute) * 60 + i64::from(second);
+    let mut unix =
+        days * 86_400 + i64::from(hour) * 3_600 + i64::from(minute) * 60 + i64::from(second);
     let rest = value.get(19..).unwrap_or("");
     let mut millis: i64 = 0;
     let rest = if let Some(stripped) = rest.strip_prefix('.') {
-        let digits = stripped.chars().take_while(|ch| ch.is_ascii_digit()).count();
+        let digits = stripped
+            .chars()
+            .take_while(|ch| ch.is_ascii_digit())
+            .count();
         if digits == 0 {
             return None;
         }
@@ -1377,7 +1525,8 @@ fn days_from_civil(mut year: i32, month: u32, day: u32) -> i64 {
     let year_of_era = (year - era * 400) as u64;
     let month_prime = if month > 2 { month - 3 } else { month + 9 };
     let day_of_year = (153 * month_prime + 2) / 5 + day - 1;
-    let day_of_era = year_of_era * 365 + year_of_era / 4 - year_of_era / 100 + u64::from(day_of_year);
+    let day_of_era =
+        year_of_era * 365 + year_of_era / 4 - year_of_era / 100 + u64::from(day_of_year);
     i64::from(era) * 146_097 + day_of_era as i64 - 719_468
 }
 
@@ -1459,6 +1608,23 @@ mod tests {
     }
 
     #[test]
+    fn create_space_body_matches_api_flavor() {
+        let latest = create_space_body("Team notes", ApiFlavor::Latest, "team");
+        assert_eq!(latest["title"], "Team notes");
+        assert!(latest.get("space").is_none());
+        let v1 = create_space_body("Team notes", ApiFlavor::V1, "team");
+        assert_eq!(v1["space"]["title"], "Team notes");
+        assert_eq!(v1["spaceId"], "team");
+        let (spaces, next) = parse_space_page(
+            r#"{"spaces":[{"name":"spaces/team","title":"Team"}],"nextPageToken":"abc"}"#,
+        );
+        assert_eq!(spaces[0].name, "spaces/team");
+        assert_eq!(spaces[0].title, "Team");
+        assert_eq!(next, "abc");
+        assert_eq!(space_uid("spaces/team"), Some("team"));
+    }
+
+    #[test]
     fn create_body_is_private_markdown() {
         let body = create_body("hello **there**", "PRIVATE", "");
         assert_eq!(body["content"], "hello **there**");
@@ -1488,11 +1654,10 @@ mod tests {
     #[tokio::test]
     async fn probe_falls_back_when_latest_is_gone() {
         let hits = Arc::new(Mutex::new(Vec::new()));
-        let base = spawn_server(vec![
-            (410, "{}"),
-            (200, r#"{"memos":[]}"#),
-        ], hits.clone());
-        let flavor = probe(&test_client(), &base, "memos_pat_test").await.unwrap();
+        let base = spawn_server(vec![(410, "{}"), (200, r#"{"memos":[]}"#)], hits.clone());
+        let flavor = probe(&test_client(), &base, "memos_pat_test")
+            .await
+            .unwrap();
         assert_eq!(flavor, ApiFlavor::V1);
         let paths = hits.lock().unwrap().clone();
         assert!(paths.iter().any(|path| path.contains("/api/memos")));
@@ -1503,9 +1668,15 @@ mod tests {
     async fn delete_retries_without_force_when_the_server_rejects_it() {
         let hits = Arc::new(Mutex::new(Vec::new()));
         let base = spawn_server(vec![(400, "{}"), (200, "{}")], hits.clone());
-        delete_remote_memo(&test_client(), &base, ApiFlavor::V1, "memos_pat_test", "memos/abc")
-            .await
-            .unwrap();
+        delete_remote_memo(
+            &test_client(),
+            &base,
+            ApiFlavor::V1,
+            "memos_pat_test",
+            "memos/abc",
+        )
+        .await
+        .unwrap();
         let paths = hits.lock().unwrap().clone();
         assert!(paths[0].contains("DELETE") && paths[0].contains("force=true"));
         assert!(paths[1].contains("DELETE") && !paths[1].contains("force=true"));
@@ -1547,11 +1718,17 @@ mod tests {
 
         let local = "hello\n![pic](memose-media/12345678-pic.png)";
         let merged = crate::media::merge_local_media(local, "updated remote text");
-        assert_eq!(merged, "updated remote text\n![pic](memose-media/12345678-pic.png)");
+        assert_eq!(
+            merged,
+            "updated remote text\n![pic](memose-media/12345678-pic.png)"
+        );
 
         let appended = append_markdown_lines(
             &merged,
-            &["![pic](memose-media/12345678-pic.png)".to_string(), "[doc.pdf](memose-media/87654321-doc.pdf)".to_string()],
+            &[
+                "![pic](memose-media/12345678-pic.png)".to_string(),
+                "[doc.pdf](memose-media/87654321-doc.pdf)".to_string(),
+            ],
         );
         assert_eq!(
             appended,

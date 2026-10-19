@@ -79,6 +79,8 @@ h2 {
   flex: 1;
   display: flex;
   flex-direction: column;
+  min-height: 0;
+  overflow-y: auto;
 }
 
 .settings-panel {
@@ -118,6 +120,7 @@ label {
 
 input[type="url"],
 input[type="password"],
+input[type="text"],
 select {
   border: 1px solid #d5cebf;
   border-radius: 8px;
@@ -129,7 +132,8 @@ select {
 }
 
 input[type="url"]:focus,
-input[type="password"]:focus {
+input[type="password"]:focus,
+input[type="text"]:focus {
   outline: 2px solid #8a795d;
   outline-offset: 1px;
 }
@@ -226,8 +230,132 @@ button.danger {
   gap: 8px;
 }
 
-.choices[hidden] {
+.choices[hidden],
+.space-list[hidden],
+.new-space[hidden],
+#space-hint[hidden] {
   display: none;
+}
+
+.space-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-height: 280px;
+  overflow: auto;
+}
+
+.space-row {
+  display: grid;
+  grid-template-columns: 22px minmax(0, 1fr) auto;
+  gap: 8px 10px;
+  align-items: center;
+  padding: 8px 10px;
+  border: 1px solid #e8e2d6;
+  border-radius: 10px;
+  background: #fffdf9;
+}
+
+.space-row[aria-pressed="true"] {
+  border-color: #2f281c;
+  background: #f7f3ea;
+}
+
+.space-swatch {
+  width: 16px;
+  height: 16px;
+  padding: 0;
+  border: 1px solid #d5cebf;
+  border-radius: 50%;
+  background: #fff;
+  cursor: pointer;
+}
+
+.space-swatch:hover {
+  background: #fff;
+}
+
+.space-select {
+  justify-self: start;
+  border: 0;
+  background: transparent;
+  padding: 0;
+  text-align: left;
+  font-weight: 600;
+}
+
+.space-select:hover {
+  background: transparent;
+}
+
+.space-status {
+  font-size: 11px;
+  font-weight: 550;
+  color: #6d6456;
+  white-space: nowrap;
+}
+
+.space-status.missing {
+  color: #8a4b22;
+}
+
+.space-hue {
+  grid-column: 2 / 3;
+  -webkit-appearance: none;
+  appearance: none;
+  width: 100%;
+  height: 10px;
+  border-radius: 999px;
+  background: linear-gradient(90deg, #f00 0%, #ff0 17%, #0f0 33%, #0ff 50%, #00f 67%, #f0f 83%, #f00 100%);
+}
+
+.space-hue::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 12px;
+  height: 12px;
+  border: 2px solid #241f16;
+  border-radius: 50%;
+  background: var(--thumb, #fff);
+}
+
+.space-actions {
+  grid-column: 2 / -1;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.space-actions button {
+  padding: 4px 9px;
+  font-size: 12px;
+}
+
+.space-actions button.danger {
+  margin-left: 0;
+}
+
+.space-hue::-moz-range-thumb {
+  width: 12px;
+  height: 12px;
+  border: 2px solid #241f16;
+  border-radius: 50%;
+  background: var(--thumb, #fff);
+}
+
+.new-space {
+  display: flex;
+  gap: 8px;
+}
+
+.new-space input[type="text"] {
+  flex: 1;
+  border: 1px solid #d5cebf;
+  border-radius: 8px;
+  background: #fff;
+  padding: 9px 11px;
+  color: inherit;
+  font: inherit;
+  font-weight: 400;
 }
 
 .choices button[aria-pressed="true"] {

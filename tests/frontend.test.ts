@@ -230,6 +230,9 @@ test("settings window html has Visibility, Shortcuts, and Sync (useMemos) tabs w
   assert.match(html, /Default memo visibility/);
   assert.match(html, /Window snap/);
   assert.match(html, /id="snap-memos"/);
+  assert.match(html, /id="space-choices"/);
+  assert.match(html, /id="new-space"/);
+  assert.match(html, /id="create-space"/);
 });
 
 test("memo-chrome computes palettes and renders stack header template", () => {

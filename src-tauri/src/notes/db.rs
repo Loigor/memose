@@ -1,13 +1,18 @@
+use std::collections::{HashMap, HashSet};
 use std::path::Path;
 use std::sync::{Arc, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use rusqlite::{params, Connection, OptionalExtension};
+use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use crate::error::AppError;
 
-use super::model::{commit_state, Note, CONFLICT, DRAFT, ERROR, LOCAL, PENDING, REMOTE, SYNCED};
+use super::model::{
+    commit_state, MemoSpace, Note, SpaceView, CONFLICT, DRAFT, ERROR, LOCAL, PENDING, REMOTE,
+    SYNCED,
+};
 
 #[derive(Clone)]
 pub struct Db {
@@ -104,6 +109,12 @@ impl Db {
             let (default_vis, default_space) = default_audience(conn)?;
             let now = now_ms();
             if let Some(existing) = draft(conn)? {
+                let hue_space = existing
+                    .space
+                    .as_deref()
+                    .filter(|space| !space.trim().is_empty())
+                    .unwrap_or(default_space.as_str());
+                let hue = space_hue_value(conn, hue_space)?;
                 conn.execute(
                     "UPDATE notes
                      SET content = ?1,
@@ -111,16 +122,19 @@ impl Db {
                          sync_state = ?3,
                          last_error = NULL,
                          visibility = COALESCE(NULLIF(visibility, ''), ?5),
-                         remote_space = COALESCE(remote_space, ?6)
+                         remote_space = COALESCE(remote_space, ?6),
+                         hue_light = COALESCE(hue_light, ?7),
+                         hue_dark = COALESCE(hue_dark, ?8)
                      WHERE id = ?4",
-                    params![trimmed, now, state, existing.id, default_vis, default_space],
+                    params![trimmed, now, state, existing.id, default_vis, default_space, hue, hue],
                 )?;
             } else {
                 let id = Uuid::new_v4().to_string();
+                let hue = space_hue_value(conn, &default_space)?;
                 conn.execute(
-                    "INSERT INTO notes (id, content, created_at, updated_at, sync_state, remote_name, last_error, visibility, remote_space)
-                     VALUES (?1, ?2, ?3, ?3, ?4, NULL, NULL, ?5, ?6)",
-                    params![id, trimmed, now, state, default_vis, default_space],
+                    "INSERT INTO notes (id, content, created_at, updated_at, sync_state, remote_name, last_error, visibility, remote_space, hue_light, hue_dark)
+                     VALUES (?1, ?2, ?3, ?3, ?4, NULL, NULL, ?5, ?6, ?7, ?8)",
+                    params![id, trimmed, now, state, default_vis, default_space, hue, hue],
                 )?;
             }
             Ok(true)
@@ -128,7 +142,10 @@ impl Db {
     }
 
     pub fn finalize_stored_draft(&self) -> Result<bool, AppError> {
-        let content = self.with(draft)?.map(|note| note.content).unwrap_or_default();
+        let content = self
+            .with(draft)?
+            .map(|note| note.content)
+            .unwrap_or_default();
         self.finalize_content(&content)
     }
 
@@ -224,6 +241,12 @@ impl Db {
                 if existing.sync_state == DRAFT {
                     self.with(|conn| {
                         let (default_vis, default_space) = default_audience(conn)?;
+                        let hue_space = existing
+                            .space
+                            .as_deref()
+                            .filter(|space| !space.trim().is_empty())
+                            .unwrap_or(default_space.as_str());
+                        let hue = space_hue_value(conn, hue_space)?;
                         conn.execute(
                             "UPDATE notes
                              SET content = '',
@@ -231,9 +254,11 @@ impl Db {
                                  sync_state = ?2,
                                  last_error = NULL,
                                  visibility = COALESCE(NULLIF(visibility, ''), ?4),
-                                 remote_space = COALESCE(remote_space, ?5)
+                                 remote_space = COALESCE(remote_space, ?5),
+                                 hue_light = COALESCE(hue_light, ?6),
+                                 hue_dark = COALESCE(hue_dark, ?7)
                              WHERE id = ?3",
-                            params![now_ms(), LOCAL, id, default_vis, default_space],
+                            params![now_ms(), LOCAL, id, default_vis, default_space, hue, hue],
                         )?;
                         Ok(())
                     })?;
@@ -246,17 +271,23 @@ impl Db {
         let id = Uuid::new_v4().to_string();
         self.with(|conn| {
             let (default_vis, default_space) = default_audience(conn)?;
+            let hue = space_hue_value(conn, &default_space)?;
             let now = now_ms();
             conn.execute(
-                "INSERT INTO notes (id, content, created_at, updated_at, sync_state, remote_name, last_error, visibility, remote_space)
-                 VALUES (?1, '', ?2, ?2, ?3, NULL, NULL, ?4, ?5)",
-                params![id, now, LOCAL, default_vis, default_space],
+                "INSERT INTO notes (id, content, created_at, updated_at, sync_state, remote_name, last_error, visibility, remote_space, hue_light, hue_dark)
+                 VALUES (?1, '', ?2, ?2, ?3, NULL, NULL, ?4, ?5, ?6, ?7)",
+                params![id, now, LOCAL, default_vis, default_space, hue, hue],
             )?;
             note_by_id(conn, &id)?.ok_or_else(|| AppError::Message("note disappeared".into()))
         })
     }
 
-    pub fn remember_audience(&self, id: &str, visibility: &str, space: &str) -> Result<(), AppError> {
+    pub fn remember_audience(
+        &self,
+        id: &str,
+        visibility: &str,
+        space: &str,
+    ) -> Result<(), AppError> {
         let visibility = canonical_visibility(visibility);
         self.with(|conn| {
             conn.execute(
@@ -286,7 +317,8 @@ impl Db {
             let Some((state, remote_name)) = linked else {
                 return Ok(false);
             };
-            let push = (state == SYNCED || state == PENDING || state == ERROR) && remote_name.is_some();
+            let push =
+                (state == SYNCED || state == PENDING || state == ERROR) && remote_name.is_some();
             conn.execute(
                 "UPDATE notes
                  SET visibility = ?1,
@@ -296,6 +328,162 @@ impl Db {
                 params![visibility, space, push && state == SYNCED, PENDING, id],
             )?;
             Ok(push)
+        })
+    }
+
+    pub fn store_space_catalog(&self, remote: &[MemoSpace]) -> Result<bool, AppError> {
+        self.with(|conn| {
+            let previous = load_spaces(conn)?;
+            let noted = noted_spaces(conn)?;
+            let mut next = HashMap::new();
+            for old in &previous {
+                if noted.contains(&old.name) || old.hue.is_some() {
+                    next.insert(
+                        old.name.clone(),
+                        StoredSpace {
+                            synced: false,
+                            ..old.clone()
+                        },
+                    );
+                }
+            }
+            for space in remote {
+                let hue = next.get(&space.name).and_then(|item| item.hue);
+                next.insert(
+                    space.name.clone(),
+                    StoredSpace {
+                        name: space.name.clone(),
+                        title: space.title.clone(),
+                        synced: true,
+                        hue,
+                    },
+                );
+            }
+            let stored = sort_spaces(next.into_values().collect());
+            let changed = visible_spaces(&previous) != visible_spaces(&stored);
+            save_spaces(conn, &stored)?;
+            Ok(changed)
+        })
+    }
+
+    pub fn remember_space(&self, name: &str, title: &str) -> Result<(), AppError> {
+        let name = name.trim();
+        let title = title.trim();
+        if name.is_empty() || title.is_empty() {
+            return Err(AppError::Message("space needs a name and title".into()));
+        }
+        self.with(|conn| {
+            let mut spaces = load_spaces(conn)?;
+            if let Some(existing) = spaces.iter_mut().find(|space| space.name == name) {
+                existing.title = title.to_string();
+                existing.synced = true;
+            } else {
+                spaces.push(StoredSpace {
+                    name: name.to_string(),
+                    title: title.to_string(),
+                    synced: true,
+                    hue: None,
+                });
+            }
+            save_spaces(conn, &sort_spaces(spaces))?;
+            Ok(())
+        })
+    }
+
+    pub fn list_known_spaces(&self) -> Result<Vec<SpaceView>, AppError> {
+        self.with(|conn| {
+            let mut spaces = load_spaces(conn)?;
+            for name in noted_spaces(conn)? {
+                if spaces.iter().any(|space| space.name == name) {
+                    continue;
+                }
+                spaces.push(StoredSpace {
+                    title: space_title(&name),
+                    name,
+                    synced: false,
+                    hue: None,
+                });
+            }
+            Ok(sort_spaces(spaces)
+                .into_iter()
+                .map(SpaceView::from)
+                .collect())
+        })
+    }
+
+    pub fn set_space_hue(&self, name: &str, hue: Option<u16>) -> Result<(), AppError> {
+        let name = name.trim();
+        if name.is_empty() {
+            return Err(AppError::Message("choose a space".into()));
+        }
+        let hue = hue.filter(|value| *value <= 359);
+        self.with(|conn| {
+            let mut spaces = load_spaces(conn)?;
+            if let Some(existing) = spaces.iter_mut().find(|space| space.name == name) {
+                existing.hue = hue;
+            } else {
+                spaces.push(StoredSpace {
+                    title: space_title(name),
+                    name: name.to_string(),
+                    synced: false,
+                    hue,
+                });
+            }
+            save_spaces(conn, &sort_spaces(spaces))?;
+            Ok(())
+        })
+    }
+
+    pub fn forget_space(&self, name: &str) -> Result<bool, AppError> {
+        let name = name.trim().to_string();
+        if name.is_empty() {
+            return Err(AppError::Message("choose a space".into()));
+        }
+        self.with(|conn| {
+            let spaces = load_spaces(conn)?;
+            if spaces
+                .iter()
+                .any(|space| space.name == name && space.synced)
+            {
+                return Err(AppError::Message(
+                    "that space is still on the server".into(),
+                ));
+            }
+            let queued = conn.execute(
+                "UPDATE notes
+                 SET visibility = CASE WHEN visibility = 'SPACE' THEN 'PRIVATE' ELSE visibility END,
+                     remote_space = '',
+                     sync_state = CASE
+                         WHEN sync_state = ?1 AND remote_name IS NOT NULL THEN ?2
+                         ELSE sync_state
+                     END
+                 WHERE trim(ifnull(remote_space, '')) = ?3",
+                params![SYNCED, PENDING, name],
+            )? > 0;
+            let default = get_meta(conn, MEMO_SPACE)?.unwrap_or_default();
+            if default.trim() == name {
+                conn.execute(
+                    "INSERT INTO meta (key, value) VALUES (?1, ?2)
+                     ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+                    params![MEMO_SPACE, ""],
+                )?;
+                let visibility = canonical_visibility(
+                    &get_meta(conn, MEMO_VISIBILITY)?.unwrap_or_else(|| "PRIVATE".into()),
+                );
+                if visibility == "SPACE" {
+                    conn.execute(
+                        "INSERT INTO meta (key, value) VALUES (?1, ?2)
+                         ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+                        params![MEMO_VISIBILITY, "PRIVATE"],
+                    )?;
+                }
+            }
+            let kept: Vec<StoredSpace> = spaces
+                .into_iter()
+                .filter(|space| space.name != name)
+                .collect();
+            save_spaces(conn, &kept)?;
+            Ok(queued)
         })
     }
 
@@ -481,7 +669,12 @@ impl Db {
         })
     }
 
-    pub fn complete_push(&self, id: &str, remote_name: &str, pushed: &str) -> Result<bool, AppError> {
+    pub fn complete_push(
+        &self,
+        id: &str,
+        remote_name: &str,
+        pushed: &str,
+    ) -> Result<bool, AppError> {
         self.with(|conn| {
             let now = now_ms();
             let changed = conn.execute(
@@ -562,7 +755,10 @@ impl Db {
         })
     }
 
-    pub fn media_upload_for_local(&self, local_name: &str) -> Result<Option<(String, String)>, AppError> {
+    pub fn media_upload_for_local(
+        &self,
+        local_name: &str,
+    ) -> Result<Option<(String, String)>, AppError> {
         self.with(|conn| {
             conn.query_row(
                 "SELECT remote_name, remote_memo FROM media_uploads WHERE local_name = ?1",
@@ -574,7 +770,10 @@ impl Db {
         })
     }
 
-    pub fn media_local_for_remote(&self, remote_name: &str) -> Result<Option<(String, String)>, AppError> {
+    pub fn media_local_for_remote(
+        &self,
+        remote_name: &str,
+    ) -> Result<Option<(String, String)>, AppError> {
         self.with(|conn| {
             conn.query_row(
                 "SELECT local_name, filename FROM media_uploads WHERE remote_name = ?1 LIMIT 1",
@@ -612,6 +811,7 @@ impl Db {
         if trimmed.is_empty() {
             self.clear_meta(BASE_URL)?;
             self.clear_meta(API_FLAVOR)?;
+            self.clear_meta(SPACE_CATALOG)?;
             return Ok(());
         }
         if !trimmed.starts_with("http://") && !trimmed.starts_with("https://") {
@@ -623,6 +823,7 @@ impl Db {
         self.set_meta(BASE_URL, &trimmed)?;
         if previous.as_deref() != Some(trimmed.as_str()) {
             self.clear_meta(API_FLAVOR)?;
+            self.clear_meta(SPACE_CATALOG)?;
         }
         Ok(())
     }
@@ -736,7 +937,14 @@ impl Db {
                      visibility = ?5,
                      remote_space = ?6
                  WHERE id = ?4",
-                params![content, updated_at, SYNCED, id, canonical_visibility(visibility), space],
+                params![
+                    content,
+                    updated_at,
+                    SYNCED,
+                    id,
+                    canonical_visibility(visibility),
+                    space
+                ],
             )?;
             Ok(())
         })
@@ -752,7 +960,12 @@ impl Db {
         })
     }
 
-    pub fn store_conflict(&self, id: &str, server_content: &str, updated_at: i64) -> Result<(), AppError> {
+    pub fn store_conflict(
+        &self,
+        id: &str,
+        server_content: &str,
+        updated_at: i64,
+    ) -> Result<(), AppError> {
         self.with(|conn| {
             conn.execute(
                 "UPDATE notes
@@ -810,6 +1023,7 @@ pub struct RemoteLink {
 pub const BASE_URL: &str = "base_url";
 pub const MEMO_VISIBILITY: &str = "memo_visibility";
 pub const MEMO_SPACE: &str = "memo_space";
+pub const SPACE_CATALOG: &str = "space_catalog";
 pub const SNAP_MEMOS: &str = "snap_memos";
 
 pub fn canonical_visibility(value: &str) -> String {
@@ -839,10 +1053,12 @@ fn has_base_url(conn: &Connection) -> Result<bool, AppError> {
 }
 
 fn default_audience(conn: &Connection) -> Result<(String, String), AppError> {
-    let visibility = canonical_visibility(
-        &get_meta(conn, MEMO_VISIBILITY)?.unwrap_or_else(|| "PRIVATE".into()),
-    );
-    let space = get_meta(conn, MEMO_SPACE)?.unwrap_or_default().trim().to_string();
+    let visibility =
+        canonical_visibility(&get_meta(conn, MEMO_VISIBILITY)?.unwrap_or_else(|| "PRIVATE".into()));
+    let space = get_meta(conn, MEMO_SPACE)?
+        .unwrap_or_default()
+        .trim()
+        .to_string();
     if visibility == "SPACE" && space.is_empty() {
         Ok(("PRIVATE".into(), String::new()))
     } else {
@@ -905,22 +1121,46 @@ fn ensure_note_columns(conn: &Connection) -> Result<(), AppError> {
         .query_map([], |row| row.get::<_, String>(1))?
         .collect::<Result<Vec<_>, _>>()?;
     for (name, ddl) in [
-        ("pinned", "ALTER TABLE notes ADD COLUMN pinned INTEGER NOT NULL DEFAULT 0"),
+        (
+            "pinned",
+            "ALTER TABLE notes ADD COLUMN pinned INTEGER NOT NULL DEFAULT 0",
+        ),
         ("win_x", "ALTER TABLE notes ADD COLUMN win_x INTEGER"),
         ("win_y", "ALTER TABLE notes ADD COLUMN win_y INTEGER"),
         ("win_w", "ALTER TABLE notes ADD COLUMN win_w INTEGER"),
         ("win_h", "ALTER TABLE notes ADD COLUMN win_h INTEGER"),
-        ("base_content", "ALTER TABLE notes ADD COLUMN base_content TEXT"),
-        ("remote_content", "ALTER TABLE notes ADD COLUMN remote_content TEXT"),
-        ("remote_updated_at", "ALTER TABLE notes ADD COLUMN remote_updated_at INTEGER"),
-        ("opacity", "ALTER TABLE notes ADD COLUMN opacity INTEGER NOT NULL DEFAULT 100"),
-        ("hue_light", "ALTER TABLE notes ADD COLUMN hue_light INTEGER"),
+        (
+            "base_content",
+            "ALTER TABLE notes ADD COLUMN base_content TEXT",
+        ),
+        (
+            "remote_content",
+            "ALTER TABLE notes ADD COLUMN remote_content TEXT",
+        ),
+        (
+            "remote_updated_at",
+            "ALTER TABLE notes ADD COLUMN remote_updated_at INTEGER",
+        ),
+        (
+            "opacity",
+            "ALTER TABLE notes ADD COLUMN opacity INTEGER NOT NULL DEFAULT 100",
+        ),
+        (
+            "hue_light",
+            "ALTER TABLE notes ADD COLUMN hue_light INTEGER",
+        ),
         ("hue_dark", "ALTER TABLE notes ADD COLUMN hue_dark INTEGER"),
         ("swatches", "ALTER TABLE notes ADD COLUMN swatches TEXT"),
         ("theme", "ALTER TABLE notes ADD COLUMN theme TEXT"),
         ("visibility", "ALTER TABLE notes ADD COLUMN visibility TEXT"),
-        ("remote_space", "ALTER TABLE notes ADD COLUMN remote_space TEXT"),
-        ("collapsed", "ALTER TABLE notes ADD COLUMN collapsed INTEGER NOT NULL DEFAULT 0"),
+        (
+            "remote_space",
+            "ALTER TABLE notes ADD COLUMN remote_space TEXT",
+        ),
+        (
+            "collapsed",
+            "ALTER TABLE notes ADD COLUMN collapsed INTEGER NOT NULL DEFAULT 0",
+        ),
         ("stack_host", "ALTER TABLE notes ADD COLUMN stack_host TEXT"),
     ] {
         if !names.iter().any(|existing| existing == name) {
@@ -960,8 +1200,103 @@ fn parse_swatches(raw: Option<String>) -> Vec<u16> {
         .collect()
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+struct StoredSpace {
+    name: String,
+    title: String,
+    #[serde(default)]
+    synced: bool,
+    #[serde(default)]
+    hue: Option<u16>,
+}
+
+impl From<StoredSpace> for SpaceView {
+    fn from(space: StoredSpace) -> Self {
+        Self {
+            name: space.name,
+            title: space.title,
+            synced: space.synced,
+            hue: space.hue,
+        }
+    }
+}
+
+fn load_spaces(conn: &Connection) -> Result<Vec<StoredSpace>, AppError> {
+    let Some(raw) = get_meta(conn, SPACE_CATALOG)? else {
+        return Ok(Vec::new());
+    };
+    Ok(serde_json::from_str(&raw).unwrap_or_default())
+}
+
+fn save_spaces(conn: &Connection, spaces: &[StoredSpace]) -> Result<(), AppError> {
+    let raw = serde_json::to_string(spaces).map_err(|err| AppError::Message(err.to_string()))?;
+    conn.execute(
+        "INSERT INTO meta (key, value) VALUES (?1, ?2)
+         ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+        params![SPACE_CATALOG, raw],
+    )?;
+    Ok(())
+}
+
+fn noted_spaces(conn: &Connection) -> Result<HashSet<String>, AppError> {
+    let mut stmt = conn.prepare(
+        "SELECT DISTINCT trim(remote_space) FROM notes WHERE ifnull(trim(remote_space), '') != ''",
+    )?;
+    let names = stmt.query_map([], |row| row.get::<_, String>(0))?;
+    let mut out = HashSet::new();
+    for name in names {
+        let name = name?;
+        if !name.is_empty() {
+            out.insert(name);
+        }
+    }
+    Ok(out)
+}
+
+fn space_hue_value(conn: &Connection, space: &str) -> Result<Option<u16>, AppError> {
+    if space.trim().is_empty() {
+        return Ok(None);
+    }
+    Ok(load_spaces(conn)?
+        .into_iter()
+        .find(|item| item.name == space)
+        .and_then(|item| item.hue))
+}
+
+fn space_title(name: &str) -> String {
+    name.rsplit('/')
+        .next()
+        .filter(|title| !title.is_empty())
+        .unwrap_or(name)
+        .to_string()
+}
+
+fn sort_spaces(mut spaces: Vec<StoredSpace>) -> Vec<StoredSpace> {
+    spaces.sort_by(|left, right| {
+        right
+            .synced
+            .cmp(&left.synced)
+            .then_with(|| {
+                left.title
+                    .to_ascii_lowercase()
+                    .cmp(&right.title.to_ascii_lowercase())
+            })
+            .then_with(|| left.name.cmp(&right.name))
+    });
+    spaces
+}
+
+fn visible_spaces(spaces: &[StoredSpace]) -> Vec<(String, String, bool)> {
+    spaces
+        .iter()
+        .map(|space| (space.name.clone(), space.title.clone(), space.synced))
+        .collect()
+}
+
 fn hue_column(value: Option<i64>) -> Option<u16> {
-    value.and_then(|hue| u16::try_from(hue).ok()).filter(|hue| *hue <= 359)
+    value
+        .and_then(|hue| u16::try_from(hue).ok())
+        .filter(|hue| *hue <= 359)
 }
 
 fn map_note(row: &rusqlite::Row<'_>) -> rusqlite::Result<Note> {
@@ -1003,7 +1338,7 @@ fn theme_column(value: Option<String>) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::notes::model::{LOCAL, PENDING, SYNCED};
+    use crate::notes::model::{MemoSpace, LOCAL, PENDING, SYNCED};
 
     fn db() -> Db {
         Db::open_memory().expect("memory db")
@@ -1091,12 +1426,18 @@ mod tests {
         assert_eq!(notes[0].sync_state, PENDING);
         assert_eq!(notes[0].remote_name.as_deref(), Some("memos/abc"));
         assert_eq!(db.save_edit(&note.id, "   ").unwrap(), (false, false));
-        assert_eq!(db.list_recent(10).unwrap()[0].content, "renamed\nstill here");
+        assert_eq!(
+            db.list_recent(10).unwrap()[0].content,
+            "renamed\nstill here"
+        );
 
         db.set_base_url("https://memos.example").unwrap();
         db.finalize_content("queued").unwrap();
         let pending = db.pending_and_errors().unwrap().remove(0);
-        assert_eq!(db.save_edit(&pending.id, "queued edit").unwrap(), (true, true));
+        assert_eq!(
+            db.save_edit(&pending.id, "queued edit").unwrap(),
+            (true, true)
+        );
         assert_eq!(db.pending_and_errors().unwrap()[0].content, "queued edit");
         assert_eq!(db.pending_and_errors().unwrap()[0].sync_state, PENDING);
     }
@@ -1132,8 +1473,15 @@ mod tests {
         assert_eq!(draft.opacity, 100);
         assert!(draft.hue_light.is_none());
         assert!(draft.swatches.is_empty());
-        db.save_look(&draft.id, 40, Some(200), Some(400), &[12, 200, 400], Some("dark"))
-            .unwrap();
+        db.save_look(
+            &draft.id,
+            40,
+            Some(200),
+            Some(400),
+            &[12, 200, 400],
+            Some("dark"),
+        )
+        .unwrap();
         db.finalize_content("colored").unwrap();
         db.save_edit(&draft.id, "colored more").unwrap();
         let note = db.get(&draft.id).unwrap().unwrap();
@@ -1165,7 +1513,8 @@ mod tests {
         db.finalize_content("loose").unwrap();
         db.set_pinned(&first.id, true).unwrap();
         db.set_pinned(&second.id, true).unwrap();
-        db.save_look(&first.id, 80, Some(12), None, &[], None).unwrap();
+        db.save_look(&first.id, 80, Some(12), None, &[], None)
+            .unwrap();
         db.set_pinned_opacity(25).unwrap();
         let first = db.get(&first.id).unwrap().unwrap();
         assert_eq!(first.opacity, 25);
@@ -1225,7 +1574,10 @@ mod tests {
         db.set_base_url("https://one.example").unwrap();
         assert_eq!(db.get_meta(API_FLAVOR).unwrap().as_deref(), Some("v1"));
         db.set_base_url("https://two.example/").unwrap();
-        assert_eq!(db.get_meta(BASE_URL).unwrap().as_deref(), Some("https://two.example"));
+        assert_eq!(
+            db.get_meta(BASE_URL).unwrap().as_deref(),
+            Some("https://two.example")
+        );
         assert!(db.get_meta(API_FLAVOR).unwrap().is_none());
     }
 
@@ -1275,11 +1627,17 @@ mod tests {
         db.set_stack_host(&tail.id, Some(&middle.id)).unwrap();
         db.set_stack_host(&middle.id, None).unwrap();
         assert!(db.get(&middle.id).unwrap().unwrap().stack_host.is_none());
-        assert_eq!(db.get(&tail.id).unwrap().unwrap().stack_host.as_deref(), Some(middle.id.as_str()));
+        assert_eq!(
+            db.get(&tail.id).unwrap().unwrap().stack_host.as_deref(),
+            Some(middle.id.as_str())
+        );
         assert_eq!(db.chain_after(&middle.id).unwrap().len(), 1);
         db.set_stack_host(&middle.id, Some(&host.id)).unwrap();
         db.delete_note(&middle.id).unwrap();
-        assert_eq!(db.get(&tail.id).unwrap().unwrap().stack_host.as_deref(), Some(host.id.as_str()));
+        assert_eq!(
+            db.get(&tail.id).unwrap().unwrap().stack_host.as_deref(),
+            Some(host.id.as_str())
+        );
     }
 
     #[test]
@@ -1331,5 +1689,75 @@ mod tests {
         db.finalize_content("second memo").unwrap();
         let second = db.get(&second_draft.id).unwrap().unwrap();
         assert_eq!(second.visibility.as_deref(), Some("PUBLIC"));
+    }
+
+    #[test]
+    fn space_catalog_keeps_missing_spaces_and_stamps_their_default_hue() {
+        let db = db();
+        db.store_space_catalog(&[MemoSpace {
+            name: "spaces/team".into(),
+            title: "Team".into(),
+        }])
+        .unwrap();
+        db.set_space_hue("spaces/team", Some(40)).unwrap();
+        db.set_meta(MEMO_VISIBILITY, "SPACE").unwrap();
+        db.set_meta(MEMO_SPACE, "spaces/team").unwrap();
+        db.finalize_content("team note").unwrap();
+        let note = db.list_recent(10).unwrap().remove(0);
+        assert_eq!(note.space.as_deref(), Some("spaces/team"));
+        assert_eq!(note.hue_light, Some(40));
+        assert_eq!(note.hue_dark, Some(40));
+        assert!(db.forget_space("spaces/team").is_err());
+
+        db.set_audience(&note.id, "SPACE", "spaces/gone").unwrap();
+        db.store_space_catalog(&[]).unwrap();
+        let spaces = db.list_known_spaces().unwrap();
+        let team = spaces
+            .iter()
+            .find(|space| space.name == "spaces/team")
+            .unwrap();
+        let gone = spaces
+            .iter()
+            .find(|space| space.name == "spaces/gone")
+            .unwrap();
+        assert!(!team.synced);
+        assert_eq!(team.hue, Some(40));
+        assert!(!gone.synced);
+
+        assert!(db.forget_space("spaces/gone").unwrap());
+        let forgotten = db.get(&note.id).unwrap().unwrap();
+        assert_eq!(forgotten.space.as_deref(), Some(""));
+        assert_eq!(forgotten.visibility.as_deref(), Some("PRIVATE"));
+        assert!(db
+            .list_known_spaces()
+            .unwrap()
+            .iter()
+            .all(|space| space.name != "spaces/gone"));
+    }
+
+    #[test]
+    fn a_new_memo_uses_the_chosen_space_default_hue() {
+        let db = db();
+        db.store_space_catalog(&[
+            MemoSpace {
+                name: "spaces/team".into(),
+                title: "Team".into(),
+            },
+            MemoSpace {
+                name: "spaces/lab".into(),
+                title: "Lab".into(),
+            },
+        ])
+        .unwrap();
+        db.set_space_hue("spaces/team", Some(40)).unwrap();
+        db.set_space_hue("spaces/lab", Some(200)).unwrap();
+        db.set_meta(MEMO_SPACE, "spaces/team").unwrap();
+        let draft = db.upsert_draft("lab note").unwrap().unwrap();
+        db.set_audience(&draft.id, "PRIVATE", "spaces/lab").unwrap();
+        db.finalize_content("lab note").unwrap();
+        let note = db.get(&draft.id).unwrap().unwrap();
+        assert_eq!(note.space.as_deref(), Some("spaces/lab"));
+        assert_eq!(note.hue_light, Some(200));
+        assert_eq!(note.hue_dark, Some(200));
     }
 }
