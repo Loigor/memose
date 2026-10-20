@@ -4,6 +4,9 @@ import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 
+import { uniqueFiles } from "../src/files.ts";
+import { BlockHistory, cloneBlocks } from "../src/history.ts";
+import { defaultLook, lookFromNote, namedTheme } from "../src/look.ts";
 import {
   applyCode,
   applyTask,
@@ -26,6 +29,7 @@ import {
   wrapText,
 } from "../src/markdown-edit.ts";
 import { baseColors, palette, paperAt, stackHeaderHtml, themeGlyph } from "../src/memo-chrome.ts";
+import { pointIn, requireEl } from "../src/dom.ts";
 import {
   defaultBinds,
   domMouseButton,
@@ -38,6 +42,9 @@ import {
   modifierDown,
   mouseChordToBind,
 } from "../src/shortcuts.ts";
+import { syncIcon } from "../src/sync-status.ts";
+import { exactStamp, relativeTime } from "../src/time.ts";
+import { visibilityShort } from "../src/visibility.ts";
 
 test("wrapText wraps selection and places cursor inside empty markers", () => {
   const wrapped = wrapText("hello world", 0, 5, "**", "**");
@@ -235,6 +242,83 @@ test("settings window html has Visibility, Shortcuts, and Sync (useMemos) tabs w
   assert.match(html, /id="create-space"/);
 });
 
+test("uniqueFiles drops duplicate file records by name, size, and timestamp", () => {
+  const first = { name: "a.png", size: 10, lastModified: 1 } as File;
+  const copy = { name: "a.png", size: 10, lastModified: 1 } as File;
+  const other = { name: "b.png", size: 10, lastModified: 1 } as File;
+  assert.deepEqual(uniqueFiles([first, copy, other]), [first, other]);
+});
+
+test("relativeTime and exactStamp format nearby and absolute timestamps", () => {
+  const now = Date.parse("2026-10-19T18:00:00");
+  assert.equal(relativeTime(now - 20_000, now), "just now");
+  assert.equal(relativeTime(now - 60_000, now), "1 minute ago");
+  assert.equal(relativeTime(now - 120_000, now), "2 minutes ago");
+  assert.match(relativeTime(now - 3 * 60 * 60 * 1000, now), /^today at /);
+  assert.match(relativeTime(now - 26 * 60 * 60 * 1000, now), /^yesterday at /);
+  assert.equal(exactStamp(Date.parse("2026-10-19T08:05:09")), "2026-10-19 08:05:09");
+});
+
+test("visibilityShort labels private, space, and combined audience", () => {
+  const spaces = [{ name: "team", title: "Team" }];
+  assert.equal(visibilityShort("PRIVATE", "", spaces), "Private");
+  assert.equal(visibilityShort("SPACE", "team", spaces), "Team");
+  assert.equal(visibilityShort("PUBLIC", "team", spaces), "Public | Team");
+});
+
+test("look helpers normalize note color and theme", () => {
+  assert.equal(namedTheme("dark"), "dark");
+  assert.equal(namedTheme("nope"), null);
+  assert.deepEqual(defaultLook(), {
+    opacity: 100,
+    hueLight: null,
+    hueDark: null,
+    swatches: [],
+    theme: null,
+  });
+  const look = lookFromNote({
+    id: "n1",
+    content: "",
+    createdAt: 0,
+    updatedAt: 0,
+    syncState: "local",
+    remoteName: null,
+    lastError: null,
+    pinned: false,
+    opacity: 140,
+    hueLight: 20,
+    hueDark: 40,
+    swatches: [10, 400, 11],
+    theme: "dark",
+  });
+  assert.equal(look.opacity, 100);
+  assert.deepEqual(look.swatches, [10, 11]);
+  assert.equal(look.theme, "dark");
+});
+
+test("BlockHistory clones blocks and undoes to the previous snapshot", () => {
+  const history = new BlockHistory();
+  const first = [{ kind: "text" as const, text: "one" }];
+  const second = [{ kind: "text" as const, text: "two" }];
+  history.push(first, { index: 0, start: 0, end: 0 }, true);
+  history.push(second, { index: 0, start: 3, end: 3 }, true);
+  const undone = history.takeUndo(second, { index: 0, start: 3, end: 3 });
+  assert.deepEqual(undone?.blocks, cloneBlocks(first));
+  const redone = history.takeRedo(first, { index: 0, start: 0, end: 0 });
+  assert.deepEqual(redone?.blocks, cloneBlocks(second));
+});
+
+test("syncIcon and platform helpers cover common states", () => {
+  assert.equal(syncIcon("synced").label, "Synced");
+  assert.equal(syncIcon("conflict").label, "Choose a version");
+  assert.equal(syncIcon("unknown").label, "Local");
+  assert.equal(requireEl("ok", "field"), "ok");
+  assert.throws(() => requireEl(null, "field"), /missing field/);
+  const rect = { left: 10, right: 20, top: 5, bottom: 15 } as DOMRect;
+  assert.equal(pointIn(rect, 10, 5), true);
+  assert.equal(pointIn(rect, 9, 10), false);
+});
+
 test("memo-chrome computes palettes and renders stack header template", () => {
   assert.match(paperAt("light", 48), /^hsl\(48 /);
   assert.match(paperAt("dark", 200), /^hsl\(200 /);
@@ -299,7 +383,10 @@ test("release versions and Tauri IPC command contracts stay in sync without dang
   const handlerBlock = libRs.match(/generate_handler!\[([\s\S]*?)\]/)?.[1] ?? "";
   const registered = [...handlerBlock.matchAll(/commands::([a-z0-9_]+)/g)].map((m) => m[1]).sort();
 
-  const tsFiles = ["src/main.ts", "src/settings.ts"];
+  const tsFiles = fs
+    .readdirSync(path.join(root, "src"))
+    .filter((name) => name.endsWith(".ts"))
+    .map((name) => path.join("src", name));
   const invokedSet = new Set<string>();
   for (const rel of tsFiles) {
     const src = fs.readFileSync(path.join(root, rel), "utf8");

@@ -2,6 +2,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 
 import { paperAt } from "./memo-chrome";
+import type { MemoSpace } from "./types";
 import {
   eventToBind,
   eventToMouse,
@@ -21,13 +22,6 @@ type Settings = {
   visibility: string;
   space: string;
   snapMemos: boolean;
-};
-
-type MemoSpace = {
-  name: string;
-  title: string;
-  synced: boolean;
-  hue: number | null;
 };
 
 type TabId = "visibility" | "shortcuts" | "sync";
