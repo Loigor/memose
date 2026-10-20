@@ -47,7 +47,9 @@ pub fn run() {
         )
         .setup(|app| {
             #[cfg(target_os = "macos")]
-            let _ = app.handle().set_activation_policy(tauri::ActivationPolicy::Accessory);
+            let _ = app
+                .handle()
+                .set_activation_policy(tauri::ActivationPolicy::Accessory);
 
             let dir = app.path().app_data_dir()?;
             let media_dir = dir.join("media");
@@ -90,6 +92,9 @@ pub fn run() {
             commands::get_settings,
             commands::save_settings,
             commands::list_memo_spaces,
+            commands::create_memo_space,
+            commands::forget_memo_space,
+            commands::set_space_hue,
             commands::set_note_audience,
             commands::delete_note,
             commands::get_shortcuts,

@@ -40,6 +40,8 @@ npm run tauri dev
 - `npm run tauri dev` — Start the app in development mode.
 - `npm run check` — Run the full quality gate: version sync, strict TypeScript typecheck (`tsc`), Vite bundle build, frontend unit & Tauri IPC contract tests (`node --test`), Cargo Clippy (`-D warnings`), and Rust backend unit tests (`cargo test`).
 - `npm test` — Run both frontend (`npm run test:ts`) and Rust (`npm run test:rust`) test suites.
+- `npm run test:ui` — Playwright functional UI tests against the Vite frontend with a mocked Tauri IPC harness (`npx playwright install chromium chromium-headless-shell` once). Not part of `npm run check`.
+- `npm run test:scale` — Chromium CDP memory/DOM scale tests plus the ignored 10k-memo SQLite stress test. See [`docs/ui-test-plan.md`](docs/ui-test-plan.md).
 - `npm run lint:rust` — Run `cargo clippy --all-targets -- -D warnings`.
 - `npm run release` — Synchronize versions from `package.json` (`version` is the single source of truth) and build installable release bundles for the host platform (or explicit `--target <triple>`) into `release/<platform>/`.
 

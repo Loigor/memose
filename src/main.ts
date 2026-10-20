@@ -1,9 +1,14 @@
-import { convertFileSrc, invoke } from "@tauri-apps/api/core";
+import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import DOMPurify from "dompurify";
 import { marked } from "marked";
 
+import { audienceChoice, revealPressedChoice } from "./audience-ui";
+import { handleBlockAreaNavigation, handleBlockMediaDeletion, syncInlineLineSlot } from "./editor-blocks";
+import { filesFromTransfer, uniqueFiles } from "./files";
+import { BlockHistory, cloneBlocks, type Caret } from "./history";
+import { darkHue, defaultLook, lightHue, lookFromNote, namedTheme, tinted, type Look } from "./look";
 import {
   applyCode,
   applyTask,
@@ -12,13 +17,10 @@ import {
   ensureTextSlots,
   isAudio,
   isImage,
-  isPreviewableMedia,
   isVideo,
-  mediaPrefix,
   mediaTokenRegex,
   noteTitle,
   parseBlocks,
-  parseMediaMeta,
   serializeBlocks,
   tabOnMarkdown,
   taskListOnEnter,
@@ -27,28 +29,27 @@ import {
   type Block,
   type Edit,
 } from "./markdown-edit";
+import {
+  closeMediaContextMenu,
+  createAudioElement,
+  createFileAttachmentChip,
+  createVideoPreviewElement,
+  hydratePreviewContent,
+  mediaContextMenuOpen,
+  mediaPointer,
+  mediaSrc,
+  previewBodyTarget,
+  showMediaContextMenu,
+} from "./media-elements";
 import { paintSurface, paintThemeButton, palette, paperAt, stackHeaderHtml, type ThemeName } from "./memo-chrome";
+import { pointIn, requireEl } from "./dom";
+import { inTauri, isPreviewWindow } from "./platform";
 import { defaultBinds, domMouseButton, formatBind, isModifierKey, matchBind, matchMouse, modifierDown, type ShortcutBinds } from "./shortcuts";
-
-type Note = {
-  id: string;
-  content: string;
-  createdAt: number;
-  updatedAt: number;
-  syncState: string;
-  remoteName: string | null;
-  lastError: string | null;
-  pinned: boolean;
-  opacity: number;
-  hueLight: number | null;
-  hueDark: number | null;
-  swatches: number[];
-  visibility?: string | null;
-  space?: string | null;
-  collapsed?: boolean;
-  stackHost?: string | null;
-  theme?: string | null;
-};
+import { syncIcon } from "./sync-status";
+import { estimateCharOffsetInLine, measureTextareaLines, resizeAllBlockTextareas, sizeBlockTextarea } from "./textarea";
+import { exactStamp, relativeTime } from "./time";
+import type { MemoSpace, Note } from "./types";
+import { visibilityOptions, visibilityShort } from "./visibility";
 
 const card = document.querySelector<HTMLElement>("#card");
 const blocks = document.querySelector<HTMLDivElement>("#blocks");
@@ -117,130 +118,59 @@ let noteContent = "";
 let loadedContent = "";
 let noteBlocks: Block[] = [{ kind: "text", text: "" }];
 let draggingMedia: string | null = null;
-let mediaDragged = false;
 let draftTimer: ReturnType<typeof setTimeout> | undefined;
-let caret: { index: number; start: number; end: number } | null = null;
+let caret: Caret | null = null;
 
-type NoteHistoryEntry = {
-  blocks: Block[];
-  caret: { index: number; start: number; end: number } | null;
-};
+const hostHistory = new BlockHistory();
 
-let hostUndoStack: NoteHistoryEntry[] = [];
-let hostRedoStack: NoteHistoryEntry[] = [];
-let hostLastInputSnapAt = 0;
-
-function cloneBlocks(items: Block[]): Block[] {
-  return items.map((b) =>
-    b.kind === "text"
-      ? { kind: "text", text: b.text }
-      : {
-          kind: "media",
-          name: b.name,
-          label: b.label,
-          width: b.width,
-          inline: b.inline,
-        },
-  );
+function restoreCaret(container: ParentNode, next: Caret | null) {
+  if (!next) {
+    return;
+  }
+  const area = container.querySelector<HTMLTextAreaElement>(`textarea[data-index="${next.index}"]`);
+  if (area) {
+    area.focus();
+    const s = Math.min(next.start, area.value.length);
+    const e = Math.min(next.end, area.value.length);
+    area.setSelectionRange(s, e);
+  }
 }
 
 function pushHostUndo(force = true) {
-  const now = performance.now();
-  if (!force && now - hostLastInputSnapAt < 900 && hostUndoStack.length > 0) {
-    return;
-  }
-  const serialized = serializeBlocks(noteBlocks);
-  const top = hostUndoStack[hostUndoStack.length - 1];
-  if (top && serializeBlocks(top.blocks) === serialized) {
-    top.caret = caret ? { ...caret } : null;
-    return;
-  }
-  hostUndoStack.push({
-    blocks: cloneBlocks(noteBlocks),
-    caret: caret ? { ...caret } : null,
-  });
-  if (hostUndoStack.length > 60) {
-    hostUndoStack.shift();
-  }
-  hostRedoStack = [];
-  if (!force) {
-    hostLastInputSnapAt = now;
-  }
+  hostHistory.push(noteBlocks, caret, force);
 }
 
 function resetHostHistory() {
-  hostUndoStack = [];
-  hostRedoStack = [];
-  hostLastInputSnapAt = 0;
+  hostHistory.reset();
 }
 
 function undoHost(): boolean {
-  if (hostUndoStack.length === 0) {
+  const entry = hostHistory.takeUndo(noteBlocks, caret);
+  if (!entry) {
     return false;
   }
-  const currentSerialized = serializeBlocks(noteBlocks);
-  let entry = hostUndoStack.pop()!;
-  while (hostUndoStack.length > 0 && serializeBlocks(entry.blocks) === currentSerialized) {
-    entry = hostUndoStack.pop()!;
-  }
-  if (serializeBlocks(entry.blocks) === currentSerialized) {
-    return false;
-  }
-  hostRedoStack.push({
-    blocks: cloneBlocks(noteBlocks),
-    caret: caret ? { ...caret } : null,
-  });
   noteBlocks = cloneBlocks(entry.blocks);
   caret = entry.caret ? { ...entry.caret } : null;
-  hostLastInputSnapAt = 0;
   publishBlocks();
   scheduleDraft();
-  if (caret) {
-    const area = blocksEl.querySelector<HTMLTextAreaElement>(`textarea[data-index="${caret.index}"]`);
-    if (area) {
-      area.focus();
-      const s = Math.min(caret.start, area.value.length);
-      const e = Math.min(caret.end, area.value.length);
-      area.setSelectionRange(s, e);
-    }
-  }
+  restoreCaret(blocksEl, caret);
   return true;
 }
 
 function redoHost(): boolean {
-  if (hostRedoStack.length === 0) {
+  const entry = hostHistory.takeRedo(noteBlocks, caret);
+  if (!entry) {
     return false;
   }
-  const entry = hostRedoStack.pop()!;
-  hostUndoStack.push({
-    blocks: cloneBlocks(noteBlocks),
-    caret: caret ? { ...caret } : null,
-  });
   noteBlocks = cloneBlocks(entry.blocks);
   caret = entry.caret ? { ...entry.caret } : null;
-  hostLastInputSnapAt = 0;
   publishBlocks();
   scheduleDraft();
-  if (caret) {
-    const area = blocksEl.querySelector<HTMLTextAreaElement>(`textarea[data-index="${caret.index}"]`);
-    if (area) {
-      area.focus();
-      const s = Math.min(caret.start, area.value.length);
-      const e = Math.min(caret.end, area.value.length);
-      area.setSelectionRange(s, e);
-    }
-  }
+  restoreCaret(blocksEl, caret);
   return true;
 }
 
 marked.setOptions({ gfm: true, breaks: true });
-
-function requireEl<T>(value: T | null, name: string): T {
-  if (!value) {
-    throw new Error(`missing ${name}`);
-  }
-  return value;
-}
 
 const cardEl = requireEl(card, "card");
 const blocksEl = requireEl(blocks, "blocks");
@@ -306,294 +236,6 @@ function focusNote() {
   }
 }
 
-async function mediaSrc(name: string): Promise<string> {
-  const path = await invoke<string>("media_path", { name });
-  return convertFileSrc(path);
-}
-
-function revealInFolderLabel(): string {
-  const platform = `${navigator.platform ?? ""} ${navigator.userAgent ?? ""}`.toLowerCase();
-  if (platform.includes("mac")) {
-    return "Show in Finder";
-  }
-  if (platform.includes("win")) {
-    return "Show in Explorer";
-  }
-  return "Show in File Manager";
-}
-
-let mediaContextMenuEl: HTMLElement | null = null;
-
-function closeMediaContextMenu() {
-  if (mediaContextMenuEl) {
-    mediaContextMenuEl.remove();
-    mediaContextMenuEl = null;
-  }
-}
-
-function showMediaContextMenu(event: MouseEvent, name: string, onRemove?: () => void) {
-  if (!inTauri()) {
-    return;
-  }
-  event.preventDefault();
-  event.stopPropagation();
-  closeMediaContextMenu();
-
-  const menu = document.createElement("div");
-  menu.id = "media-context-menu";
-  menu.className = "media-context-menu";
-  menu.setAttribute("role", "menu");
-
-  const revealBtn = document.createElement("button");
-  revealBtn.type = "button";
-  revealBtn.setAttribute("role", "menuitem");
-  revealBtn.textContent = revealInFolderLabel();
-  revealBtn.addEventListener("click", (e) => {
-    e.stopPropagation();
-    closeMediaContextMenu();
-    void invoke("reveal_media", { name }).catch((error: unknown) => {
-      console.error(error);
-    });
-  });
-  menu.append(revealBtn);
-
-  const openBtn = document.createElement("button");
-  openBtn.type = "button";
-  openBtn.setAttribute("role", "menuitem");
-  openBtn.textContent = isImage(name) || isVideo(name) ? "Open Preview" : "Open File";
-  openBtn.addEventListener("click", (e) => {
-    e.stopPropagation();
-    closeMediaContextMenu();
-    if (isImage(name) || isVideo(name)) {
-      void openPreview(name);
-    } else {
-      void invoke("open_media_file", { name }).catch((error: unknown) => {
-        console.error(error);
-      });
-    }
-  });
-  menu.append(openBtn);
-
-  if (onRemove) {
-    const removeBtn = document.createElement("button");
-    removeBtn.type = "button";
-    removeBtn.className = "danger";
-    removeBtn.setAttribute("role", "menuitem");
-    removeBtn.textContent = "Remove";
-    removeBtn.addEventListener("click", (e) => {
-      e.stopPropagation();
-      closeMediaContextMenu();
-      onRemove();
-    });
-    menu.append(removeBtn);
-  }
-
-  document.body.append(menu);
-  mediaContextMenuEl = menu;
-
-  const rect = menu.getBoundingClientRect();
-  const maxX = Math.max(8, window.innerWidth - rect.width - 8);
-  const maxY = Math.max(8, window.innerHeight - rect.height - 8);
-  menu.style.left = `${Math.max(8, Math.min(event.clientX, maxX))}px`;
-  menu.style.top = `${Math.max(8, Math.min(event.clientY, maxY))}px`;
-}
-
-document.addEventListener("mousedown", (event) => {
-  if (mediaContextMenuEl && event.target instanceof Node && !mediaContextMenuEl.contains(event.target)) {
-    closeMediaContextMenu();
-  }
-});
-window.addEventListener("blur", closeMediaContextMenu);
-window.addEventListener("scroll", closeMediaContextMenu, true);
-
-const videoPosterCache = new Map<string, string>();
-const videoPosterPending = new Map<string, Promise<string | null>>();
-
-function captureVideoPoster(src: string): Promise<string | null> {
-  const cached = videoPosterCache.get(src);
-  if (cached) {
-    return Promise.resolve(cached);
-  }
-  const existing = videoPosterPending.get(src);
-  if (existing) {
-    return existing;
-  }
-  const promise = new Promise<string | null>((resolve) => {
-    const probe = document.createElement("video");
-    probe.muted = true;
-    probe.playsInline = true;
-    probe.preload = "metadata";
-    probe.crossOrigin = "anonymous";
-    let settled = false;
-    const finish = (poster: string | null) => {
-      if (settled) {
-        return;
-      }
-      settled = true;
-      videoPosterPending.delete(src);
-      if (poster) {
-        videoPosterCache.set(src, poster);
-      }
-      probe.removeAttribute("src");
-      probe.load();
-      resolve(poster);
-    };
-    const timer = window.setTimeout(() => finish(null), 3500);
-    const drawFrame = () => {
-      window.clearTimeout(timer);
-      const vw = probe.videoWidth;
-      const vh = probe.videoHeight;
-      if (!vw || !vh) {
-        finish(null);
-        return;
-      }
-      const maxDim = 480;
-      const scale = Math.min(1, maxDim / Math.max(vw, vh));
-      const cw = Math.max(1, Math.round(vw * scale));
-      const ch = Math.max(1, Math.round(vh * scale));
-      const canvas = document.createElement("canvas");
-      canvas.width = cw;
-      canvas.height = ch;
-      const ctx = canvas.getContext("2d");
-      if (!ctx) {
-        finish(null);
-        return;
-      }
-      try {
-        ctx.drawImage(probe, 0, 0, cw, ch);
-        const dataUrl = canvas.toDataURL("image/jpeg", 0.78);
-        finish(dataUrl);
-      } catch {
-        finish(null);
-      }
-    };
-    probe.addEventListener(
-      "loadeddata",
-      () => {
-        const dur = Number.isFinite(probe.duration) ? probe.duration : 0;
-        if (dur > 0.15) {
-          probe.currentTime = Math.min(0.1, dur / 4);
-        } else {
-          drawFrame();
-        }
-      },
-      { once: true },
-    );
-    probe.addEventListener("seeked", drawFrame, { once: true });
-    probe.addEventListener(
-      "error",
-      () => {
-        window.clearTimeout(timer);
-        finish(null);
-      },
-      { once: true },
-    );
-    probe.src = src;
-  });
-  videoPosterPending.set(src, promise);
-  return promise;
-}
-
-function createVideoPreviewElement(name: string, label?: string, resolvedUrl?: string): HTMLElement {
-  const wrap = document.createElement("div");
-  wrap.className = "media-video-wrap";
-
-  const video = document.createElement("video");
-  video.controls = true;
-  video.playsInline = true;
-  video.preload = "metadata";
-  video.draggable = false;
-
-  const badge = document.createElement("div");
-  badge.className = "media-video-badge";
-  badge.innerHTML = `<svg viewBox="0 0 16 16" width="12" height="12" aria-hidden="true"><path fill="currentColor" d="M4.5 3.5v9l8-4.5-8-4.5z"/></svg>`;
-  const badgeText = document.createElement("span");
-  badgeText.textContent = displayFileName(name, label);
-  badge.append(badgeText);
-
-  video.addEventListener("play", () => {
-    wrap.classList.add("is-playing");
-  });
-
-  const applyUrl = (url: string) => {
-    const cached = videoPosterCache.get(url);
-    if (cached) {
-      video.poster = cached;
-    } else {
-      void captureVideoPoster(url).then((poster) => {
-        if (poster) {
-          video.poster = poster;
-        }
-      });
-    }
-    video.src = `${url}#t=0.001`;
-  };
-
-  if (resolvedUrl) {
-    applyUrl(resolvedUrl);
-  } else {
-    void mediaSrc(name).then(applyUrl);
-  }
-
-  wrap.append(video, badge);
-  return wrap;
-}
-
-function createAudioElement(name: string, label: string | undefined, src?: string): HTMLElement {
-  const wrap = document.createElement("div");
-  wrap.className = "media-audio";
-  const header = document.createElement("div");
-  header.className = "media-audio-header";
-  header.innerHTML = `<svg viewBox="0 0 16 16" width="13" height="13" aria-hidden="true"><path fill="currentColor" d="M11.5 1.5a.5.5 0 0 1 .5.5v9.25a2.25 2.25 0 1 1-1-1.87V4.28L6 5.53v6.72a2.25 2.25 0 1 1-1-1.87V3.5a.5.5 0 0 1 .38-.49l6-1.5a.5.5 0 0 1 .12-.01z"/></svg>`;
-  const title = document.createElement("span");
-  title.className = "media-audio-name";
-  title.textContent = displayFileName(name, label);
-  header.append(title);
-  const audio = document.createElement("audio");
-  audio.controls = true;
-  audio.preload = "metadata";
-  if (src) {
-    audio.src = src;
-  } else {
-    void mediaSrc(name).then((resolved) => {
-      audio.src = resolved;
-    });
-  }
-  wrap.append(header, audio);
-  return wrap;
-}
-
-function createFileAttachmentChip(name: string, label?: string): HTMLAnchorElement {
-  const link = document.createElement("a");
-  link.className = "file-attachment";
-  link.href = "#";
-  link.draggable = false;
-  const shown = displayFileName(name, label);
-  const extMatch = name.match(/\.([A-Za-z0-9]+)$/);
-  const ext = extMatch ? extMatch[1].toUpperCase() : "FILE";
-  link.title = `${shown} (Click to open, right-click for ${revealInFolderLabel()})`;
-  link.innerHTML = `<svg class="file-attachment-icon" viewBox="0 0 16 16" width="14" height="14" aria-hidden="true"><path fill="currentColor" d="M3.5 1.5A1.5 1.5 0 0 0 2 3v10a1.5 1.5 0 0 0 1.5 1.5h9A1.5 1.5 0 0 0 14 13V5.414a1.5 1.5 0 0 0-.44-1.06L10.646 1.44A1.5 1.5 0 0 0 9.586 1H3.5zM3 3a.5.5 0 0 1 .5-.5H9v3a1 1 0 0 0 1 1h3v6.5a.5.5 0 0 1-.5.5h-9a.5.5 0 0 1-.5-.5V3zm7 .207L12.793 5.5H10V3.207z"/></svg><span class="file-attachment-name"></span><span class="file-attachment-ext"></span>`;
-  const nameSpan = link.querySelector(".file-attachment-name");
-  if (nameSpan) {
-    nameSpan.textContent = shown;
-  }
-  const extSpan = link.querySelector(".file-attachment-ext");
-  if (extSpan) {
-    extSpan.textContent = ext;
-  }
-  link.addEventListener("click", (event) => {
-    event.preventDefault();
-    if (mediaDragged) {
-      mediaDragged = false;
-      return;
-    }
-    void invoke("open_media_file", { name }).catch((error: unknown) => {
-      console.error(error);
-    });
-  });
-  return link;
-}
-
 function previewShortcut(): string {
   return formatBind(binds.preview);
 }
@@ -616,156 +258,6 @@ function renderSurface(focusName?: string) {
   renderBlocks(focusName);
 }
 
-async function hydratePreviewContent(
-  container: HTMLElement,
-  isCurrent: () => boolean = () => true,
-) {
-  for (const box of container.querySelectorAll("input[type='checkbox']")) {
-    if (box instanceof HTMLInputElement) {
-      box.disabled = false;
-    }
-  }
-  const images = [...container.querySelectorAll("img")];
-  await Promise.all(
-    images.map(async (img) => {
-      const rawSrc = img.getAttribute("src") ?? "";
-      if (!rawSrc.startsWith(mediaPrefix)) {
-        return;
-      }
-      const rest = rawSrc.slice(mediaPrefix.length);
-      const [name, frag] = rest.split("#");
-      const meta = parseMediaMeta(img.getAttribute("alt") || undefined, frag);
-      const label = meta.label;
-      try {
-        if (!isPreviewableMedia(name)) {
-          const chip = createFileAttachmentChip(name, label);
-          chip.addEventListener("contextmenu", (event) => {
-            showMediaContextMenu(event, name);
-          });
-          img.replaceWith(chip);
-          return;
-        }
-        const url = await mediaSrc(name);
-        if (!isCurrent()) {
-          return;
-        }
-        if (isVideo(name)) {
-          const videoWrap = createVideoPreviewElement(name, label, url);
-          if (meta.width) {
-            videoWrap.style.width = `${meta.width}px`;
-          }
-          videoWrap.addEventListener("contextmenu", (event) => {
-            showMediaContextMenu(event, name);
-          });
-          img.replaceWith(videoWrap);
-          return;
-        }
-        if (isAudio(name)) {
-          const audioWrap = createAudioElement(name, label, url);
-          audioWrap.addEventListener("contextmenu", (event) => {
-            showMediaContextMenu(event, name);
-          });
-          img.replaceWith(audioWrap);
-          return;
-        }
-        img.src = url;
-        img.alt = label ?? "";
-        if (meta.width) {
-          img.style.width = `${meta.width}px`;
-          img.style.maxHeight = "none";
-        }
-        img.addEventListener("click", () => {
-          void openPreview(name);
-        });
-        img.addEventListener("contextmenu", (event) => {
-          showMediaContextMenu(event, name);
-        });
-      } catch (error) {
-        console.error(error);
-      }
-    }),
-  );
-
-  const links = [...container.querySelectorAll<HTMLAnchorElement>("a")];
-  await Promise.all(
-    links.map(async (link) => {
-      const rawHref = link.getAttribute("href") ?? "";
-      if (!rawHref.startsWith(mediaPrefix)) {
-        return;
-      }
-      const rest = rawHref.slice(mediaPrefix.length);
-      const [name, frag] = rest.split("#");
-      const meta = parseMediaMeta(link.textContent || undefined, frag);
-      const label = meta.label;
-      if (isImage(name)) {
-        try {
-          const url = await mediaSrc(name);
-          if (!isCurrent()) {
-            return;
-          }
-          const img = document.createElement("img");
-          img.src = url;
-          img.alt = label ?? "";
-          if (meta.width) {
-            img.style.width = `${meta.width}px`;
-            img.style.maxHeight = "none";
-          }
-          img.addEventListener("click", () => {
-            void openPreview(name);
-          });
-          img.addEventListener("contextmenu", (event) => {
-            showMediaContextMenu(event, name);
-          });
-          link.replaceWith(img);
-        } catch (error) {
-          console.error(error);
-        }
-        return;
-      }
-      if (isVideo(name)) {
-        try {
-          const url = await mediaSrc(name);
-          if (!isCurrent()) {
-            return;
-          }
-          const videoWrap = createVideoPreviewElement(name, label, url);
-          if (meta.width) {
-            videoWrap.style.width = `${meta.width}px`;
-          }
-          videoWrap.addEventListener("contextmenu", (event) => {
-            showMediaContextMenu(event, name);
-          });
-          link.replaceWith(videoWrap);
-        } catch (error) {
-          console.error(error);
-        }
-        return;
-      }
-      if (isAudio(name)) {
-        try {
-          const url = await mediaSrc(name);
-          if (!isCurrent()) {
-            return;
-          }
-          const audioWrap = createAudioElement(name, label, url);
-          audioWrap.addEventListener("contextmenu", (event) => {
-            showMediaContextMenu(event, name);
-          });
-          link.replaceWith(audioWrap);
-        } catch (error) {
-          console.error(error);
-        }
-        return;
-      }
-      const chip = createFileAttachmentChip(name, label);
-      chip.addEventListener("contextmenu", (event) => {
-        showMediaContextMenu(event, name);
-      });
-      link.replaceWith(chip);
-    }),
-  );
-}
-
 async function paintPreview() {
   const generation = ++previewGen;
   const parsed = marked.parse(noteContent, { async: false });
@@ -774,7 +266,9 @@ async function paintPreview() {
     return;
   }
   previewEl.innerHTML = DOMPurify.sanitize(html);
-  await hydratePreviewContent(previewEl, () => generation === previewGen);
+  await hydratePreviewContent(previewEl, () => generation === previewGen, (name) => {
+    void openPreview(name);
+  });
 }
 
 previewEl.addEventListener("change", (event) => {
@@ -802,14 +296,6 @@ previewEl.addEventListener("change", (event) => {
 
 let previewClick: { at: number; x: number; y: number } | null = null;
 
-function previewBodyTarget(target: EventTarget | null): target is Element {
-  return (
-    target instanceof Element &&
-    Boolean(target.closest("#note-pane")) &&
-    !target.closest("a, input, img, video, audio, .media-audio, .file-attachment, button")
-  );
-}
-
 cardEl.addEventListener(
   "mousedown",
   (event) => {
@@ -835,141 +321,6 @@ cardEl.addEventListener(
   },
   true,
 );
-
-function sizeBlockTextarea(area: HTMLTextAreaElement) {
-  area.rows = 1;
-  const isGrow = area.classList.contains("grow");
-  const isInline = area.classList.contains("inline-line-slot");
-  const isEmpty = area.value.length === 0;
-  area.classList.toggle("empty-slot", isEmpty && !isGrow && !isInline);
-  if (isEmpty && !isGrow && !isInline) {
-    area.style.height = "";
-    return;
-  }
-  area.style.height = "0px";
-  const minH = isGrow ? 64 : 22;
-  const needed = Math.max(minH, area.scrollHeight);
-  area.style.height = `${needed}px`;
-}
-
-function resizeAllBlockTextareas(root: ParentNode = document) {
-  for (const area of root.querySelectorAll<HTMLTextAreaElement>("#blocks textarea, .stack-blocks textarea")) {
-    sizeBlockTextarea(area);
-  }
-}
-
-type TextLineMetric = {
-  text: string;
-  startOffset: number;
-  endOffset: number;
-  top: number;
-  bottom: number;
-  left: number;
-  right: number;
-};
-
-function measureTextareaLines(area: HTMLTextAreaElement): TextLineMetric[] {
-  const rect = area.getBoundingClientRect();
-  if (area.value.length === 0) {
-    const midY = rect.top + Math.min(6, rect.height / 2);
-    return [
-      {
-        text: "",
-        startOffset: 0,
-        endOffset: 0,
-        top: midY,
-        bottom: midY,
-        left: rect.left,
-        right: rect.left,
-      },
-    ];
-  }
-  const lines = area.value.split("\n");
-  const computed = window.getComputedStyle(area);
-  const mirror = document.createElement("div");
-  mirror.style.position = "fixed";
-  mirror.style.left = "-9999px";
-  mirror.style.top = "0";
-  mirror.style.visibility = "hidden";
-  mirror.style.pointerEvents = "none";
-  mirror.style.boxSizing = "border-box";
-  mirror.style.width = `${Math.max(40, area.clientWidth)}px`;
-  mirror.style.padding = computed.padding;
-  mirror.style.font = computed.font;
-  mirror.style.fontSize = computed.fontSize;
-  mirror.style.lineHeight = computed.lineHeight;
-  mirror.style.letterSpacing = computed.letterSpacing;
-  mirror.style.whiteSpace = "pre-wrap";
-  mirror.style.wordWrap = "break-word";
-  mirror.style.overflowWrap = "break-word";
-
-  const lineNodes: { row: HTMLElement; span: HTMLElement; line: string; startOffset: number; endOffset: number }[] = [];
-  let offset = 0;
-  for (const line of lines) {
-    const row = document.createElement("div");
-    const span = document.createElement("span");
-    span.textContent = line.length > 0 ? line : "\u200b";
-    row.append(span);
-    mirror.append(row);
-    const startOffset = offset;
-    const endOffset = offset + line.length;
-    lineNodes.push({ row, span, line, startOffset, endOffset });
-    offset = endOffset + 1;
-  }
-  document.body.append(mirror);
-  const metrics: TextLineMetric[] = lineNodes.map(({ row, span, line, startOffset, endOffset }) => {
-    const top = rect.top - area.scrollTop + row.offsetTop;
-    const bottom = top + row.offsetHeight;
-    const width = line.length > 0 ? span.offsetWidth : 0;
-    return {
-      text: line,
-      startOffset,
-      endOffset,
-      top,
-      bottom,
-      left: rect.left,
-      right: rect.left + width,
-    };
-  });
-  mirror.remove();
-  return metrics;
-}
-
-function estimateCharOffsetInLine(area: HTMLTextAreaElement, line: TextLineMetric, clientX: number): number {
-  if (line.text.length === 0 || clientX <= line.left) {
-    return line.startOffset;
-  }
-  if (clientX >= line.right) {
-    return line.endOffset;
-  }
-  const computed = window.getComputedStyle(area);
-  const probe = document.createElement("span");
-  probe.style.position = "fixed";
-  probe.style.left = "-9999px";
-  probe.style.top = "0";
-  probe.style.visibility = "hidden";
-  probe.style.whiteSpace = "pre";
-  probe.style.font = computed.font;
-  probe.style.fontSize = computed.fontSize;
-  probe.style.letterSpacing = computed.letterSpacing;
-  document.body.append(probe);
-  const relX = clientX - line.left;
-  let bestIdx = 0;
-  let bestDist = relX;
-  for (let i = 1; i <= line.text.length; i += 1) {
-    probe.textContent = line.text.slice(0, i);
-    const w = probe.offsetWidth;
-    const dist = Math.abs(relX - w);
-    if (dist <= bestDist) {
-      bestDist = dist;
-      bestIdx = i;
-    } else {
-      break;
-    }
-  }
-  probe.remove();
-  return line.startOffset + bestIdx;
-}
 
 type MediaDropTarget =
   | {
@@ -1200,7 +551,7 @@ function finishMediaDrag(commit: boolean) {
     }
   }
   window.setTimeout(() => {
-    mediaDragged = false;
+    mediaPointer.dragged = false;
   }, 0);
 }
 
@@ -1217,7 +568,7 @@ window.addEventListener("pointermove", (event) => {
     }
     drag.started = true;
     draggingMedia = drag.name;
-    mediaDragged = true;
+    mediaPointer.dragged = true;
     drag.figure.classList.add("is-dragging");
     document.body.classList.add("is-dragging-media");
 
@@ -1310,7 +661,9 @@ function toggleSectionPreview(section: HTMLElement) {
     const parsed = marked.parse(state.content, { async: false });
     const html = typeof parsed === "string" ? parsed : "";
     preview.innerHTML = DOMPurify.sanitize(html);
-    void hydratePreviewContent(preview, () => !preview.hidden);
+    void hydratePreviewContent(preview, () => !preview.hidden, (name) => {
+      void openPreview(name);
+    });
   } else {
     renderSectionBlocks(section, state);
     sectionTargetArea(section, state)?.focus();
@@ -1423,7 +776,7 @@ function finishMediaResize(commit: boolean) {
     commitMediaWidth(rs.section, rs.blockIndex, rs.currentWidth);
   }
   window.setTimeout(() => {
-    mediaDragged = false;
+    mediaPointer.dragged = false;
   }, 0);
 }
 
@@ -1464,8 +817,8 @@ function createMedia(name: string, label?: string, section?: HTMLElement | null,
       img.src = src;
     });
     img.addEventListener("click", () => {
-      if (mediaDragged) {
-        mediaDragged = false;
+      if (mediaPointer.dragged) {
+        mediaPointer.dragged = false;
         return;
       }
       void openPreview(name);
@@ -1495,7 +848,7 @@ function createMedia(name: string, label?: string, section?: HTMLElement | null,
       }
       event.preventDefault();
       event.stopPropagation();
-      mediaDragged = true;
+      mediaPointer.dragged = true;
       const container = figure.closest<HTMLElement>("#blocks, .stack-blocks");
       const maxWidth = container ? Math.max(80, container.clientWidth - 8) : 600;
       const rect = resizableTarget.getBoundingClientRect();
@@ -1520,12 +873,17 @@ function createMedia(name: string, label?: string, section?: HTMLElement | null,
 
   figure.addEventListener("contextmenu", (event) => {
     const idx = Number(figure.dataset.index);
-    showMediaContextMenu(event, name, () => {
-      if (section) {
-        removeSectionMediaAt(section, idx, name);
-      } else {
-        removeMediaAt(idx, name);
-      }
+    showMediaContextMenu(event, name, {
+      onRemove: () => {
+        if (section) {
+          removeSectionMediaAt(section, idx, name);
+        } else {
+          removeMediaAt(idx, name);
+        }
+      },
+      onPreview: (mediaName) => {
+        void openPreview(mediaName);
+      },
     });
   });
 
@@ -1568,140 +926,6 @@ function createMedia(name: string, label?: string, section?: HTMLElement | null,
   });
 
   return figure;
-}
-
-function handleBlockMediaDeletion(
-  container: HTMLElement,
-  area: HTMLTextAreaElement,
-  event: KeyboardEvent,
-  getBlocks: () => Block[],
-  removeMediaByIndex: (mediaIndex: number, focusBlockIndex: number, caretOffset: number) => void,
-): boolean {
-  if (event.shiftKey || event.altKey || event.metaKey || event.ctrlKey || event.isComposing) {
-    return false;
-  }
-  if (area.selectionStart !== area.selectionEnd) {
-    return false;
-  }
-  const index = Number(area.dataset.index);
-  const items = getBlocks();
-  if (event.key === "Backspace" && area.selectionStart === 0) {
-    const prevBlock = items[index - 1];
-    if (prevBlock?.kind === "media") {
-      event.preventDefault();
-      const beforeMedia = items[index - 2];
-      const beforeLen = beforeMedia?.kind === "text" ? beforeMedia.text.length : 0;
-      const targetTextIndex = Math.max(0, index - 2);
-      const caretOffset = beforeLen > 0 && area.value.length > 0 ? beforeLen + 1 : beforeLen;
-      removeMediaByIndex(index - 1, targetTextIndex, caretOffset);
-      return true;
-    }
-  }
-  if (event.key === "Delete" && area.selectionEnd === area.value.length) {
-    const nextBlock = items[index + 1];
-    if (nextBlock?.kind === "media") {
-      event.preventDefault();
-      const caretOffset = area.value.length;
-      removeMediaByIndex(index + 1, index, caretOffset);
-      return true;
-    }
-  }
-  if (event.key === "ArrowLeft" && area.selectionStart === 0) {
-    const areas = [...container.querySelectorAll<HTMLTextAreaElement>("textarea")];
-    const pos = areas.indexOf(area);
-    if (pos > 0) {
-      event.preventDefault();
-      const prev = areas[pos - 1];
-      prev.focus();
-      prev.setSelectionRange(prev.value.length, prev.value.length);
-      return true;
-    }
-  }
-  if (event.key === "ArrowRight" && area.selectionEnd === area.value.length) {
-    const areas = [...container.querySelectorAll<HTMLTextAreaElement>("textarea")];
-    const pos = areas.indexOf(area);
-    if (pos >= 0 && pos < areas.length - 1) {
-      event.preventDefault();
-      const next = areas[pos + 1];
-      next.focus();
-      next.setSelectionRange(0, 0);
-      return true;
-    }
-  }
-  return false;
-}
-
-function handleBlockAreaNavigation(
-  container: HTMLElement,
-  area: HTMLTextAreaElement,
-  event: KeyboardEvent,
-): boolean {
-  if (event.shiftKey || event.altKey || event.metaKey || event.ctrlKey || event.isComposing) {
-    return false;
-  }
-  if (event.key === "ArrowUp" && area.selectionStart === area.selectionEnd) {
-    const before = area.value.slice(0, area.selectionStart);
-    if (!before.includes("\n")) {
-      const areas = [...container.querySelectorAll<HTMLTextAreaElement>("textarea")];
-      const pos = areas.indexOf(area);
-      if (pos > 0) {
-        event.preventDefault();
-        const prev = areas[pos - 1];
-        prev.focus();
-        prev.setSelectionRange(prev.value.length, prev.value.length);
-        return true;
-      }
-    }
-  }
-  if (event.key === "ArrowDown" && area.selectionStart === area.selectionEnd) {
-    const after = area.value.slice(area.selectionEnd);
-    if (!after.includes("\n")) {
-      const areas = [...container.querySelectorAll<HTMLTextAreaElement>("textarea")];
-      const pos = areas.indexOf(area);
-      if (pos >= 0 && pos < areas.length - 1) {
-        event.preventDefault();
-        const next = areas[pos + 1];
-        next.focus();
-        next.setSelectionRange(0, 0);
-        return true;
-      }
-    }
-  }
-  return false;
-}
-
-function syncInlineLineSlot(
-  area: HTMLTextAreaElement,
-  prevBlock: Block | undefined,
-  row: HTMLElement | null,
-  container: HTMLElement,
-  isLast: boolean,
-) {
-  if (prevBlock?.kind !== "media") {
-    return;
-  }
-  const hasNewline = area.value.includes("\n");
-  if (hasNewline) {
-    prevBlock.inline = false;
-    if (area.classList.contains("inline-line-slot")) {
-      area.classList.remove("inline-line-slot");
-      if (isLast) {
-        area.classList.add("grow");
-      }
-      if (row && area.parentElement === row) {
-        row.after(area);
-      } else if (area.parentElement !== container) {
-        container.append(area);
-      }
-    }
-  } else {
-    prevBlock.inline = area.value.length > 0;
-    if (row && !area.classList.contains("inline-line-slot")) {
-      area.classList.add("inline-line-slot");
-      area.classList.remove("grow");
-      row.append(area);
-    }
-  }
 }
 
 function renderBlocks(focusName?: string) {
@@ -2116,7 +1340,9 @@ function insertSectionMedia(section: HTMLElement, name: string, label?: string) 
     const parsed = marked.parse(state.content, { async: false });
     const html = typeof parsed === "string" ? parsed : "";
     preview.innerHTML = DOMPurify.sanitize(html);
-    void hydratePreviewContent(preview, () => !preview.hidden);
+    void hydratePreviewContent(preview, () => !preview.hidden, (name) => {
+      void openPreview(name);
+    });
   }
 }
 
@@ -2154,25 +1380,6 @@ async function attachFiles(files: File[], targetSection?: HTMLElement | null) {
       console.error(error);
     }
   }
-}
-
-function uniqueFiles(files: File[]): File[] {
-  const seen = new Set<string>();
-  return files.filter((file) => {
-    const key = `${file.name}:${file.size}:${file.lastModified}`;
-    if (seen.has(key)) {
-      return false;
-    }
-    seen.add(key);
-    return true;
-  });
-}
-
-function filesFromTransfer(data: DataTransfer | null): File[] {
-  if (!data) {
-    return [];
-  }
-  return [...data.files];
 }
 
 function syncNoteTitle() {
@@ -2285,75 +1492,6 @@ async function openRecent(item: Note) {
   }
 }
 
-function relativeTime(ms: number): string {
-  const minutes = Math.round((Date.now() - ms) / 60000);
-  if (minutes < 1) {
-    return "just now";
-  }
-  if (minutes < 60) {
-    return minutes === 1 ? "1 minute ago" : `${minutes} minutes ago`;
-  }
-  const date = new Date(ms);
-  const time = `${String(date.getHours()).padStart(2, "0")}:${String(date.getMinutes()).padStart(2, "0")}`;
-  const today = new Date();
-  const start = new Date(today.getFullYear(), today.getMonth(), today.getDate()).getTime();
-  if (ms >= start) {
-    return `today at ${time}`;
-  }
-  if (ms >= start - 86_400_000) {
-    return `yesterday at ${time}`;
-  }
-  const days = Math.round((start - ms) / 86_400_000);
-  if (days < 7) {
-    return `${days} days ago`;
-  }
-  const day = date.toLocaleDateString(undefined, { month: "short", day: "numeric" });
-  return `${day} at ${time}`;
-}
-
-function exactStamp(ms: number): string {
-  const date = new Date(ms);
-  const pad = (value: number) => String(value).padStart(2, "0");
-  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`;
-}
-
-function syncIcon(state: string): { svg: string; label: string } {
-  if (state === "synced") {
-    return {
-      svg: `<svg viewBox="0 0 16 16" width="12" height="12"><path fill="currentColor" d="M6.2 11.3 3.3 8.4l1.1-1.1 1.8 1.8 4.5-4.5 1.1 1.1z"/></svg>`,
-      label: "Synced",
-    };
-  }
-  if (state === "pending") {
-    return {
-      svg: `<svg viewBox="0 0 16 16" width="12" height="12"><circle cx="4" cy="8" r="1.2" fill="currentColor"/><circle cx="8" cy="8" r="1.2" fill="currentColor"/><circle cx="12" cy="8" r="1.2" fill="currentColor"/></svg>`,
-      label: "Waiting to sync",
-    };
-  }
-  if (state === "conflict") {
-    return {
-      svg: `<svg viewBox="0 0 16 16" width="12" height="12"><path fill="currentColor" d="M7.2 3h1.6v6.2H7.2zM7.2 11h1.6V12.6H7.2z"/></svg>`,
-      label: "Choose a version",
-    };
-  }
-  if (state === "remote") {
-    return {
-      svg: `<svg viewBox="0 0 16 16" width="12" height="12"><circle cx="8" cy="8" r="3.2" fill="none" stroke="currentColor" stroke-width="1.4"/></svg>`,
-      label: "On server",
-    };
-  }
-  if (state === "error") {
-    return {
-      svg: `<svg viewBox="0 0 16 16" width="12" height="12"><path fill="currentColor" d="M7.2 3h1.6v6.2H7.2zM7.2 11h1.6V12.6H7.2z"/></svg>`,
-      label: "Sync failed",
-    };
-  }
-  return {
-    svg: `<svg viewBox="0 0 16 16" width="12" height="12"><circle cx="8" cy="8" r="3.2" fill="none" stroke="currentColor" stroke-width="1.4"/></svg>`,
-    label: "Local",
-  };
-}
-
 function setConflict(id: string | null) {
   conflictId = id;
   conflictEl.hidden = id === null;
@@ -2362,8 +1500,6 @@ function setConflict(id: string | null) {
 function setPinPressed(on: boolean) {
   pinToggleEl.setAttribute("aria-pressed", String(on));
 }
-
-type MemoSpace = { name: string; title: string };
 
 let syncEnabled = false;
 let defaultVisibility = "PRIVATE";
@@ -2374,52 +1510,9 @@ let audiencePainted = false;
 let chosenVisibility = "PRIVATE";
 let chosenSpace = "";
 
-const visibilityOptions = [
-  { value: "PRIVATE", label: "Private", short: "Private", hint: "Only you" },
-  { value: "PROTECTED", label: "Signed-in users", short: "Signed-in", hint: "Anyone with an account" },
-  { value: "PUBLIC", label: "Public", short: "Public", hint: "Anyone with the link" },
-  { value: "SPACE", label: "Space members", short: "Space", hint: "People in one space" },
-];
-
-function visibilityShort(value: string, space: string): string {
-  const spaceTitle = space ? knownSpaces.find((item) => item.name === space)?.title : undefined;
-  if (value === "SPACE") {
-    return spaceTitle || "Space";
-  }
-  const short = visibilityOptions.find((item) => item.value === value)?.short ?? "Private";
-  return spaceTitle ? `${short} | ${spaceTitle}` : short;
-}
-
 function refreshMetaSep() {
   editedSepEl.hidden = visibilityLabelEl.hidden || editedAtEl.hidden;
   syncHeaderCompact();
-}
-
-function audienceChoice(title: string, hint: string, pressed: boolean, onClick: () => void): HTMLButtonElement {
-  const button = document.createElement("button");
-  button.type = "button";
-  button.className = "audience-choice";
-  button.setAttribute("aria-pressed", String(pressed));
-  const copy = document.createElement("span");
-  copy.className = "audience-choice-copy";
-  const titleEl = document.createElement("span");
-  titleEl.className = "audience-choice-title";
-  titleEl.textContent = title;
-  copy.append(titleEl);
-  if (hint) {
-    const hintEl = document.createElement("span");
-    hintEl.className = "audience-choice-hint";
-    hintEl.textContent = hint;
-    copy.append(hintEl);
-  }
-  const mark = document.createElement("span");
-  mark.className = "audience-check";
-  mark.setAttribute("aria-hidden", "true");
-  mark.innerHTML =
-    '<svg viewBox="0 0 16 16" width="12" height="12"><path d="M3.5 8.5 6.5 11.5 12.5 4.5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>';
-  button.append(copy, mark);
-  button.addEventListener("click", onClick);
-  return button;
 }
 
 function paintAudienceMenu() {
@@ -2446,26 +1539,18 @@ function paintAudienceMenu() {
   );
   for (const space of knownSpaces) {
     spaceChoicesEl.append(
-      audienceChoice(space.title, "", chosenSpace === space.name, () => {
-        chooseSpace(space.name);
-      }),
+      audienceChoice(
+        space.title,
+        space.synced === false ? "Not on server" : "",
+        chosenSpace === space.name,
+        () => {
+          chooseSpace(space.name);
+        },
+      ),
     );
   }
   if (!audiencePopEl.hidden) {
     revealPressedChoice(spaceChoicesEl);
-  }
-}
-
-function revealPressedChoice(container: HTMLElement) {
-  const selected = container.querySelector<HTMLElement>('[aria-pressed="true"]');
-  if (!selected) {
-    return;
-  }
-  const delta = selected.getBoundingClientRect().top - container.getBoundingClientRect().top;
-  if (delta < 0) {
-    container.scrollTop += delta;
-  } else if (delta + selected.offsetHeight > container.clientHeight) {
-    container.scrollTop += delta + selected.offsetHeight - container.clientHeight;
   }
 }
 
@@ -2480,14 +1565,38 @@ function paintAudience(note: { visibility?: string | null; space?: string | null
   }
   chosenVisibility = visibility;
   chosenSpace = note?.space ?? (note?.visibility ? "" : defaultSpace);
-  if (chosenSpace && !knownSpaces.some((space) => space.name === chosenSpace)) {
-    chosenSpace = "";
-  }
   visibilityLabelEl.hidden = false;
-  visibilityLabelEl.textContent = visibilityShort(chosenVisibility, chosenSpace);
+  visibilityLabelEl.textContent = visibilityShort(chosenVisibility, chosenSpace, knownSpaces);
   paintAudienceMenu();
   refreshMetaSep();
   audienceDirty = false;
+  if (!note && look.hueLight == null && look.hueDark == null) {
+    applySpaceDefaultLook(chosenSpace);
+  }
+}
+
+function composerIsNewMemo() {
+  return !pinnedNoteId && !editingId;
+}
+
+function spaceDefaultHue(name: string): number | null {
+  if (!name) {
+    return null;
+  }
+  const hue = knownSpaces.find((item) => item.name === name)?.hue;
+  return typeof hue === "number" ? hue : null;
+}
+
+function applySpaceDefaultLook(space: string) {
+  if (!composerIsNewMemo()) {
+    return;
+  }
+  const hue = spaceDefaultHue(space);
+  look.hueLight = hue;
+  look.hueDark = hue;
+  paintLook();
+  syncSlider();
+  scheduleLook();
 }
 
 function chooseVisibility(value: string) {
@@ -2495,9 +1604,10 @@ function chooseVisibility(value: string) {
   if (value === "SPACE" && chosenSpace === "" && knownSpaces[0]) {
     chosenSpace = knownSpaces[0].name;
   }
-  visibilityLabelEl.textContent = visibilityShort(chosenVisibility, chosenSpace);
+  visibilityLabelEl.textContent = visibilityShort(chosenVisibility, chosenSpace, knownSpaces);
   paintAudienceMenu();
   persistAudience();
+  applySpaceDefaultLook(chosenSpace);
 }
 
 function chooseSpace(value: string) {
@@ -2505,9 +1615,10 @@ function chooseSpace(value: string) {
   if (value === "" && chosenVisibility === "SPACE") {
     chosenVisibility = "PRIVATE";
   }
-  visibilityLabelEl.textContent = visibilityShort(chosenVisibility, chosenSpace);
+  visibilityLabelEl.textContent = visibilityShort(chosenVisibility, chosenSpace, knownSpaces);
   paintAudienceMenu();
   persistAudience();
+  applySpaceDefaultLook(chosenSpace);
 }
 
 function persistAudience() {
@@ -2541,7 +1652,7 @@ async function loadAudience() {
     return;
   }
   visibilityLabelEl.hidden = false;
-  visibilityLabelEl.textContent = visibilityShort(chosenVisibility, chosenSpace);
+  visibilityLabelEl.textContent = visibilityShort(chosenVisibility, chosenSpace, knownSpaces);
   paintAudienceMenu();
   refreshMetaSep();
   stackEl?.querySelectorAll<HTMLElement>(".stack-note").forEach((section) => {
@@ -2746,30 +1857,10 @@ async function loadDraft() {
   setEditedAt(draft?.updatedAt ?? null);
   paintAudience(draft);
   adoptLook(draft ? lookFromNote(draft) : defaultLook());
+  if (!draft || (draft.hueLight == null && draft.hueDark == null)) {
+    applySpaceDefaultLook(draft?.space || chosenSpace);
+  }
 }
-
-type Look = {
-  opacity: number;
-  hueLight: number | null;
-  hueDark: number | null;
-  swatches: number[];
-  theme: ThemeName | null;
-};
-
-const lightHue = 48;
-const darkHue = 32;
-const tinted = [
-  "--paper",
-  "--ink",
-  "--muted",
-  "--button",
-  "--button-hover",
-  "--line",
-  "--rule",
-  "--shadow",
-  "--field",
-  "--pin-on",
-];
 
 let look: Look = { opacity: 100, hueLight: null, hueDark: null, swatches: [], theme: null };
 let appTheme: ThemeName = "light";
@@ -2782,33 +1873,11 @@ function currentTheme(): ThemeName {
   return look.theme ?? pinnedThemeHint ?? appTheme;
 }
 
-function namedTheme(value: string | null | undefined): ThemeName | null {
-  if (value === "dark" || value === "light") {
-    return value;
-  }
-  return null;
-}
-
 function currentLookId(): string | null {
   if (pinnedNoteId) {
     return pinnedNoteId;
   }
   return editingId || draftId;
-}
-
-function defaultLook(): Look {
-  return { opacity: 100, hueLight: null, hueDark: null, swatches: [], theme: null };
-}
-
-function lookFromNote(note: Note): Look {
-  const swatches = Array.isArray(note.swatches) ? note.swatches : [];
-  return {
-    opacity: Math.min(100, Math.max(0, Math.round(note.opacity ?? 100))),
-    hueLight: note.hueLight ?? null,
-    hueDark: note.hueDark ?? null,
-    swatches: swatches.filter((hue) => hue >= 0 && hue <= 359).slice(0, 6),
-    theme: namedTheme(note.theme),
-  };
 }
 
 function adoptLook(next: Look) {
@@ -3017,29 +2086,44 @@ function activeStackSection(): { section: HTMLElement; state: StackState } | nul
   return null;
 }
 
-function randomHue() {
+type RandomStrategy = "golden-ratio" | "analogous" | "clamped-random" | "complementary";
+
+function randomHue(strategy: RandomStrategy = "golden-ratio") {
   const target = activeStackSection();
-  if (target) {
-    const { section, state } = target;
-    const theme = sectionTheme(state);
-    const current = sectionHue(state) ?? (theme === "dark" ? darkHue : lightHue);
-    let hue = Math.floor(Math.random() * 360);
-    if (hue === current) {
-      hue = (hue + 137) % 360;
+  const current = target
+    ? (sectionHue(target.state) ?? (sectionTheme(target.state) === "dark" ? darkHue : lightHue))
+    : activeHue();
+
+  let hue = current;
+  switch (strategy) {
+    case "golden-ratio": {
+      const jitter = Math.random() * 36 - 18;
+      hue = Math.floor((current + 222.5 + jitter + 360) % 360);
+      break;
     }
-    const slider = section.querySelector<HTMLInputElement>(".hue-slider");
+    case "analogous": {
+      const shift = Math.random() > 0.5 ? 35 : -35;
+      hue = Math.floor((current + shift + 360) % 360);
+      break;
+    }
+    case "complementary":
+      hue = Math.floor((current + 180) % 360);
+      break;
+    case "clamped-random":
+    default:
+      hue = (current + 45 + Math.floor(Math.random() * 270)) % 360;
+      break;
+  }
+
+  if (target) {
+    const slider = target.section.querySelector<HTMLInputElement>(".hue-slider");
     if (slider) {
       slider.value = String(hue);
     }
-    setSectionHue(section, state, hue);
-    return;
+    setSectionHue(target.section, target.state, hue);
+  } else {
+    setThemeHue(hue);
   }
-  const current = themeHue() ?? activeHue();
-  let hue = Math.floor(Math.random() * 360);
-  if (hue === current) {
-    hue = (hue + 137) % 360;
-  }
-  setThemeHue(hue);
 }
 
 function setThemeHue(hue: number) {
@@ -3565,10 +2649,6 @@ hueSliderEl.addEventListener("input", () => {
   setThemeHue(Number(hueSliderEl.value));
 });
 
-function pointIn(rect: DOMRect, x: number, y: number): boolean {
-  return x >= rect.left && x <= rect.right && y >= rect.top && y <= rect.bottom;
-}
-
 function saveHue() {
   const hue = Number(hueSliderEl.value);
   if (look.swatches.includes(hue) || look.swatches.length >= 6) {
@@ -3716,10 +2796,6 @@ document.addEventListener(
   { passive: false, capture: true },
 );
 
-function inTauri(): boolean {
-  return "__TAURI_INTERNALS__" in window;
-}
-
 const NOTE_BAR = 52;
 const WINDOW_BAR = 108;
 const SECTION_OPEN = 420;
@@ -3733,10 +2809,8 @@ type StackState = {
   loaded: string;
   content: string;
   blocks: Block[];
-  caret: { index: number; start: number; end: number } | null;
-  undoStack: NoteHistoryEntry[];
-  redoStack: NoteHistoryEntry[];
-  lastInputSnapAt: number;
+  caret: Caret | null;
+  history: BlockHistory;
   hueLight: number | null;
   hueDark: number | null;
   swatches: number[];
@@ -3747,88 +2821,39 @@ type StackState = {
 };
 
 function pushSectionUndo(state: StackState, force = true) {
-  const now = performance.now();
-  if (!force && now - state.lastInputSnapAt < 900 && state.undoStack.length > 0) {
-    return;
-  }
-  const serialized = serializeBlocks(state.blocks);
-  const top = state.undoStack[state.undoStack.length - 1];
-  if (top && serializeBlocks(top.blocks) === serialized) {
-    top.caret = state.caret ? { ...state.caret } : null;
-    return;
-  }
-  state.undoStack.push({
-    blocks: cloneBlocks(state.blocks),
-    caret: state.caret ? { ...state.caret } : null,
-  });
-  if (state.undoStack.length > 60) {
-    state.undoStack.shift();
-  }
-  state.redoStack = [];
-  if (!force) {
-    state.lastInputSnapAt = now;
-  }
+  state.history.push(state.blocks, state.caret, force);
 }
 
 function undoSection(section: HTMLElement, state: StackState): boolean {
-  if (state.undoStack.length === 0) {
+  const entry = state.history.takeUndo(state.blocks, state.caret);
+  if (!entry) {
     return false;
   }
-  const currentSerialized = serializeBlocks(state.blocks);
-  let entry = state.undoStack.pop()!;
-  while (state.undoStack.length > 0 && serializeBlocks(entry.blocks) === currentSerialized) {
-    entry = state.undoStack.pop()!;
-  }
-  if (serializeBlocks(entry.blocks) === currentSerialized) {
-    return false;
-  }
-  state.redoStack.push({
-    blocks: cloneBlocks(state.blocks),
-    caret: state.caret ? { ...state.caret } : null,
-  });
   state.blocks = cloneBlocks(entry.blocks);
   state.caret = entry.caret ? { ...entry.caret } : null;
-  state.lastInputSnapAt = 0;
   state.content = serializeBlocks(state.blocks);
   renderSectionBlocks(section, state);
   scheduleSectionSave(section, state);
   const container = section.querySelector<HTMLElement>(".stack-blocks");
-  if (container && state.caret) {
-    const area = container.querySelector<HTMLTextAreaElement>(`textarea[data-index="${state.caret.index}"]`);
-    if (area) {
-      area.focus();
-      const s = Math.min(state.caret.start, area.value.length);
-      const e = Math.min(state.caret.end, area.value.length);
-      area.setSelectionRange(s, e);
-    }
+  if (container) {
+    restoreCaret(container, state.caret);
   }
   return true;
 }
 
 function redoSection(section: HTMLElement, state: StackState): boolean {
-  if (state.redoStack.length === 0) {
+  const entry = state.history.takeRedo(state.blocks, state.caret);
+  if (!entry) {
     return false;
   }
-  const entry = state.redoStack.pop()!;
-  state.undoStack.push({
-    blocks: cloneBlocks(state.blocks),
-    caret: state.caret ? { ...state.caret } : null,
-  });
   state.blocks = cloneBlocks(entry.blocks);
   state.caret = entry.caret ? { ...entry.caret } : null;
-  state.lastInputSnapAt = 0;
   state.content = serializeBlocks(state.blocks);
   renderSectionBlocks(section, state);
   scheduleSectionSave(section, state);
   const container = section.querySelector<HTMLElement>(".stack-blocks");
-  if (container && state.caret) {
-    const area = container.querySelector<HTMLTextAreaElement>(`textarea[data-index="${state.caret.index}"]`);
-    if (area) {
-      area.focus();
-      const s = Math.min(state.caret.start, area.value.length);
-      const e = Math.min(state.caret.end, area.value.length);
-      area.setSelectionRange(s, e);
-    }
+  if (container) {
+    restoreCaret(container, state.caret);
   }
   return true;
 }
@@ -4079,16 +3104,13 @@ function paintSectionAudience(section: HTMLElement, state: StackState) {
   if (!visibilityOptions.some((option) => option.value === visibility)) {
     visibility = "PRIVATE";
   }
-  let space = state.space || "";
-  if (space && !knownSpaces.some((item) => item.name === space)) {
-    space = "";
-  }
+  const space = state.space || "";
   state.visibility = visibility;
   state.space = space;
   const label = section.querySelector<HTMLButtonElement>(".visibility-label");
   if (label) {
     label.hidden = false;
-    label.textContent = visibilityShort(visibility, space);
+    label.textContent = visibilityShort(visibility, space, knownSpaces);
   }
   const edited = section.querySelector<HTMLElement>(".edited-at");
   const sep = section.querySelector<HTMLElement>(".edited-sep");
@@ -4147,7 +3169,7 @@ function paintSectionAudience(section: HTMLElement, state: StackState) {
   );
   for (const item of knownSpaces) {
     spaceChoices.append(
-      audienceChoice(item.title, "", state.space === item.name, () => {
+      audienceChoice(item.title, item.synced === false ? "Not on server" : "", state.space === item.name, () => {
         state.space = item.name;
         paintSectionAudience(section, state);
         void invoke("set_note_audience", {
@@ -5122,9 +4144,7 @@ async function loadStack() {
       content,
       blocks,
       caret: prev?.caret ?? null,
-      undoStack: prev?.undoStack ?? [],
-      redoStack: prev?.redoStack ?? [],
-      lastInputSnapAt: prev?.lastInputSnapAt ?? 0,
+      history: prev?.history ?? new BlockHistory(),
       hueLight: note.hueLight,
       hueDark: note.hueDark,
       swatches: [...note.swatches],
@@ -5774,10 +4794,6 @@ function wireChrome() {
 
 wireChrome();
 
-function isPreviewWindow(): boolean {
-  return inTauri() && getCurrentWindow().label === "media-preview";
-}
-
 async function showLightbox(name: string) {
   const src = await mediaSrc(name);
   const existing = lightboxEl.querySelector("video");
@@ -5870,7 +4886,7 @@ if (!isPreviewWindow()) {
       const openSectionTools = [...document.querySelectorAll<HTMLElement>(".stack-note .editor-tools.open")];
       if (
         event.key === "Escape" &&
-        (mediaContextMenuEl !== null ||
+        (mediaContextMenuOpen() ||
           !colorPopEl.hidden ||
           !audiencePopEl.hidden ||
           !markdownPopEl.hidden ||
@@ -6181,6 +5197,11 @@ if (isPreviewWindow()) {
       console.error(error);
     });
   });
+  void listen("spaces-changed", () => {
+    void loadAudience().catch((error: unknown) => {
+      console.error(error);
+    });
+  });
   void loadPinned(pinnedNoteId).catch((error: unknown) => {
     console.error(error);
   });
@@ -6218,6 +5239,12 @@ if (isPreviewWindow()) {
   });
 
   void listen("settings-changed", () => {
+    void loadAudience().catch((error: unknown) => {
+      console.error(error);
+    });
+  });
+
+  void listen("spaces-changed", () => {
     void loadAudience().catch((error: unknown) => {
       console.error(error);
     });

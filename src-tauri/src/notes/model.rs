@@ -41,6 +41,25 @@ pub struct Note {
     pub theme: Option<String>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SpaceView {
+    pub name: String,
+    pub title: String,
+    pub synced: bool,
+    pub hue: Option<u16>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MemoSpace {
+    pub name: String,
+    pub title: String,
+}
+
 pub fn commit_state(has_server: bool) -> &'static str {
-    if has_server { PENDING } else { LOCAL }
+    if has_server {
+        PENDING
+    } else {
+        LOCAL
+    }
 }

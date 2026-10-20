@@ -29,6 +29,17 @@ npm run check
 6. **Rust Backend Unit & Integration Tests (`npm run test:rust`)**
    - Runs `cargo test --manifest-path src-tauri/Cargo.toml`.
    - Covers SQLite note lifecycle, draft/publish/edit transitions, stack chains, conflict detection/resolution, local HTTP mock server sync (`Latest` vs `V1` useMemos API), attachment storage/magic-byte sniffing/path traversal protection, shortcut validation, and window geometry/snapping/grid layout.
+   - Does **not** run the ignored `scale_stress_*` SQLite test (see below).
+
+### Optional UI & scale suites (not in `npm run check`)
+
+These are slower, browser- and load-oriented, and run only when asked. Full matrix, budgets, and harness notes: [`docs/ui-test-plan.md`](ui-test-plan.md).
+
+```bash
+npx playwright install chromium chromium-headless-shell
+npm run test:ui          # Playwright functional UI
+npm run test:scale       # Playwright @scale memory/DOM + ignored 10k SQLite test
+```
 
 ---
 

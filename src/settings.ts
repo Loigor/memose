@@ -1,6 +1,8 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 
+import { paperAt } from "./memo-chrome";
+import type { MemoSpace } from "./types";
 import {
   eventToBind,
   eventToMouse,
@@ -22,11 +24,6 @@ type Settings = {
   snapMemos: boolean;
 };
 
-type MemoSpace = {
-  name: string;
-  title: string;
-};
-
 type TabId = "visibility" | "shortcuts" | "sync";
 
 const baseUrl = document.querySelector<HTMLInputElement>("#base-url");
@@ -39,6 +36,9 @@ const audience = document.querySelector<HTMLDivElement>("#memos-audience");
 const visibilityChoices = document.querySelector<HTMLDivElement>("#visibility-choices");
 const spaceChoices = document.querySelector<HTMLDivElement>("#space-choices");
 const memoSpaceField = document.querySelector<HTMLParagraphElement>("#memo-space-field");
+const spaceHint = document.querySelector<HTMLParagraphElement>("#space-hint");
+const newSpace = document.querySelector<HTMLFormElement>("#new-space");
+const newSpaceTitle = document.querySelector<HTMLInputElement>("#new-space-title");
 const shortcuts = document.querySelector<HTMLDivElement>("#shortcuts");
 const gesture = document.querySelector<HTMLDivElement>("#gesture");
 const gestureHint = document.querySelector<HTMLParagraphElement>("#gesture-hint");
@@ -59,6 +59,9 @@ if (
   !visibilityChoices ||
   !spaceChoices ||
   !memoSpaceField ||
+  !spaceHint ||
+  !newSpace ||
+  !newSpaceTitle ||
   tabButtons.length === 0 ||
   tabPanels.length === 0
 ) {
@@ -74,6 +77,9 @@ const snapMemosEl = snapMemos;
 const visibilityChoicesEl = visibilityChoices;
 const spaceChoicesEl = spaceChoices;
 const memoSpaceFieldEl = memoSpaceField;
+const spaceHintEl = spaceHint;
+const newSpaceEl = newSpace;
+const newSpaceTitleEl = newSpaceTitle;
 const shortcutsEl = shortcuts;
 const gestureEl = gesture;
 const gestureHintEl = gestureHint;
@@ -83,6 +89,7 @@ let chosenVisibility = "PRIVATE";
 let chosenSpace = "";
 let knownSpaces: MemoSpace[] = [];
 let hasSyncConfigured = false;
+let huePickerSpace: string | null = null;
 const heldMods = {
   alt: false,
   ctrl: false,
@@ -278,31 +285,126 @@ function paintAudienceChoices() {
     });
     visibilityChoicesEl.append(button);
   }
+  const showSpaces = hasSyncConfigured || knownSpaces.length > 0;
+  memoSpaceFieldEl.hidden = !showSpaces;
+  spaceHintEl.hidden = !showSpaces;
+  spaceChoicesEl.hidden = !showSpaces;
+  newSpaceEl.hidden = !hasSyncConfigured;
   spaceChoicesEl.replaceChildren();
-  memoSpaceFieldEl.hidden = knownSpaces.length === 0;
-  spaceChoicesEl.hidden = knownSpaces.length === 0;
-  const unassigned = document.createElement("button");
-  unassigned.type = "button";
-  unassigned.textContent = "Unassigned";
-  unassigned.setAttribute("aria-pressed", String(chosenSpace === ""));
-  unassigned.addEventListener("click", () => {
+  if (!showSpaces) {
+    return;
+  }
+  spaceChoicesEl.append(unassignedSpaceRow());
+  for (const space of knownSpaces) {
+    spaceChoicesEl.append(spaceRow(space));
+  }
+}
+
+function unassignedSpaceRow(): HTMLDivElement {
+  const row = document.createElement("div");
+  row.className = "space-row";
+  row.setAttribute("aria-pressed", String(chosenSpace === ""));
+  const swatch = document.createElement("span");
+  swatch.className = "space-swatch";
+  const select = document.createElement("button");
+  select.type = "button";
+  select.className = "space-select";
+  select.textContent = "Unassigned";
+  select.addEventListener("click", () => {
     chosenSpace = "";
+    if (chosenVisibility === "SPACE") {
+      chosenVisibility = "PRIVATE";
+    }
     paintAudienceChoices();
     void saveAudience();
   });
-  spaceChoicesEl.append(unassigned);
-  for (const space of knownSpaces) {
-    const button = document.createElement("button");
-    button.type = "button";
-    button.textContent = space.title;
-    button.setAttribute("aria-pressed", String(chosenSpace === space.name));
-    button.addEventListener("click", () => {
-      chosenSpace = space.name;
-      paintAudienceChoices();
-      void saveAudience();
-    });
-    spaceChoicesEl.append(button);
+  const status = document.createElement("span");
+  status.className = "space-status";
+  row.append(swatch, select, status);
+  return row;
+}
+
+function spaceRow(space: MemoSpace): HTMLDivElement {
+  const row = document.createElement("div");
+  row.className = "space-row";
+  const picking = huePickerSpace === space.name;
+  row.classList.toggle("is-picking", picking);
+  row.setAttribute("aria-pressed", String(chosenSpace === space.name));
+  const hue = space.hue ?? 48;
+  const swatch = document.createElement("button");
+  swatch.type = "button";
+  swatch.className = "space-swatch";
+  swatch.setAttribute("aria-label", `Default color for ${space.title}`);
+  swatch.setAttribute("aria-expanded", String(picking));
+  if (space.hue != null) {
+    swatch.style.background = paperAt("light", hue);
   }
+  swatch.addEventListener("click", (event) => {
+    event.stopPropagation();
+    huePickerSpace = picking ? null : space.name;
+    paintAudienceChoices();
+  });
+  const select = document.createElement("button");
+  select.type = "button";
+  select.className = "space-select";
+  select.textContent = space.title;
+  select.addEventListener("click", () => {
+    chosenSpace = space.name;
+    paintAudienceChoices();
+    void saveAudience();
+  });
+  const status = document.createElement("span");
+  status.className = space.synced ? "space-status" : "space-status missing";
+  status.textContent = space.synced ? "Synced" : "Missing from server";
+  row.append(swatch, select, status);
+  if (picking) {
+    const slider = document.createElement("input");
+    slider.type = "range";
+    slider.className = "space-hue";
+    slider.min = "0";
+    slider.max = "359";
+    slider.value = String(hue);
+    slider.setAttribute("aria-label", `Default color for ${space.title}`);
+    slider.style.setProperty("--thumb", paperAt("light", hue));
+    slider.addEventListener("input", () => {
+      const next = Number(slider.value);
+      space.hue = next;
+      swatch.style.background = paperAt("light", next);
+      slider.style.setProperty("--thumb", paperAt("light", next));
+    });
+    slider.addEventListener("change", () => {
+      const next = Number(slider.value);
+      space.hue = next;
+      void invoke("set_space_hue", { name: space.name, hue: next })
+        .then(() => {
+          statusEl.textContent = `Default color saved for ${space.title}.`;
+        })
+        .catch((error: unknown) => {
+          statusEl.textContent = String(error);
+        });
+    });
+    row.append(slider);
+  }
+  if (!space.synced) {
+    const actions = document.createElement("div");
+    actions.className = "space-actions";
+    const create = document.createElement("button");
+    create.type = "button";
+    create.textContent = "Create on server";
+    create.addEventListener("click", () => {
+      void createSpace(space.title, space.name);
+    });
+    const remove = document.createElement("button");
+    remove.type = "button";
+    remove.className = "danger";
+    remove.textContent = "Remove locally";
+    remove.addEventListener("click", () => {
+      void forgetSpace(space);
+    });
+    actions.append(create, remove);
+    row.append(actions);
+  }
+  return row;
 }
 
 async function loadSpaces(selected: string) {
@@ -319,6 +421,40 @@ async function loadSpaces(selected: string) {
     chosenVisibility = "PRIVATE";
   }
   paintAudienceChoices();
+}
+
+async function createSpace(title: string, name?: string) {
+  const trimmed = title.trim();
+  if (!trimmed) {
+    statusEl.textContent = "Name the space first.";
+    return;
+  }
+  try {
+    const created = await invoke<MemoSpace>("create_memo_space", {
+      title: trimmed,
+      name: name ?? null,
+    });
+    newSpaceTitleEl.value = "";
+    if (name) {
+      await loadSpaces(chosenSpace);
+    } else {
+      await loadSpaces(created.name);
+      void saveAudience();
+    }
+    statusEl.textContent = name ? `Created ${created.title} on the server.` : `Created ${created.title}.`;
+  } catch (error) {
+    statusEl.textContent = String(error);
+  }
+}
+
+async function forgetSpace(space: MemoSpace) {
+  try {
+    await invoke("forget_memo_space", { name: space.name });
+    await loadSettings();
+    statusEl.textContent = `Removed ${space.title} locally. Memos in it are unassigned.`;
+  } catch (error) {
+    statusEl.textContent = String(error);
+  }
 }
 
 async function saveAudience() {
@@ -379,6 +515,33 @@ document.querySelector("#test-connection")?.addEventListener("click", () => {
       statusEl.textContent = String(error);
     }
   })();
+});
+
+newSpaceEl.addEventListener("submit", (event) => {
+  event.preventDefault();
+  void createSpace(newSpaceTitleEl.value);
+});
+
+document.addEventListener("pointerdown", (event) => {
+  if (!huePickerSpace) {
+    return;
+  }
+  const target = event.target;
+  const picker = spaceChoicesEl.querySelector(".space-row.is-picking");
+  if (target instanceof Node && picker?.contains(target)) {
+    return;
+  }
+  huePickerSpace = null;
+  paintAudienceChoices();
+});
+
+void listen("spaces-changed", () => {
+  if (!hasSyncConfigured) {
+    return;
+  }
+  void loadSpaces(chosenSpace).catch((error: unknown) => {
+    statusEl.textContent = String(error);
+  });
 });
 
 document.querySelector("#clear-memos")?.addEventListener("click", () => {

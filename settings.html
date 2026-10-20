@@ -65,7 +65,14 @@
             </div>
             <div id="visibility-choices" class="choices"></div>
             <p id="memo-space-field" class="field-label" hidden>Default space</p>
-            <div id="space-choices" class="choices" hidden></div>
+            <p id="space-hint" class="hint" hidden>
+              Spaces refresh with useMemos. A missing space stays until you create it on the server or remove it here.
+            </p>
+            <div id="space-choices" class="space-list" hidden></div>
+            <form id="new-space" class="new-space" hidden>
+              <input id="new-space-title" type="text" placeholder="New space name" autocomplete="off" />
+              <button id="create-space" type="submit">Create</button>
+            </form>
           </div>
 
           <div class="settings-card">
