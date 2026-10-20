@@ -4,6 +4,7 @@ import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 
+import { moveBlockMedia } from "../src/editor-blocks.ts";
 import { uniqueFiles } from "../src/files.ts";
 import { BlockHistory, cloneBlocks } from "../src/history.ts";
 import { defaultLook, lookFromNote, namedTheme } from "../src/look.ts";
@@ -181,6 +182,40 @@ test("media helpers parse, serialize, and extract titles accurately", () => {
   assert.equal(noteTitle("![chart.png|320](memose-media/12345678-pic.png)"), "chart.png");
   assert.equal(noteTitle("![](memose-media/12345678-pic.png)"), "Image");
   assert.equal(noteTitle("   "), "Note");
+});
+
+test("moveBlockMedia splits a text block at a line or inline caret", () => {
+  const items = ensureTextSlots([
+    { kind: "text", text: "Hello\nWorld" },
+    { kind: "media", name: "a.png", label: "a.png", inline: false },
+  ]);
+  const from = items.findIndex((block) => block.kind === "media");
+  const lineMoved = moveBlockMedia(items, from, { mode: "line", blockIndex: 0, lineIndex: 1, y: 0 });
+  assert.equal(lineMoved[0]?.kind, "text");
+  if (lineMoved[0]?.kind === "text") {
+    assert.equal(lineMoved[0].text, "Hello");
+  }
+  assert.equal(lineMoved[1]?.kind, "media");
+  if (lineMoved[1]?.kind === "media") {
+    assert.equal(lineMoved[1].inline, false);
+  }
+
+  const inlineMoved = moveBlockMedia(items, from, {
+    mode: "inline",
+    blockIndex: 0,
+    charOffset: 2,
+    x: 0,
+    top: 0,
+    height: 16,
+  });
+  assert.equal(inlineMoved[0]?.kind, "text");
+  if (inlineMoved[0]?.kind === "text") {
+    assert.equal(inlineMoved[0].text, "He");
+  }
+  assert.equal(inlineMoved[1]?.kind, "media");
+  if (inlineMoved[1]?.kind === "media") {
+    assert.equal(inlineMoved[1].inline, true);
+  }
 });
 
 test("shortcuts module formats and matches keyboard and mouse chords", () => {

@@ -27,7 +27,7 @@ All shortcuts and the on-memo gesture modifier can be customized in **Settings**
 
 ## Development & Quality Pipeline
 
-**Prerequisites:** Node.js `>=20.19.0` and a Rust toolchain (`rustup`).
+**Prerequisites:** Node.js `>=22` and a Rust toolchain (`rustup`).
 
 ```bash
 npm install
