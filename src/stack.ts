@@ -31,7 +31,8 @@ import { inTauri, isPreviewWindow } from "./platform";
 import { resizeAllBlockTextareas, sizeBlockTextarea } from "./textarea";
 import { exactStamp, relativeTime } from "./time";
 import type { MemoSpace, Note } from "./types";
-import { visibilityOptions, visibilityShort } from "./visibility";
+import { syncIcon } from "./sync-status";
+import { isOfflinePrivate, visibilityOptions, visibilityShort } from "./visibility";
 
 export type StackHost = {
   cardEl: HTMLElement;
@@ -133,6 +134,8 @@ export type StackState = {
   theme: ThemeName | null;
   visibility: string;
   space: string;
+  syncState: string;
+  lastError: string | null;
 };
 
 function pushSectionUndo(state: StackState, force = true) {
@@ -419,13 +422,20 @@ export function paintSectionAudience(section: HTMLElement, state: StackState) {
   if (!visibilityOptions.some((option) => option.value === visibility)) {
     visibility = "PRIVATE";
   }
-  const space = state.space || "";
+  const space = isOfflinePrivate(visibility) ? "" : state.space || "";
   state.visibility = visibility;
   state.space = space;
   const label = section.querySelector<HTMLButtonElement>(".visibility-label");
   if (label) {
     label.hidden = false;
     label.textContent = visibilityShort(visibility, space, getKnownSpaces());
+  }
+  const sync = section.querySelector<HTMLElement>(".note-sync");
+  if (sync) {
+    const icon = syncIcon(state.syncState, visibility);
+    sync.hidden = false;
+    sync.innerHTML = icon.svg;
+    sync.title = state.lastError ?? icon.label;
   }
   const edited = section.querySelector<HTMLElement>(".edited-at");
   const sep = section.querySelector<HTMLElement>(".edited-sep");
@@ -447,7 +457,11 @@ export function paintSectionAudience(section: HTMLElement, state: StackState) {
     visChoices.append(
       audienceChoice(option.label, option.hint, state.visibility === option.value, () => {
         state.visibility = option.value;
-        if (option.value === "SPACE" && state.space === "" && getKnownSpaces()[0]) {
+        if (isOfflinePrivate(option.value)) {
+          state.space = "";
+          state.syncState = "local";
+          state.lastError = null;
+        } else if (option.value === "SPACE" && state.space === "" && getKnownSpaces()[0]) {
           state.space = getKnownSpaces()[0].name;
         }
         paintSectionAudience(section, state);
@@ -462,14 +476,14 @@ export function paintSectionAudience(section: HTMLElement, state: StackState) {
     );
   }
   spaceChoices.replaceChildren();
-  spaceBlock.hidden = getKnownSpaces().length === 0;
-  if (getKnownSpaces().length === 0) {
+  spaceBlock.hidden = getKnownSpaces().length === 0 || isOfflinePrivate(state.visibility);
+  if (spaceBlock.hidden) {
     return;
   }
   spaceChoices.append(
     audienceChoice("Unassigned", "", state.space === "", () => {
       state.space = "";
-      if (state.visibility === "SPACE") {
+      if (state.visibility === "SPACE" || isOfflinePrivate(state.visibility)) {
         state.visibility = "PRIVATE";
       }
       paintSectionAudience(section, state);
@@ -486,6 +500,9 @@ export function paintSectionAudience(section: HTMLElement, state: StackState) {
     spaceChoices.append(
       audienceChoice(item.title, item.synced === false ? "Not on server" : "", state.space === item.name, () => {
         state.space = item.name;
+        if (isOfflinePrivate(state.visibility)) {
+          state.visibility = "PRIVATE";
+        }
         paintSectionAudience(section, state);
         void invoke("set_note_audience", {
           id,
@@ -1467,6 +1484,8 @@ export async function loadStack() {
       theme: prev?.theme ?? namedTheme(note.theme),
       visibility: note.visibility || "PRIVATE",
       space: note.space || "",
+      syncState: note.syncState || "local",
+      lastError: note.lastError ?? null,
     });
   }
   if (!same) {
@@ -1575,15 +1594,18 @@ export function syncHeaderCompact() {
     const availW = headerW - 20;
     const brandName = header.querySelector<HTMLElement>(".brand-name");
     const label = header.querySelector<HTMLElement>("#visibility-label, .visibility-label");
+    const syncBadge = header.querySelector<HTMLElement>("#note-sync, .note-sync");
     const edited = header.querySelector<HTMLElement>("#edited-at, .edited-at");
     const brandW = brandName?.offsetWidth || 58;
     const hasLabel = Boolean(label && !label.hidden);
+    const hasSync = Boolean(syncBadge && !syncBadge.hidden);
     const hasEdited = Boolean(edited && !edited.hidden);
     const labelW = hasLabel && label ? label.scrollWidth : 0;
+    const syncW = hasSync ? 16 : 0;
     const editedW = hasEdited && edited ? edited.scrollWidth : 0;
     const hasBothMeta = hasLabel && hasEdited;
-    const singleMetaW = hasBothMeta ? labelW + editedW + 12 : labelW + editedW;
-    const twoLineMetaW = Math.max(labelW, editedW);
+    const singleMetaW = hasBothMeta ? labelW + syncW + editedW + 12 : labelW + syncW + editedW;
+    const twoLineMetaW = Math.max(labelW + syncW, editedW);
     const singleBrandW = brandW + (singleMetaW > 0 ? 6 + singleMetaW : 0);
     const twoLineBrandW = brandW + (twoLineMetaW > 0 ? 6 + twoLineMetaW : 0);
     const fullButtonsRightW = 150;

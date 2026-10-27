@@ -14,6 +14,7 @@ import {
   splitBinds,
   type ShortcutBinds,
 } from "./shortcuts";
+import { isOfflinePrivate, visibilityOptions } from "./visibility";
 
 type Settings = {
   baseUrl: string;
@@ -96,13 +97,6 @@ const heldMods = {
   shift: false,
   meta: false,
 };
-
-const visibilityOptions = [
-  { value: "PRIVATE", label: "Private" },
-  { value: "PROTECTED", label: "Signed-in users" },
-  { value: "PUBLIC", label: "Public" },
-  { value: "SPACE", label: "Space members" },
-];
 
 function selectTab(nextTab: TabId) {
   if (recording) {
@@ -277,7 +271,9 @@ function paintAudienceChoices() {
     button.setAttribute("aria-pressed", String(chosenVisibility === option.value));
     button.addEventListener("click", () => {
       chosenVisibility = option.value;
-      if (option.value === "SPACE" && chosenSpace === "" && knownSpaces[0]) {
+      if (isOfflinePrivate(option.value)) {
+        chosenSpace = "";
+      } else if (option.value === "SPACE" && chosenSpace === "" && knownSpaces[0]) {
         chosenSpace = knownSpaces[0].name;
       }
       paintAudienceChoices();
@@ -285,11 +281,12 @@ function paintAudienceChoices() {
     });
     visibilityChoicesEl.append(button);
   }
-  const showSpaces = hasSyncConfigured || knownSpaces.length > 0;
+  const showSpaces =
+    !isOfflinePrivate(chosenVisibility) && (hasSyncConfigured || knownSpaces.length > 0);
   memoSpaceFieldEl.hidden = !showSpaces;
   spaceHintEl.hidden = !showSpaces;
   spaceChoicesEl.hidden = !showSpaces;
-  newSpaceEl.hidden = !hasSyncConfigured;
+  newSpaceEl.hidden = !hasSyncConfigured || isOfflinePrivate(chosenVisibility);
   spaceChoicesEl.replaceChildren();
   if (!showSpaces) {
     return;
@@ -312,7 +309,7 @@ function unassignedSpaceRow(): HTMLDivElement {
   select.textContent = "Unassigned";
   select.addEventListener("click", () => {
     chosenSpace = "";
-    if (chosenVisibility === "SPACE") {
+    if (chosenVisibility === "SPACE" || isOfflinePrivate(chosenVisibility)) {
       chosenVisibility = "PRIVATE";
     }
     paintAudienceChoices();
@@ -350,6 +347,9 @@ function spaceRow(space: MemoSpace): HTMLDivElement {
   select.textContent = space.title;
   select.addEventListener("click", () => {
     chosenSpace = space.name;
+    if (isOfflinePrivate(chosenVisibility)) {
+      chosenVisibility = "PRIVATE";
+    }
     paintAudienceChoices();
     void saveAudience();
   });

@@ -296,6 +296,7 @@ test("relativeTime and exactStamp format nearby and absolute timestamps", () => 
 
 test("visibilityShort labels private, space, and combined audience", () => {
   const spaces = [{ name: "team", title: "Team" }];
+  assert.equal(visibilityShort("OFFLINE_PRIVATE", "", spaces), "Offline");
   assert.equal(visibilityShort("PRIVATE", "", spaces), "Private");
   assert.equal(visibilityShort("SPACE", "team", spaces), "Team");
   assert.equal(visibilityShort("PUBLIC", "team", spaces), "Public | Team");
@@ -347,6 +348,8 @@ test("syncIcon and platform helpers cover common states", () => {
   assert.equal(syncIcon("synced").label, "Synced");
   assert.equal(syncIcon("conflict").label, "Choose a version");
   assert.equal(syncIcon("unknown").label, "Local");
+  assert.equal(syncIcon("local", "OFFLINE_PRIVATE").label, "Offline on this computer");
+  assert.equal(syncIcon("synced", "OFFLINE_PRIVATE").label, "Offline on this computer");
   assert.equal(requireEl("ok", "field"), "ok");
   assert.throws(() => requireEl(null, "field"), /missing field/);
   const rect = { left: 10, right: 20, top: 5, bottom: 15 } as DOMRect;

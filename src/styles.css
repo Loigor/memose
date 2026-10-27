@@ -416,6 +416,13 @@ header.compact-meta #edited-sep {
   display: none;
 }
 
+.note-audience-row {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+}
+
 .audience-anchor {
   position: relative;
   display: inline-flex;
@@ -451,6 +458,8 @@ header.compact-meta #edited-sep {
 
 #visibility-label[hidden],
 .visibility-label[hidden],
+#note-sync[hidden],
+.note-sync[hidden],
 #edited-sep[hidden],
 .edited-sep[hidden],
 #edited-at[hidden],
@@ -464,6 +473,16 @@ header.compact-meta #edited-sep {
 #delete-confirm[hidden],
 .delete-confirm[hidden] {
   display: none;
+}
+
+#note-sync,
+.note-sync {
+  display: inline-flex;
+  align-items: center;
+  width: 12px;
+  height: 12px;
+  color: var(--muted);
+  flex: none;
 }
 
 #edited-at,
@@ -968,6 +987,7 @@ html.collapsed.hover-open #card > header .collapsed-chevron,
 
 #recent .sync {
   display: inline-flex;
+  align-items: center;
   width: 14px;
 }
 

@@ -69,7 +69,7 @@ import { syncIcon } from "./sync-status";
 import { resizeAllBlockTextareas, sizeBlockTextarea } from "./textarea";
 import { exactStamp, relativeTime } from "./time";
 import type { MemoSpace, Note } from "./types";
-import { visibilityOptions, visibilityShort } from "./visibility";
+import { isOfflinePrivate, visibilityOptions, visibilityShort } from "./visibility";
 
 const card = document.querySelector<HTMLElement>("#card");
 const blocks = document.querySelector<HTMLDivElement>("#blocks");
@@ -89,6 +89,7 @@ const hueSlider = document.querySelector<HTMLInputElement>("#hue-slider");
 const hueAdd = document.querySelector<HTMLButtonElement>("#hue-add");
 const pinToggle = document.querySelector<HTMLButtonElement>("#pin-toggle");
 const visibilityLabel = document.querySelector<HTMLButtonElement>("#visibility-label");
+const noteSync = document.querySelector<HTMLElement>("#note-sync");
 const audiencePop = document.querySelector<HTMLDivElement>("#audience-pop");
 const visibilityChoices = document.querySelector<HTMLDivElement>("#visibility-choices");
 const spaceBlock = document.querySelector<HTMLDivElement>("#space-block");
@@ -197,6 +198,7 @@ const hueAddEl = requireEl(hueAdd, "save hue");
 const hueSlots = [...document.querySelectorAll<HTMLButtonElement>(".hue-slot")];
 const pinToggleEl = requireEl(pinToggle, "pin toggle");
 const visibilityLabelEl = requireEl(visibilityLabel, "visibility label");
+const noteSyncEl = requireEl(noteSync, "note sync");
 const audiencePopEl = requireEl(audiencePop, "audience pop");
 const visibilityChoicesEl = requireEl(visibilityChoices, "visibility choices");
 const spaceBlockEl = requireEl(spaceBlock, "space block");
@@ -879,9 +881,19 @@ let audienceDirty = false;
 let audiencePainted = false;
 let chosenVisibility = "PRIVATE";
 let chosenSpace = "";
+let chosenSyncState = "local";
+let chosenSyncError: string | null = null;
+
+function paintNoteSync() {
+  const icon = syncIcon(chosenSyncState, chosenVisibility);
+  noteSyncEl.hidden = visibilityLabelEl.hidden;
+  noteSyncEl.innerHTML = icon.svg;
+  noteSyncEl.title = chosenSyncError ?? icon.label;
+}
 
 function refreshMetaSep() {
   editedSepEl.hidden = visibilityLabelEl.hidden || editedAtEl.hidden;
+  paintNoteSync();
   syncHeaderCompact();
 }
 
@@ -898,8 +910,8 @@ function paintAudienceMenu() {
     );
   }
   spaceChoicesEl.replaceChildren();
-  spaceBlockEl.hidden = knownSpaces.length === 0;
-  if (knownSpaces.length === 0) {
+  spaceBlockEl.hidden = knownSpaces.length === 0 || isOfflinePrivate(chosenVisibility);
+  if (spaceBlockEl.hidden) {
     return;
   }
   spaceChoicesEl.append(
@@ -924,7 +936,14 @@ function paintAudienceMenu() {
   }
 }
 
-function paintAudience(note: { visibility?: string | null; space?: string | null } | null) {
+function paintAudience(
+  note: {
+    visibility?: string | null;
+    space?: string | null;
+    syncState?: string | null;
+    lastError?: string | null;
+  } | null,
+) {
   audiencePainted = true;
   let visibility = note?.visibility || defaultVisibility || "PRIVATE";
   if (!visibilityOptions.some((option) => option.value === visibility)) {
@@ -934,7 +953,11 @@ function paintAudience(note: { visibility?: string | null; space?: string | null
     visibility = "PRIVATE";
   }
   chosenVisibility = visibility;
-  chosenSpace = note?.space ?? (note?.visibility ? "" : defaultSpace);
+  chosenSpace = isOfflinePrivate(visibility)
+    ? ""
+    : (note?.space ?? (note?.visibility ? "" : defaultSpace));
+  chosenSyncState = note?.syncState || "local";
+  chosenSyncError = note?.lastError ?? null;
   visibilityLabelEl.hidden = false;
   visibilityLabelEl.textContent = visibilityShort(chosenVisibility, chosenSpace, knownSpaces);
   paintAudienceMenu();
@@ -971,22 +994,33 @@ function applySpaceDefaultLook(space: string) {
 
 function chooseVisibility(value: string) {
   chosenVisibility = value;
-  if (value === "SPACE" && chosenSpace === "" && knownSpaces[0]) {
+  if (isOfflinePrivate(value)) {
+    chosenSpace = "";
+    chosenSyncState = "local";
+    chosenSyncError = null;
+  } else if (value === "SPACE" && chosenSpace === "" && knownSpaces[0]) {
     chosenSpace = knownSpaces[0].name;
+  }
+  if (!isOfflinePrivate(value) && chosenSyncState === "local" && syncEnabled) {
+    chosenSyncState = "pending";
   }
   visibilityLabelEl.textContent = visibilityShort(chosenVisibility, chosenSpace, knownSpaces);
   paintAudienceMenu();
+  paintNoteSync();
   persistAudience();
   applySpaceDefaultLook(chosenSpace);
 }
 
 function chooseSpace(value: string) {
   chosenSpace = value;
-  if (value === "" && chosenVisibility === "SPACE") {
+  if (isOfflinePrivate(chosenVisibility)) {
+    chosenVisibility = "PRIVATE";
+  } else if (value === "" && chosenVisibility === "SPACE") {
     chosenVisibility = "PRIVATE";
   }
   visibilityLabelEl.textContent = visibilityShort(chosenVisibility, chosenSpace, knownSpaces);
   paintAudienceMenu();
+  paintNoteSync();
   persistAudience();
   applySpaceDefaultLook(chosenSpace);
 }
@@ -1132,6 +1166,18 @@ async function refreshRecent() {
 
 async function refreshRecentNow() {
   const notes = await invoke<Note[]>("list_recent", { limit: recentFetchLimit });
+  const openId = editingId || draftId;
+  if (openId) {
+    const current = notes.find((item) => item.id === openId);
+    if (current) {
+      chosenSyncState = current.syncState;
+      chosenSyncError = current.lastError ?? null;
+      if (current.visibility) {
+        chosenVisibility = current.visibility;
+      }
+      paintNoteSync();
+    }
+  }
   const forcePinSearch = Boolean(pinnedNoteId && document.documentElement.classList.contains("pin-search-open"));
   if (notes.length === 0 && !forcePinSearch) {
     memoListEl.hidden = true;
@@ -1190,7 +1236,7 @@ async function refreshRecentNow() {
     when.title = exactStamp(item.updatedAt);
     const sync = document.createElement("span");
     sync.className = "sync";
-    const icon = syncIcon(item.syncState);
+    const icon = syncIcon(item.syncState, item.visibility);
     sync.innerHTML = icon.svg;
     sync.title = item.lastError ?? icon.label;
     const pin = document.createElement("button");
