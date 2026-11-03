@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="en" class="pin-tabs-window">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="stylesheet" href="/src/styles.css" />
+    <link rel="stylesheet" href="/src/pin-tabs.css" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Pinned tabs</title>
+    <script type="module" src="/src/pin-tabs.ts" defer></script>
+  </head>
+  <body>
+    <div id="strip">
+      <div id="hairline"></div>
+      <div id="row">
+        <button id="tab-add" type="button" aria-label="Add new clean tab">+</button>
+        <div id="tabs"></div>
+      </div>
+      <div id="tab-menu" hidden>
+        <input id="tab-name" type="text" maxlength="40" placeholder="Tab name" aria-label="Tab name" />
+        <div class="color-pop">
+          <div class="hue-track">
+            <input class="hue-slider" type="range" min="0" max="359" value="48" aria-label="Hue" />
+          </div>
+          <div class="hue-slots">
+            <button type="button" class="hue-slot" aria-label="Saved color 1"></button>
+            <button type="button" class="hue-slot" aria-label="Saved color 2"></button>
+            <button type="button" class="hue-slot" aria-label="Saved color 3"></button>
+            <button type="button" class="hue-slot" aria-label="Saved color 4"></button>
+            <button type="button" class="hue-slot" aria-label="Saved color 5"></button>
+            <button type="button" class="hue-slot" aria-label="Saved color 6"></button>
+            <button class="hue-add" type="button" aria-label="Save hue">+</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </body>
+</html>

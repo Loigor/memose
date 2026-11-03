@@ -24,3 +24,33 @@ export type MemoSpace = {
   synced?: boolean;
   hue?: number | null;
 };
+
+export type PinTabNote = {
+  id: string;
+  x?: number | null;
+  y?: number | null;
+  w?: number | null;
+  h?: number | null;
+};
+
+export type PinTab = {
+  id: string;
+  name: string;
+  hue: number;
+  swatches: number[];
+  notes: PinTabNote[];
+};
+
+export type PinTabs = {
+  version: number;
+  activeId: string;
+  tabs: PinTab[];
+};
+
+export type PinTabHit = {
+  id: string;
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+};

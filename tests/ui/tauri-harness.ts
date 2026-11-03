@@ -30,6 +30,20 @@ export type HarnessSettings = {
   snapMemos?: boolean;
 };
 
+export type PinTabSeed = {
+  id: string;
+  name?: string;
+  hue?: number;
+  swatches?: number[];
+  notes?: { id: string }[];
+};
+
+export type PinTabsSeed = {
+  version?: number;
+  activeId: string;
+  tabs: PinTabSeed[];
+};
+
 export type HarnessSeed = {
   windowLabel?: string;
   notes?: NoteSeed[];
@@ -42,6 +56,7 @@ export type HarnessSeed = {
   spaces?: { name: string; title: string }[];
   theme?: string;
   previewName?: string | null;
+  pinTabs?: PinTabsSeed;
 };
 
 export type Invocation = { cmd: string; args: unknown };
@@ -135,6 +150,20 @@ function installBrowserHarness(seed: BrowserSeed) {
     gesture: "Alt",
     ...(seed.shortcuts || {}),
   };
+  function clonePinTabs(value) {
+    return JSON.parse(JSON.stringify(value));
+  }
+
+  function makePinTab(partial) {
+    return {
+      id: partial.id || uuid(),
+      name: partial.name ?? "",
+      hue: partial.hue ?? 48,
+      swatches: Array.isArray(partial.swatches) ? partial.swatches.slice() : [],
+      notes: Array.isArray(partial.notes) ? partial.notes.map((note) => ({ id: note.id })) : [],
+    };
+  }
+
   const state = {
     notes,
     settings,
@@ -145,6 +174,17 @@ function installBrowserHarness(seed: BrowserSeed) {
     listRecentLimit: seed.listRecentLimit ?? 200,
     invocations: [],
     token: seed.settings?.hasToken ? "saved-token" : "",
+    pinTabs: seed.pinTabs
+      ? {
+          version: seed.pinTabs.version ?? 1,
+          activeId: seed.pinTabs.activeId,
+          tabs: seed.pinTabs.tabs.map((tab) => makePinTab(tab)),
+        }
+      : {
+          version: 1,
+          activeId: "tab-1",
+          tabs: [makePinTab({ id: "tab-1", name: "Desk", hue: 48 })],
+        },
   };
 
   const callbacks = new Map();
@@ -465,8 +505,46 @@ function installBrowserHarness(seed: BrowserSeed) {
           note.pinned = Boolean(a.pinned);
         }
         emit("notes-changed");
+        emit("pin-tabs-changed");
         return null;
       }
+      case "list_pin_tabs":
+        return clonePinTabs(state.pinTabs);
+      case "add_pin_tab": {
+        const tab = makePinTab({
+          hue: ((state.pinTabs.tabs.at(-1)?.hue ?? 48) + 137) % 360,
+        });
+        state.pinTabs.tabs.push(tab);
+        state.pinTabs.activeId = tab.id;
+        emit("pin-tabs-changed");
+        return clonePinTabs(state.pinTabs);
+      }
+      case "select_pin_tab": {
+        if (!state.pinTabs.tabs.some((tab) => tab.id === a.id)) {
+          throw new Error("pin tab not found");
+        }
+        state.pinTabs.activeId = a.id;
+        emit("pin-tabs-changed");
+        return clonePinTabs(state.pinTabs);
+      }
+      case "update_pin_tab": {
+        const tab = state.pinTabs.tabs.find((item) => item.id === a.id);
+        if (!tab) {
+          throw new Error("pin tab not found");
+        }
+        if (a.name != null) {
+          tab.name = String(a.name);
+        }
+        if (a.hue != null) {
+          tab.hue = Number(a.hue);
+        }
+        if (Array.isArray(a.swatches)) {
+          tab.swatches = a.swatches.slice();
+        }
+        return clonePinTabs(state.pinTabs);
+      }
+      case "set_pin_tab_hits":
+        return null;
       case "hide_memos":
       case "hide_composer":
         return null;

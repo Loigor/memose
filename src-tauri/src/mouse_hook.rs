@@ -25,7 +25,14 @@ pub fn start(app: AppHandle) {
             let app = app.clone();
             let handle = app.clone();
             let _ = app.run_on_main_thread(move || {
-                shortcuts::dispatch_mouse(&handle, press.button, press.alt, press.ctrl, press.shift, press.meta);
+                shortcuts::dispatch_mouse(
+                    &handle,
+                    press.button,
+                    press.alt,
+                    press.ctrl,
+                    press.shift,
+                    press.meta,
+                );
             });
         }
     });
@@ -120,7 +127,11 @@ fn listen() {
     #[link(name = "CoreFoundation", kind = "framework")]
     unsafe extern "C" {
         static kCFRunLoopCommonModes: *const c_void;
-        fn CFMachPortCreateRunLoopSource(allocator: *const c_void, port: MachPort, order: isize) -> *mut c_void;
+        fn CFMachPortCreateRunLoopSource(
+            allocator: *const c_void,
+            port: MachPort,
+            order: isize,
+        ) -> *mut c_void;
         fn CFRunLoopGetCurrent() -> *mut c_void;
         fn CFRunLoopAddSource(run_loop: *mut c_void, source: *mut c_void, mode: *const c_void);
         fn CFRunLoopRun();
@@ -152,7 +163,14 @@ fn listen() {
 
     unsafe {
         let mask = 1u64 << OTHER_MOUSE_DOWN;
-        let tap = CGEventTapCreate(SESSION, HEAD, LISTEN_ONLY, mask, callback, std::ptr::null_mut());
+        let tap = CGEventTapCreate(
+            SESSION,
+            HEAD,
+            LISTEN_ONLY,
+            mask,
+            callback,
+            std::ptr::null_mut(),
+        );
         if tap.is_null() {
             return;
         }
@@ -224,7 +242,13 @@ fn listen() {
             };
             if (3..=8).contains(&button) {
                 let down = |key: i32| GetAsyncKeyState(key) as u16 & 0x8000 != 0;
-                emit(button, down(VK_MENU), down(VK_CONTROL), down(VK_SHIFT), down(VK_LWIN) || down(VK_RWIN));
+                emit(
+                    button,
+                    down(VK_MENU),
+                    down(VK_CONTROL),
+                    down(VK_SHIFT),
+                    down(VK_LWIN) || down(VK_RWIN),
+                );
             }
         }
         CallNextHookEx(std::ptr::null_mut(), code, wparam, lparam)

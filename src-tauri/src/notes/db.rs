@@ -1652,7 +1652,9 @@ mod tests {
         assert_eq!(note.visibility.as_deref(), Some("OFFLINE_PRIVATE"));
         assert_eq!(note.space.as_deref(), Some(""));
         assert!(db.pending_and_errors().unwrap().is_empty());
-        assert!(!db.set_audience(&note.id, "OFFLINE_PRIVATE", "spaces/team").unwrap());
+        assert!(!db
+            .set_audience(&note.id, "OFFLINE_PRIVATE", "spaces/team")
+            .unwrap());
         let kept = db.get(&note.id).unwrap().unwrap();
         assert_eq!(kept.sync_state, LOCAL);
         assert_eq!(kept.space.as_deref(), Some(""));
@@ -1667,7 +1669,9 @@ mod tests {
         let draft = db.upsert_draft("was synced").unwrap().unwrap();
         db.finalize_content("was synced").unwrap();
         db.mark_synced(&draft.id, "memos/abc").unwrap();
-        assert!(!db.set_audience(&draft.id, "OFFLINE_PRIVATE", "spaces/team").unwrap());
+        assert!(!db
+            .set_audience(&draft.id, "OFFLINE_PRIVATE", "spaces/team")
+            .unwrap());
         let note = db.get(&draft.id).unwrap().unwrap();
         assert_eq!(note.sync_state, LOCAL);
         assert_eq!(note.visibility.as_deref(), Some("OFFLINE_PRIVATE"));

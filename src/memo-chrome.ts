@@ -12,6 +12,10 @@ export function paperAt(theme: ThemeName, hue: number): string {
   return theme === "dark" ? `hsl(${hue} 22% 16%)` : `hsl(${hue} 100% 86%)`;
 }
 
+export function tabFill(theme: ThemeName, hue: number): string {
+  return theme === "dark" ? `hsl(${hue} 82% 46%)` : `hsl(${hue} 100% 64%)`;
+}
+
 export function baseColors(theme: ThemeName): Record<string, string> {
   if (theme === "dark") {
     return {
@@ -83,6 +87,26 @@ export function themeGlyph(dark: boolean): string {
   return dark
     ? `<circle cx="8" cy="8" r="2.4" fill="currentColor"/><path stroke="currentColor" stroke-width="1.3" d="M8 1.4v1.8M8 12.8v1.8M1.4 8h1.8M12.8 8h1.8M3.2 3.2l1.3 1.3M11.5 11.5l1.3 1.3M12.8 3.2l-1.3 1.3M4.5 11.5l-1.3 1.3"/>`
     : `<path fill="currentColor" d="M8 1.6a6.2 6.2 0 1 0 5.6 8.7A4.7 4.7 0 0 1 8 1.6z"/>`;
+}
+
+export function huePopInnerHtml(): string {
+  return `
+    <div class="hue-track">
+      <input class="hue-slider" type="range" min="0" max="359" value="48" aria-label="Hue" />
+    </div>
+    <div class="hue-slots">
+      <button type="button" class="hue-slot" aria-label="Saved color 1"></button>
+      <button type="button" class="hue-slot" aria-label="Saved color 2"></button>
+      <button type="button" class="hue-slot" aria-label="Saved color 3"></button>
+      <button type="button" class="hue-slot" aria-label="Saved color 4"></button>
+      <button type="button" class="hue-slot" aria-label="Saved color 5"></button>
+      <button type="button" class="hue-slot" aria-label="Saved color 6"></button>
+      <button class="hue-add" type="button" aria-label="Save hue">+</button>
+    </div>`;
+}
+
+export function huePopHtml(): string {
+  return `<div class="color-pop" hidden>${huePopInnerHtml()}</div>`;
 }
 
 export function paintThemeButton(button: HTMLElement, icon: Element, theme: ThemeName, colorMode: boolean) {
@@ -160,20 +184,7 @@ export function stackHeaderHtml(): string {
               <button class="theme-toggle icon-button" type="button" aria-label="Dark theme">
                 <svg class="theme-icon" viewBox="0 0 16 16" width="14" height="14" aria-hidden="true"></svg>
               </button>
-              <div class="color-pop" hidden>
-                <div class="hue-track">
-                  <input class="hue-slider" type="range" min="0" max="359" value="48" aria-label="Hue" />
-                </div>
-                <div class="hue-slots">
-                  <button type="button" class="hue-slot" aria-label="Saved color 1"></button>
-                  <button type="button" class="hue-slot" aria-label="Saved color 2"></button>
-                  <button type="button" class="hue-slot" aria-label="Saved color 3"></button>
-                  <button type="button" class="hue-slot" aria-label="Saved color 4"></button>
-                  <button type="button" class="hue-slot" aria-label="Saved color 5"></button>
-                  <button type="button" class="hue-slot" aria-label="Saved color 6"></button>
-                  <button class="hue-add" type="button" aria-label="Save hue">+</button>
-                </div>
-              </div>
+              ${huePopHtml()}
             </div>
           </div>
         </div>
