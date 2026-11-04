@@ -26,7 +26,7 @@ export function namedTheme(value: string | null | undefined): ThemeName | null {
 }
 
 export function defaultLook(): Look {
-  return { opacity: 100, hueLight: null, hueDark: null, swatches: [], theme: null };
+  return { opacity: 100, hueLight: null, hueDark: null, swatches: [], theme: null, coder: null };
 }
 
 export function lookFromNote(note: Note): Look {
@@ -37,5 +37,6 @@ export function lookFromNote(note: Note): Look {
     hueDark: note.hueDark ?? null,
     swatches: swatches.filter((hue) => hue >= 0 && hue <= 359).slice(0, 6),
     theme: namedTheme(note.theme),
+    coder: note.coder === true ? true : note.coder === false ? false : null,
   };
 }

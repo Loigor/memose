@@ -16,6 +16,7 @@ export type Note = {
   collapsed?: boolean;
   stackHost?: string | null;
   theme?: string | null;
+  coder?: boolean | null;
 };
 
 export type MemoSpace = {

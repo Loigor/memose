@@ -2328,6 +2328,7 @@ fn keep_stack_look(db: &crate::notes::Db, id: &str, opacity: u8, shown_theme: Op
         note.hue_dark,
         &note.swatches,
         theme,
+        note.coder,
     );
 }
 

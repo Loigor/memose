@@ -5,6 +5,7 @@ import test from "node:test";
 import { fileURLToPath } from "node:url";
 
 import { moveBlockMedia } from "../src/editor-blocks.ts";
+import { highlightMarkdown } from "../src/md-highlight.ts";
 import { uniqueFiles } from "../src/files.ts";
 import { BlockHistory, cloneBlocks } from "../src/history.ts";
 import { defaultLook, lookFromNote, namedTheme } from "../src/look.ts";
@@ -14,6 +15,8 @@ import {
   applyTitle,
   displayFileName,
   ensureTextSlots,
+  formatDocument,
+  formatJsonDocument,
   isAudio,
   isImage,
   isPreviewableMedia,
@@ -272,6 +275,9 @@ test("settings window html has Visibility, Shortcuts, and Sync (useMemos) tabs w
   assert.match(html, /Default memo visibility/);
   assert.match(html, /Window snap/);
   assert.match(html, /id="snap-memos"/);
+  assert.match(html, /id="coder-editor"/);
+  assert.match(html, /id="markdown-highlight"/);
+  assert.match(html, /id="markdown-schemes"/);
   assert.match(html, /id="space-choices"/);
   assert.match(html, /id="new-space"/);
   assert.match(html, /id="create-space"/);
@@ -311,6 +317,7 @@ test("look helpers normalize note color and theme", () => {
     hueDark: null,
     swatches: [],
     theme: null,
+    coder: null,
   });
   const look = lookFromNote({
     id: "n1",
@@ -355,6 +362,40 @@ test("syncIcon and platform helpers cover common states", () => {
   const rect = { left: 10, right: 20, top: 5, bottom: 15 } as DOMRect;
   assert.equal(pointIn(rect, 10, 5), true);
   assert.equal(pointIn(rect, 9, 10), false);
+});
+
+test("overlay editor keeps selected textarea glyphs invisible", () => {
+  const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+  const css = fs.readFileSync(path.join(root, "src/styles.css"), "utf8");
+  assert.match(css, /textarea::selection/);
+  assert.doesNotMatch(css, /textarea::selection,[^}]*::-moz-selection/);
+  assert.doesNotMatch(css, /\.md-field\.is-selecting/);
+  assert.match(css, /-webkit-text-fill-color: transparent/);
+});
+
+test("highlightMarkdown colors markers without changing the source text", () => {
+  const html = highlightMarkdown("# Title\nhello **bold** and `code`\n> quote\n- item\n<script>");
+  assert.match(html, /md-line-text/);
+  assert.match(html, /\n<span class="md-line">/);
+  assert.match(html, /md-heading/);
+  assert.match(html, /md-strong/);
+  assert.match(html, /md-code/);
+  assert.match(html, /md-quote/);
+  assert.match(html, /md-marker/);
+  assert.match(html, /&lt;script&gt;/);
+  assert.equal(html.includes("<script>"), false);
+});
+
+test("formatJsonDocument pretty-prints objects and json fences", () => {
+  assert.equal(formatJsonDocument('{"a":1}'), '{\n  "a": 1\n}');
+  assert.equal(formatJsonDocument("not json"), null);
+  const fenced = formatJsonDocument("intro\n```json\n{\"a\":1}\n```\n");
+  assert.match(fenced ?? "", /"a": 1/);
+});
+
+test("formatDocument indents javascript when json parse fails", () => {
+  assert.equal(formatDocument("if (x) {\ny=1\n}"), "if (x) {\n  y=1\n}");
+  assert.equal(formatDocument("if (x) {\n  y=1\n}"), null);
 });
 
 test("memo-chrome computes palettes and renders stack header template", () => {

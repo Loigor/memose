@@ -557,6 +557,129 @@ export function serializeBlocks(items: Block[]): string {
   return out;
 }
 
+export function applyJsonFormat(value: string): Edit | null {
+  const next = formatDocument(value);
+  if (next == null || next === value) {
+    return null;
+  }
+  return { value: next, start: 0, end: 0 };
+}
+
+export function formatDocument(text: string): string | null {
+  const json = formatJsonDocument(text);
+  if (json != null) {
+    return json;
+  }
+  const indented = indentCLike(text);
+  return indented === text ? null : indented;
+}
+
+type CodeScan = { quote: string | null; escape: boolean; block: boolean };
+
+function indentCLike(text: string): string {
+  const tab = "  ";
+  const ended = text.endsWith("\n");
+  const lines = text.replace(/\r\n/g, "\n").split("\n");
+  if (ended && lines[lines.length - 1] === "") {
+    lines.pop();
+  }
+  const scan: CodeScan = { quote: null, escape: false, block: false };
+  let depth = 0;
+  const out: string[] = [];
+  for (const raw of lines) {
+    const trimmed = raw.trim();
+    const { leadingClose, delta } = scanCodeLine(trimmed, scan);
+    depth = Math.max(0, depth - leadingClose);
+    out.push(trimmed ? tab.repeat(depth) + trimmed : "");
+    depth = Math.max(0, depth + delta + leadingClose);
+  }
+  const next = out.join("\n");
+  return ended ? `${next}\n` : next;
+}
+
+function scanCodeLine(line: string, scan: CodeScan): { leadingClose: number; delta: number } {
+  let leadingClose = 0;
+  for (const char of line) {
+    if (char === " " || char === "\t") {
+      continue;
+    }
+    if (char === "}" || char === "]" || char === ")") {
+      leadingClose += 1;
+      continue;
+    }
+    break;
+  }
+  let delta = 0;
+  for (let index = 0; index < line.length; index += 1) {
+    const char = line[index];
+    const next = line[index + 1];
+    if (scan.block) {
+      if (char === "*" && next === "/") {
+        scan.block = false;
+        index += 1;
+      }
+      continue;
+    }
+    if (scan.quote) {
+      if (scan.escape) {
+        scan.escape = false;
+        continue;
+      }
+      if (char === "\\") {
+        scan.escape = true;
+        continue;
+      }
+      if (char === scan.quote) {
+        scan.quote = null;
+      }
+      continue;
+    }
+    if (char === "/" && next === "/") {
+      break;
+    }
+    if (char === "/" && next === "*") {
+      scan.block = true;
+      index += 1;
+      continue;
+    }
+    if (char === "'" || char === '"' || char === "`") {
+      scan.quote = char;
+      continue;
+    }
+    if (char === "{" || char === "[" || char === "(") {
+      delta += 1;
+      continue;
+    }
+    if (char === "}" || char === "]" || char === ")") {
+      delta -= 1;
+    }
+  }
+  return { leadingClose, delta };
+}
+
+export function formatJsonDocument(text: string): string | null {
+  const trimmed = text.trim();
+  if (!trimmed) {
+    return null;
+  }
+  try {
+    const pretty = JSON.stringify(JSON.parse(trimmed), null, 2);
+    return text.endsWith("\n") ? `${pretty}\n` : pretty;
+  } catch {
+    let changed = false;
+    const next = text.replace(/```json[^\n]*\n([\s\S]*?)```/gi, (full, body: string) => {
+      try {
+        const pretty = JSON.stringify(JSON.parse(body), null, 2);
+        changed = true;
+        return `\`\`\`json\n${pretty}\n\`\`\``;
+      } catch {
+        return full;
+      }
+    });
+    return changed ? next : null;
+  }
+}
+
 export function noteTitle(content: string): string {
   const withoutMedia = content.replace(mediaTokenGlobal, "").trim();
   const textLine = withoutMedia

@@ -5,6 +5,7 @@ import {
   invokedCmds,
   openComposer,
   openMarkdownMenu,
+  revealEditorButton,
 } from "./helpers";
 import { emitEvent, sampleNotes } from "./tauri-harness";
 
@@ -28,8 +29,10 @@ test("markdown toolbar wraps the current selection", async ({ page }) => {
   await area.fill("hello");
   await area.press("ControlOrMeta+A");
   await openMarkdownMenu(page);
-  await page.locator('#markdown-pop button[data-markdown="bold"]').click();
+  await expect(page.locator("#md-toolbar")).toBeVisible();
+  await page.locator('#md-toolbar button[data-markdown="bold"]').click();
   await expect(area).toHaveValue("**hello**");
+  await expect(page.locator("#md-toolbar")).toBeVisible();
 });
 
 test("preview toggle renders tasks and clicking a checkbox updates markdown", async ({ page }) => {
@@ -139,6 +142,63 @@ test("conflict banner resolves Keep this", async ({ page }) => {
   await expect.poll(async () => invokedCmds(page)).toContain("resolve_conflict");
   await expect(page.locator("#conflict")).toBeHidden();
   await expect(page.locator("#blocks textarea").first()).toHaveValue("local copy");
+});
+
+test("markdown highlight paints headings and emphasis", async ({ page }) => {
+  await openComposer(page);
+  await expect(page.locator("html")).toHaveAttribute("data-mdhl", "");
+  const area = await composerTextarea(page);
+  await area.fill("# Title\nhello **bold**");
+  await expect(page.locator(".md-heading")).toContainText("# Title");
+  await expect(page.locator(".md-strong")).toContainText("**bold**");
+  await area.press("ControlOrMeta+A");
+  await expect(page.locator(".md-heading")).toContainText("# Title");
+  await expect(page.locator(".md-hl").first()).toHaveCSS("visibility", "visible");
+});
+
+test("coder toggle shows a line gutter on that memo", async ({ page }) => {
+  await openComposer(page);
+  await expect(page.locator("#card")).not.toHaveAttribute("data-coder");
+  const coder = page.locator("#coder-toggle");
+  await revealEditorButton(page, coder);
+  await expect(page.locator("#format-toggle")).toBeHidden();
+  await coder.click();
+  await expect(page.locator("#card")).toHaveAttribute("data-coder", "");
+  const format = page.locator("#format-toggle");
+  await revealEditorButton(page, format);
+  await expect(format).toBeVisible();
+  const area = await composerTextarea(page);
+  await area.fill("alpha\nbeta");
+  await expect(page.locator(".md-gutter")).toBeVisible();
+  await expect(page.locator(".md-gutter")).toHaveText("1\n2");
+  await area.press("ControlOrMeta+A");
+  await expect(page.locator(".md-hl").first()).toHaveCSS("visibility", "visible");
+  await expect(page.locator("#coder-toggle")).toHaveText("{ }");
+  await area.fill(`${"w".repeat(240)}\nshort`);
+  await expect(page.locator(".md-line-text.is-long")).toHaveCount(1);
+  await expect(page.locator(".md-overflow-dot")).toHaveCount(1);
+  await format.click();
+  await page.locator('#format-pop button[data-format="wrap"]').click();
+  await expect(page.locator("#card")).toHaveAttribute("data-wrap", "");
+  await expect(page.locator(".md-overflow-dot")).toHaveCount(0);
+});
+
+test("format json pretty-prints the memo", async ({ page }) => {
+  await openComposer(page);
+  const coder = page.locator("#coder-toggle");
+  await revealEditorButton(page, coder);
+  await coder.click();
+  const area = await composerTextarea(page);
+  await area.fill('{"a":1}');
+  const format = page.locator("#format-toggle");
+  await revealEditorButton(page, format);
+  await format.click();
+  await page.locator('#format-pop button[data-format="document"]').click();
+  await expect(area).toHaveValue('{\n  "a": 1\n}');
+  await area.fill("if (x) {\ny=1\n}");
+  await format.click();
+  await page.locator('#format-pop button[data-format="document"]').click();
+  await expect(area).toHaveValue("if (x) {\n  y=1\n}");
 });
 
 test("composer-fresh clears the editor", async ({ page }) => {

@@ -6,11 +6,13 @@ import { marked } from "marked";
 
 import { audienceChoice, revealPressedChoice } from "./audience-ui";
 import { applyMediaFigureSize, handleBlockAreaNavigation, handleBlockMediaDeletion, syncInlineLineSlot } from "./editor-blocks";
+import { memoUsesCoder, refreshEditorFields, setEditorPrefs, wrapEditorField, type EditorPrefs } from "./editor-field";
 import { filesFromTransfer, uniqueFiles } from "./files";
 import { BlockHistory, cloneBlocks, restoreCaret, type Caret } from "./history";
 import { darkHue, defaultLook, lightHue, lookFromNote, tinted, type Look } from "./look";
 import {
   applyCode,
+  applyJsonFormat,
   applyTask,
   applyTitle,
   ensureTextSlots,
@@ -40,6 +42,7 @@ import { defaultBinds, domMouseButton, formatBind, isModifierKey, matchBind, mat
 import {
   activeStackSection,
   applySectionEdit,
+  applyStackEditorChrome,
   bindStack,
   dragBlocked,
   hasStack,
@@ -66,7 +69,7 @@ import {
   wireChrome,
 } from "./stack";
 import { syncIcon } from "./sync-status";
-import { resizeAllBlockTextareas, sizeBlockTextarea } from "./textarea";
+import { editorShell, resizeAllBlockTextareas, sizeBlockTextarea } from "./textarea";
 import { exactStamp, relativeTime } from "./time";
 import type { MemoSpace, Note } from "./types";
 import { isOfflinePrivate, visibilityOptions, visibilityShort } from "./visibility";
@@ -78,9 +81,12 @@ const notePane = document.querySelector<HTMLElement>("#note-pane");
 const lightbox = document.querySelector<HTMLDivElement>("#lightbox");
 const lightboxImage = document.querySelector<HTMLImageElement>("#lightbox-image");
 const markdownToggle = document.querySelector<HTMLButtonElement>("#markdown-toggle");
-const markdownPop = document.querySelector<HTMLDivElement>("#markdown-pop");
+const markdownToolbar = document.querySelector<HTMLDivElement>("#md-toolbar");
 const editorMenuToggle = document.querySelector<HTMLButtonElement>("#editor-menu-toggle");
 const editorTools = document.querySelector<HTMLDivElement>("#editor-tools");
+const coderToggle = document.querySelector<HTMLButtonElement>("#coder-toggle");
+const formatToggle = document.querySelector<HTMLButtonElement>("#format-toggle");
+const formatPop = document.querySelector<HTMLDivElement>("#format-pop");
 const modeToggle = document.querySelector<HTMLButtonElement>("#mode-toggle");
 const themeToggle = document.querySelector<HTMLButtonElement>("#theme-toggle");
 const themeIcon = document.querySelector<SVGElement>("#theme-icon");
@@ -186,9 +192,12 @@ const notePaneEl = requireEl(notePane, "note pane");
 const lightboxEl = requireEl(lightbox, "lightbox");
 const lightboxImageEl = requireEl(lightboxImage, "lightbox image");
 const markdownToggleEl = requireEl(markdownToggle, "markdown toggle");
-const markdownPopEl = requireEl(markdownPop, "markdown pop");
+const markdownToolbarEl = requireEl(markdownToolbar, "markdown toolbar");
 const editorMenuToggleEl = requireEl(editorMenuToggle, "editor menu toggle");
 const editorToolsEl = requireEl(editorTools, "editor tools");
+const coderToggleEl = requireEl(coderToggle, "coder toggle");
+const formatToggleEl = requireEl(formatToggle, "format toggle");
+const formatPopEl = requireEl(formatPop, "format menu");
 const modeToggleEl = requireEl(modeToggle, "mode toggle");
 const themeToggleEl = requireEl(themeToggle, "theme toggle");
 const themeIconEl = requireEl(themeIcon, "theme icon");
@@ -447,10 +456,10 @@ function renderBlocks(focusName?: string) {
             if (index === lastText) {
               area.classList.add("grow");
             }
-            if (assignedRow && area.parentElement === assignedRow) {
-              assignedRow.after(area);
+            if (assignedRow && editorShell(area).parentElement === assignedRow) {
+              assignedRow.after(editorShell(area));
             } else {
-              blocksEl.append(area);
+              blocksEl.append(editorShell(area));
             }
             sizeBlockTextarea(area);
             area.focus();
@@ -532,12 +541,12 @@ function renderBlocks(focusName?: string) {
         scheduleDraft();
       });
       if (canSitOnMediaLine && currentRow) {
-        currentRow.append(area);
+        currentRow.append(wrapEditorField(area));
         currentRowSideArea = area;
       } else {
         currentRow = null;
         currentRowSideArea = null;
-        blocksEl.append(area);
+        blocksEl.append(wrapEditorField(area));
       }
       sizeBlockTextarea(area);
       return;
@@ -706,16 +715,18 @@ function applyMarkdown(kind: string) {
             ? applyTask(value, start, end)
             : kind === "code"
               ? applyCode(value, start, end)
-              : null;
+              : kind === "json"
+                ? applyJsonFormat(value)
+                : null;
   if (!edit) {
     return;
   }
   applyEdit(area, edit);
 }
 
-function closeMarkdownPop() {
-  markdownPopEl.hidden = true;
-  markdownToggleEl.setAttribute("aria-expanded", "false");
+function closeFormatPop() {
+  formatPopEl.hidden = true;
+  formatToggleEl.setAttribute("aria-expanded", "false");
 }
 
 function insertSnippet(snippet: string, targetSection?: HTMLElement | null) {
@@ -1278,7 +1289,8 @@ async function loadDraft() {
   }
 }
 
-let look: Look = { opacity: 100, hueLight: null, hueDark: null, swatches: [], theme: null };
+let look: Look = { opacity: 100, hueLight: null, hueDark: null, swatches: [], theme: null, coder: null };
+let coderWrap = false;
 let appTheme: ThemeName = "light";
 let lookTimer: ReturnType<typeof setTimeout> | undefined;
 let lookWrite: Promise<void> = Promise.resolve();
@@ -1303,9 +1315,11 @@ function adoptLook(next: Look) {
     hueDark: next.hueDark,
     swatches: [...next.swatches],
     theme: next.theme,
+    coder: next.coder ?? null,
   };
   opacityCarry = look.opacity;
   lookUnsaved = false;
+  coderWrap = false;
   paintLook();
   syncSlider();
 }
@@ -1343,7 +1357,22 @@ function paintLook() {
   if (altHeld) {
     paintThemeIcon();
   }
+  paintCoder();
   repaintStackColors();
+}
+
+function paintCoder() {
+  const on = memoUsesCoder(look.coder);
+  cardEl.toggleAttribute("data-coder", on);
+  cardEl.toggleAttribute("data-wrap", on && coderWrap);
+  coderToggleEl.setAttribute("aria-pressed", String(on));
+  formatPopEl.querySelector("[data-format='wrap']")?.setAttribute("aria-pressed", String(coderWrap));
+  if (!on) {
+    closeFormatPop();
+  }
+  applyStackEditorChrome();
+  refreshEditorFields();
+  resizeAllBlockTextareas(cardEl);
 }
 
 function paintSlots() {
@@ -1387,6 +1416,7 @@ function enqueueLook(id: string): Promise<void> {
     hueDark: look.hueDark,
     swatches: [...look.swatches],
     theme: look.theme,
+    coder: look.coder,
   };
   lookWrite = lookWrite
     .then(() => invoke("save_look", payload))
@@ -1706,7 +1736,7 @@ cardEl.addEventListener("mousedown", (event) => {
     if (
       target instanceof Element &&
       target.closest(
-        "#theme-toggle, #color-pop, #audience-pop, #visibility-label, #markdown-toggle, #markdown-pop, #editor-menu-toggle, #editor-tools, .editor-menu-toggle, .editor-tools, #resize-grip, .resize-handle",
+        "#theme-toggle, #color-pop, #audience-pop, #visibility-label, #markdown-toggle, #md-toolbar, #coder-toggle, #format-toggle, #format-pop, #editor-menu-toggle, #editor-tools, .editor-menu-toggle, .editor-tools, #resize-grip, .resize-handle",
       )
     ) {
       return;
@@ -1836,6 +1866,7 @@ cardEl.addEventListener("drop", (event) => {
 function closeEditorMenu() {
   editorToolsEl.classList.remove("open");
   editorMenuToggleEl.setAttribute("aria-expanded", "false");
+  closeFormatPop();
 }
 
 editorMenuToggleEl.addEventListener("mousedown", (event) => {
@@ -1847,7 +1878,7 @@ editorMenuToggleEl.addEventListener("click", () => {
   editorToolsEl.classList.toggle("open", open);
   editorMenuToggleEl.setAttribute("aria-expanded", String(open));
   if (!open) {
-    closeMarkdownPop();
+    closeFormatPop();
     colorPopEl.hidden = true;
   }
 });
@@ -1857,28 +1888,68 @@ modeToggleEl.addEventListener("click", () => {
   closeEditorMenu();
 });
 
+coderToggleEl.addEventListener("click", () => {
+  look.coder = !memoUsesCoder(look.coder);
+  paintCoder();
+  scheduleLook();
+  closeEditorMenu();
+});
+
 markdownToggleEl.addEventListener("mousedown", (event) => {
   event.preventDefault();
 });
 
-markdownPopEl.addEventListener("mousedown", (event) => {
+markdownToolbarEl.addEventListener("mousedown", (event) => {
   event.preventDefault();
 });
 
 markdownToggleEl.addEventListener("click", () => {
-  const open = markdownPopEl.hidden;
-  markdownPopEl.hidden = !open;
-  markdownToggleEl.setAttribute("aria-expanded", String(open));
+  const on = markdownToggleEl.getAttribute("aria-pressed") !== "true";
+  markdownToggleEl.setAttribute("aria-pressed", String(on));
+  markdownToolbarEl.hidden = !on;
+  closeEditorMenu();
 });
 
-markdownPopEl.addEventListener("click", (event) => {
+markdownToolbarEl.addEventListener("click", (event) => {
   const button = event.target instanceof Element ? event.target.closest("button") : null;
   const kind = button?.dataset.markdown;
   if (!kind) {
     return;
   }
   applyMarkdown(kind);
-  closeEditorMenu();
+});
+
+formatToggleEl.addEventListener("mousedown", (event) => {
+  event.preventDefault();
+});
+
+formatPopEl.addEventListener("mousedown", (event) => {
+  event.preventDefault();
+});
+
+formatToggleEl.addEventListener("click", () => {
+  const open = formatPopEl.hidden;
+  formatPopEl.hidden = !open;
+  formatToggleEl.setAttribute("aria-expanded", String(open));
+});
+
+formatPopEl.addEventListener("click", (event) => {
+  const button = event.target instanceof Element ? event.target.closest("button") : null;
+  const action = button?.dataset.format;
+  if (!action) {
+    return;
+  }
+  if (action === "wrap") {
+    coderWrap = !coderWrap;
+    paintCoder();
+    closeFormatPop();
+    return;
+  }
+  if (action === "document") {
+    applyMarkdown("json");
+    closeFormatPop();
+    closeEditorMenu();
+  }
 });
 
 document.addEventListener("mousedown", (event) => {
@@ -1886,8 +1957,8 @@ document.addEventListener("mousedown", (event) => {
   if (!(target instanceof Node)) {
     return;
   }
-  if (!markdownPopEl.hidden && !markdownPopEl.contains(target) && !markdownToggleEl.contains(target)) {
-    closeMarkdownPop();
+  if (!formatPopEl.hidden && !formatPopEl.contains(target) && !formatToggleEl.contains(target)) {
+    closeFormatPop();
   }
   if (
     editorToolsEl.classList.contains("open") &&
@@ -2105,7 +2176,7 @@ document.addEventListener("mousedown", (event) => {
     anchor?.querySelector<HTMLElement>(".editor-menu-toggle")?.setAttribute("aria-expanded", "false");
   }
   for (const pop of document.querySelectorAll<HTMLElement>(
-    ".stack-note .color-pop, .stack-note .markdown-pop, .stack-note .audience-pop",
+    ".stack-note .color-pop, .stack-note .format-pop, .stack-note .audience-pop",
   )) {
     if (pop.hidden || pop.contains(target)) {
       continue;
@@ -2150,7 +2221,7 @@ document.addEventListener(
     if (!(target instanceof Element) || !target.closest("#card, .stack-note")) {
       return;
     }
-    if (target.closest("#color-pop, #audience-pop, #markdown-pop, #editor-tools, .color-pop, .audience-pop, .markdown-pop, .editor-tools")) {
+    if (target.closest("#color-pop, #audience-pop, #format-pop, #md-toolbar, #editor-tools, .color-pop, .audience-pop, .format-pop, .md-toolbar, .editor-tools")) {
       return;
     }
     event.preventDefault();
@@ -2267,7 +2338,7 @@ if (!isPreviewWindow()) {
       }
       const openStackPops = [
         ...document.querySelectorAll<HTMLElement>(
-          ".stack-note .color-pop:not([hidden]), .stack-note .markdown-pop:not([hidden]), .stack-note .audience-pop:not([hidden])",
+          ".stack-note .color-pop:not([hidden]), .stack-note .format-pop:not([hidden]), .stack-note .audience-pop:not([hidden])",
         ),
       ];
       const openSectionTools = [...document.querySelectorAll<HTMLElement>(".stack-note .editor-tools.open")];
@@ -2276,7 +2347,7 @@ if (!isPreviewWindow()) {
         (mediaContextMenuOpen() ||
           !colorPopEl.hidden ||
           !audiencePopEl.hidden ||
-          !markdownPopEl.hidden ||
+          !formatPopEl.hidden ||
           editorToolsEl.classList.contains("open") ||
           openStackPops.length > 0 ||
           openSectionTools.length > 0)
@@ -2284,7 +2355,7 @@ if (!isPreviewWindow()) {
         closeMediaContextMenu();
         colorPopEl.hidden = true;
         closeAudiencePop();
-        closeMarkdownPop();
+        closeFormatPop();
         closeEditorMenu();
         for (const pop of openStackPops) {
           pop.hidden = true;
@@ -2554,6 +2625,28 @@ async function resolveConflict(id: string, choice: "local" | "remote") {
   } catch (error) {
     console.error(error);
   }
+}
+
+if (inTauri() && !isPreviewWindow()) {
+  const applyEditorPrefs = (settings: EditorPrefs) => {
+    setEditorPrefs({
+      coderEditor: Boolean(settings.coderEditor),
+      markdownHighlight: settings.markdownHighlight !== false,
+      markdownScheme: settings.markdownScheme,
+    });
+    paintCoder();
+  };
+  window.addEventListener("resize", () => {
+    refreshEditorFields();
+  });
+  void invoke<EditorPrefs>("get_settings")
+    .then(applyEditorPrefs)
+    .catch((error: unknown) => {
+      console.error(error);
+    });
+  void listen<EditorPrefs>("editor-prefs-changed", (event) => {
+    applyEditorPrefs(event.payload);
+  });
 }
 
 if (inTauri() && !isPreviewWindow()) {

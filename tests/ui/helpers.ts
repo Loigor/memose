@@ -1,4 +1,4 @@
-import type { Page } from "@playwright/test";
+import type { Locator, Page } from "@playwright/test";
 
 import {
   emitEvent,
@@ -38,12 +38,18 @@ export async function composerTextarea(page: Page) {
   return page.locator("#blocks textarea").first();
 }
 
-export async function openMarkdownMenu(page: Page): Promise<void> {
-  const toggle = page.locator("#markdown-toggle");
-  if (!(await toggle.isVisible())) {
+export async function revealEditorButton(page: Page, locator: Locator): Promise<void> {
+  if (!(await locator.isVisible())) {
     await page.locator("#editor-menu-toggle").click();
   }
-  await toggle.click();
+}
+
+export async function openMarkdownMenu(page: Page): Promise<void> {
+  const toggle = page.locator("#markdown-toggle");
+  await revealEditorButton(page, toggle);
+  if ((await toggle.getAttribute("aria-pressed")) !== "true") {
+    await toggle.click();
+  }
 }
 
 export async function invokedCmds(page: Page): Promise<string[]> {
