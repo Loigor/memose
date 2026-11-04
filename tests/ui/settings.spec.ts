@@ -36,6 +36,15 @@ test("default visibility save and window snap toggle", async ({ page }) => {
   await page.locator("#snap-memos").check();
   await expect(page.locator("#settings-status")).toHaveText("Window snap enabled.");
   await expect.poll(async () => invokedCmds(page)).toContain("set_snap_memos");
+  await page.locator("#coder-editor").check();
+  await expect(page.locator("#settings-status")).toHaveText("New memos use the coder editor.");
+  await expect.poll(async () => invokedCmds(page)).toContain("set_coder_editor");
+  await page.locator("#markdown-schemes button", { hasText: "Cool" }).click();
+  await expect(page.locator("#settings-status")).toHaveText("Cool syntax colors.");
+  await expect.poll(async () => invokedCmds(page)).toContain("set_markdown_scheme");
+  await page.locator("#markdown-highlight").uncheck();
+  await expect(page.locator("#settings-status")).toHaveText("Markdown syntax colors disabled.");
+  await expect.poll(async () => invokedCmds(page)).toContain("set_markdown_highlight");
 });
 
 test("launch at login toggle calls set_autostart", async ({ page }) => {

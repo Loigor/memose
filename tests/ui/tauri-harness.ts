@@ -18,6 +18,7 @@ export type NoteSeed = {
   collapsed?: boolean;
   stackHost?: string | null;
   theme?: string | null;
+  coder?: boolean | null;
   serverContent?: string | null;
 };
 
@@ -28,6 +29,9 @@ export type HarnessSettings = {
   visibility?: string;
   space?: string;
   snapMemos?: boolean;
+  coderEditor?: boolean;
+  markdownHighlight?: boolean;
+  markdownScheme?: string;
 };
 
 export type PinTabSeed = {
@@ -106,6 +110,7 @@ function installBrowserHarness(seed: BrowserSeed) {
       collapsed: Boolean(partial.collapsed),
       stackHost: partial.stackHost ?? null,
       theme: partial.theme ?? null,
+      coder: partial.coder ?? null,
       serverContent: partial.serverContent ?? null,
     };
   }
@@ -140,6 +145,12 @@ function installBrowserHarness(seed: BrowserSeed) {
     visibility: seed.settings?.visibility ?? "PRIVATE",
     space: seed.settings?.space ?? "",
     snapMemos: Boolean(seed.settings?.snapMemos),
+    coderEditor: Boolean(seed.settings?.coderEditor),
+    markdownHighlight: seed.settings?.markdownHighlight !== false,
+    markdownScheme:
+      seed.settings?.markdownScheme === "cool" || seed.settings?.markdownScheme === "mono"
+        ? seed.settings.markdownScheme
+        : "paper",
   };
   const shortcuts = {
     newMemo: `${command}+Alt+N`,
@@ -446,6 +457,7 @@ function installBrowserHarness(seed: BrowserSeed) {
           note.hueDark = a.hueDark ?? null;
           note.swatches = Array.isArray(a.swatches) ? a.swatches.slice() : [];
           note.theme = a.theme ?? null;
+          note.coder = a.coder === true ? true : a.coder === false ? false : null;
         }
         return null;
       }
@@ -554,6 +566,31 @@ function installBrowserHarness(seed: BrowserSeed) {
       case "set_snap_memos":
         state.settings.snapMemos = Boolean(a.enabled);
         emit("snap-changed", a.enabled);
+        return null;
+      case "set_coder_editor":
+        state.settings.coderEditor = Boolean(a.enabled);
+        emit("editor-prefs-changed", {
+          coderEditor: state.settings.coderEditor,
+          markdownHighlight: state.settings.markdownHighlight,
+          markdownScheme: state.settings.markdownScheme,
+        });
+        return null;
+      case "set_markdown_highlight":
+        state.settings.markdownHighlight = Boolean(a.enabled);
+        emit("editor-prefs-changed", {
+          coderEditor: state.settings.coderEditor,
+          markdownHighlight: state.settings.markdownHighlight,
+          markdownScheme: state.settings.markdownScheme,
+        });
+        return null;
+      case "set_markdown_scheme":
+        state.settings.markdownScheme =
+          a.scheme === "cool" || a.scheme === "mono" ? a.scheme : "paper";
+        emit("editor-prefs-changed", {
+          coderEditor: state.settings.coderEditor,
+          markdownHighlight: state.settings.markdownHighlight,
+          markdownScheme: state.settings.markdownScheme,
+        });
         return null;
       case "set_collapsed": {
         const note = noteById(a.id);

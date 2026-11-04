@@ -39,6 +39,8 @@ pub struct Note {
     pub stack_host: Option<String>,
     /// Light or dark paper for this memo. Empty follows the app theme.
     pub theme: Option<String>,
+    /// Coder layout for this memo. Empty follows the settings default.
+    pub coder: Option<bool>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]

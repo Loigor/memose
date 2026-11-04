@@ -5,11 +5,13 @@ import { marked } from "marked";
 
 import { audienceChoice, revealPressedChoice } from "./audience-ui";
 import { applyMediaFigureSize, handleBlockAreaNavigation, handleBlockMediaDeletion, syncInlineLineSlot } from "./editor-blocks";
+import { memoUsesCoder, refreshEditorFields, wrapEditorField } from "./editor-field";
 import { filesFromTransfer } from "./files";
 import { BlockHistory, cloneBlocks, restoreCaret, type Caret } from "./history";
 import { namedTheme, type Look } from "./look";
 import {
   applyCode,
+  applyJsonFormat,
   applyTask,
   applyTitle,
   ensureTextSlots,
@@ -26,9 +28,9 @@ import {
 } from "./markdown-edit";
 import { hydratePreviewContent, mediaPointer } from "./media-elements";
 import { createMedia, type MediaNoteMutator } from "./media-dnd";
-import { paintSurface, paintThemeButton, paperAt, stackHeaderHtml, type ThemeName } from "./memo-chrome";
+import { markdownToolbarHtml, paintSurface, paintThemeButton, paperAt, stackHeaderHtml, type ThemeName } from "./memo-chrome";
 import { inTauri, isPreviewWindow } from "./platform";
-import { resizeAllBlockTextareas, sizeBlockTextarea } from "./textarea";
+import { editorShell, resizeAllBlockTextareas, sizeBlockTextarea } from "./textarea";
 import { exactStamp, relativeTime } from "./time";
 import type { MemoSpace, Note } from "./types";
 import { syncIcon } from "./sync-status";
@@ -132,6 +134,9 @@ export type StackState = {
   swatches: number[];
   opacity: number;
   theme: ThemeName | null;
+  coder: boolean | null;
+  wrap: boolean;
+  mdBar: boolean;
   visibility: string;
   space: string;
   syncState: string;
@@ -401,6 +406,31 @@ function paintSectionColor(section: HTMLElement, state: StackState) {
   if (button && icon) {
     paintThemeButton(button, icon, theme, !getAltHeld());
   }
+  paintSectionCoder(section, state);
+}
+
+function paintSectionCoder(section: HTMLElement, state: StackState) {
+  const on = memoUsesCoder(state.coder);
+  section.toggleAttribute("data-coder", on);
+  section.toggleAttribute("data-wrap", on && state.wrap);
+  section.querySelector(".coder-toggle")?.setAttribute("aria-pressed", String(on));
+  section.querySelector("[data-format='wrap']")?.setAttribute("aria-pressed", String(state.wrap));
+  const formatPop = section.querySelector<HTMLElement>(".format-pop");
+  const formatToggle = section.querySelector<HTMLButtonElement>(".format-toggle");
+  if (!on && formatPop) {
+    formatPop.hidden = true;
+    formatToggle?.setAttribute("aria-expanded", "false");
+  }
+}
+
+export function applyStackEditorChrome() {
+  stackEl?.querySelectorAll<HTMLElement>(".stack-note").forEach((section) => {
+    const id = section.dataset.id;
+    const state = id ? stackState.get(id) : undefined;
+    if (state) {
+      paintSectionCoder(section, state);
+    }
+  });
 }
 
 export function repaintStackColors() {
@@ -740,10 +770,10 @@ function renderSectionBlocks(section: HTMLElement, state: StackState, focusName?
             if (index === lastIndex) {
               area.classList.add("grow");
             }
-            if (assignedRow && area.parentElement === assignedRow) {
-              assignedRow.after(area);
+            if (assignedRow && editorShell(area).parentElement === assignedRow) {
+              assignedRow.after(editorShell(area));
             } else {
-              container.append(area);
+              container.append(editorShell(area));
             }
             sizeBlockTextarea(area);
             area.focus();
@@ -816,12 +846,12 @@ function renderSectionBlocks(section: HTMLElement, state: StackState, focusName?
         scheduleSectionSave(section, state);
       });
       if (canSitOnMediaLine && currentRow) {
-        currentRow.append(area);
+        currentRow.append(wrapEditorField(area));
         currentRowSideArea = area;
       } else {
         currentRow = null;
         currentRowSideArea = null;
-        container.append(area);
+        container.append(wrapEditorField(area));
       }
       return;
     }
@@ -989,6 +1019,7 @@ function saveSectionLook(id: string, state: StackState) {
     hueDark: state.hueDark,
     swatches: state.swatches,
     theme: state.theme,
+    coder: state.coder,
   }).catch((error: unknown) => {
     console.error(error);
   });
@@ -1058,6 +1089,7 @@ function buildSection(note: Note): HTMLElement {
   section.className = "stack-note";
   section.dataset.id = note.id;
   section.innerHTML = `${stackHeaderHtml()}
+    ${markdownToolbarHtml()}
     <div class="stack-blocks"></div>
     <div class="stack-preview" hidden></div>
   `;
@@ -1126,7 +1158,7 @@ function buildSection(note: Note): HTMLElement {
     if (!state || !sectionBarOnly(note.id, state) || pressTravel > 8 || header.dataset.moved === "1") {
       return;
     }
-    if (event.target instanceof Element && event.target.closest("textarea, button, input, .color-pop, .audience-pop, .markdown-pop, .editor-tools")) {
+    if (event.target instanceof Element && event.target.closest("textarea, button, input, .color-pop, .audience-pop, .format-pop, .md-toolbar, .editor-tools")) {
       return;
     }
     state.collapsed = false;
@@ -1155,7 +1187,7 @@ function buildSection(note: Note): HTMLElement {
     if (!(target instanceof Element)) {
       return;
     }
-    if (target.closest("header, button, input, textarea, .media, .media-audio, .file-attachment, .color-pop, .audience-pop, .markdown-pop, .editor-tools, #resize-grip, .resize-handle")) {
+    if (target.closest("header, button, input, textarea, .media, .media-audio, .file-attachment, .color-pop, .audience-pop, .format-pop, .md-toolbar, .editor-tools, #resize-grip, .resize-handle")) {
       return;
     }
     startWindowDrag(event);
@@ -1224,47 +1256,24 @@ function buildSection(note: Note): HTMLElement {
   });
   const editorMenuToggle = section.querySelector<HTMLButtonElement>(".editor-menu-toggle");
   const editorTools = section.querySelector<HTMLElement>(".editor-tools");
+  const markdownToggle = section.querySelector<HTMLButtonElement>(".markdown-toggle");
+  const markdownToolbar = section.querySelector<HTMLElement>(".md-toolbar");
+  const formatToggle = section.querySelector<HTMLButtonElement>(".format-toggle");
+  const formatPop = section.querySelector<HTMLElement>(".format-pop");
+  const closeSectionFormatPop = () => {
+    if (formatPop) {
+      formatPop.hidden = true;
+      formatToggle?.setAttribute("aria-expanded", "false");
+    }
+  };
   const closeSectionEditorMenu = () => {
     editorTools?.classList.remove("open");
     editorMenuToggle?.setAttribute("aria-expanded", "false");
+    closeSectionFormatPop();
   };
-  editorMenuToggle?.addEventListener("mousedown", (event) => {
-    event.preventDefault();
-  });
-  editorMenuToggle?.addEventListener("click", () => {
-    if (!editorTools || !editorMenuToggle) {
-      return;
-    }
-    const open = !editorTools.classList.contains("open");
-    editorTools.classList.toggle("open", open);
-    editorMenuToggle.setAttribute("aria-expanded", String(open));
-    if (!open) {
-      if (markdownPop) {
-        markdownPop.hidden = true;
-        markdownToggle?.setAttribute("aria-expanded", "false");
-      }
-      if (pop) {
-        pop.hidden = true;
-      }
-    }
-  });
-  const markdownPop = section.querySelector<HTMLElement>(".markdown-pop");
-  const markdownToggle = section.querySelector<HTMLButtonElement>(".markdown-toggle");
-  markdownToggle?.addEventListener("mousedown", (event) => {
-    event.preventDefault();
-  });
-  markdownToggle?.addEventListener("click", () => {
-    if (!markdownPop || !markdownToggle) {
-      return;
-    }
-    markdownPop.hidden = !markdownPop.hidden;
-    markdownToggle.setAttribute("aria-expanded", String(!markdownPop.hidden));
-  });
-  markdownPop?.addEventListener("click", (event) => {
-    const button = event.target instanceof Element ? event.target.closest("button") : null;
-    const kind = button?.dataset.markdown;
+  const applySectionMarkdown = (kind: string) => {
     const state = stackState.get(note.id);
-    if (!kind || !state) {
+    if (!state) {
       return;
     }
     const field = sectionTargetArea(section, state);
@@ -1284,16 +1293,93 @@ function buildSection(note: Note): HTMLElement {
               ? applyTask(value, start, end)
               : kind === "code"
                 ? applyCode(value, start, end)
-                : null;
+                : kind === "json"
+                  ? applyJsonFormat(value)
+                  : null;
     if (!edit) {
       return;
     }
     applySectionEdit(section, state, field, edit);
-    if (markdownPop) {
-      markdownPop.hidden = true;
-      markdownToggle?.setAttribute("aria-expanded", "false");
+  };
+  if (state?.mdBar && markdownToggle && markdownToolbar) {
+    markdownToggle.setAttribute("aria-pressed", "true");
+    markdownToolbar.hidden = false;
+  }
+  editorMenuToggle?.addEventListener("mousedown", (event) => {
+    event.preventDefault();
+  });
+  editorMenuToggle?.addEventListener("click", () => {
+    if (!editorTools || !editorMenuToggle) {
+      return;
     }
+    const open = !editorTools.classList.contains("open");
+    editorTools.classList.toggle("open", open);
+    editorMenuToggle.setAttribute("aria-expanded", String(open));
+    if (!open) {
+      closeSectionFormatPop();
+      if (pop) {
+        pop.hidden = true;
+      }
+    }
+  });
+  markdownToggle?.addEventListener("mousedown", (event) => {
+    event.preventDefault();
+  });
+  markdownToolbar?.addEventListener("mousedown", (event) => {
+    event.preventDefault();
+  });
+  markdownToggle?.addEventListener("click", () => {
+    const held = stackState.get(note.id);
+    if (!markdownToggle || !markdownToolbar || !held) {
+      return;
+    }
+    held.mdBar = !held.mdBar;
+    markdownToggle.setAttribute("aria-pressed", String(held.mdBar));
+    markdownToolbar.hidden = !held.mdBar;
     closeSectionEditorMenu();
+  });
+  markdownToolbar?.addEventListener("click", (event) => {
+    const button = event.target instanceof Element ? event.target.closest("button") : null;
+    const kind = button?.dataset.markdown;
+    if (!kind) {
+      return;
+    }
+    applySectionMarkdown(kind);
+  });
+  formatToggle?.addEventListener("mousedown", (event) => {
+    event.preventDefault();
+  });
+  formatPop?.addEventListener("mousedown", (event) => {
+    event.preventDefault();
+  });
+  formatToggle?.addEventListener("click", () => {
+    if (!formatPop || !formatToggle) {
+      return;
+    }
+    const open = formatPop.hidden;
+    formatPop.hidden = !open;
+    formatToggle.setAttribute("aria-expanded", String(open));
+  });
+  formatPop?.addEventListener("click", (event) => {
+    const button = event.target instanceof Element ? event.target.closest("button") : null;
+    const action = button?.dataset.format;
+    const held = stackState.get(note.id);
+    if (!action || !held) {
+      return;
+    }
+    if (action === "wrap") {
+      held.wrap = !held.wrap;
+      paintSectionCoder(section, held);
+      refreshEditorFields(section);
+      resizeAllBlockTextareas(section);
+      closeSectionFormatPop();
+      return;
+    }
+    if (action === "document") {
+      applySectionMarkdown("json");
+      closeSectionFormatPop();
+      closeSectionEditorMenu();
+    }
   });
   const mode = section.querySelector<HTMLButtonElement>(".mode-toggle");
   const preview = section.querySelector<HTMLElement>(".stack-preview");
@@ -1302,6 +1388,19 @@ function buildSection(note: Note): HTMLElement {
   }
   mode?.addEventListener("click", () => {
     toggleSectionPreview(section);
+    closeSectionEditorMenu();
+  });
+  const coderToggle = section.querySelector<HTMLButtonElement>(".coder-toggle");
+  coderToggle?.addEventListener("click", () => {
+    const state = stackState.get(note.id);
+    if (!state) {
+      return;
+    }
+    state.coder = !memoUsesCoder(state.coder);
+    paintSectionCoder(section, state);
+    refreshEditorFields(section);
+    resizeAllBlockTextareas(section);
+    saveSectionLook(note.id, state);
     closeSectionEditorMenu();
   });
   preview?.addEventListener("change", (event) => {
@@ -1482,6 +1581,11 @@ export async function loadStack() {
       swatches: [...note.swatches],
       opacity: note.opacity,
       theme: prev?.theme ?? namedTheme(note.theme),
+      coder:
+        prev?.coder ??
+        (note.coder === true ? true : note.coder === false ? false : null),
+      wrap: prev?.wrap ?? false,
+      mdBar: prev?.mdBar ?? false,
       visibility: note.visibility || "PRIVATE",
       space: note.space || "",
       syncState: note.syncState || "local",
@@ -1608,7 +1712,7 @@ export function syncHeaderCompact() {
     const twoLineMetaW = Math.max(labelW + syncW, editedW);
     const singleBrandW = brandW + (singleMetaW > 0 ? 6 + singleMetaW : 0);
     const twoLineBrandW = brandW + (twoLineMetaW > 0 ? 6 + twoLineMetaW : 0);
-    const fullButtonsRightW = 150;
+    const fullButtonsRightW = 165;
     const compactMeta = hasBothMeta && availW < singleBrandW + fullButtonsRightW;
     const effectiveBrandW = compactMeta ? twoLineBrandW : singleBrandW;
     const compactTools = availW < effectiveBrandW + fullButtonsRightW;
@@ -1758,7 +1862,7 @@ export function dragBlocked(target: EventTarget | null): boolean {
     target instanceof Element &&
     Boolean(
       target.closest(
-        "button, a, input, textarea, select, audio, video, .media, .media-audio, .file-attachment, #media-context-menu, #resize-grip, .resize-handle, #color-pop, #audience-pop, #markdown-pop, #editor-tools, .color-pop, .audience-pop, .markdown-pop, .editor-tools",
+        "button, a, input, textarea, select, audio, video, .media, .media-audio, .file-attachment, #media-context-menu, #resize-grip, .resize-handle, #color-pop, #audience-pop, #format-pop, #md-toolbar, #editor-tools, .color-pop, .audience-pop, .format-pop, .md-toolbar, .editor-tools",
       ),
     )
   );
@@ -1771,7 +1875,7 @@ function resizeZone(event: MouseEvent): ResizeDir | null {
   if (target instanceof Element) {
     if (
       target.closest(
-        "button, a, input, textarea, select, #color-pop, #audience-pop, #markdown-pop, #editor-tools, .color-pop, .audience-pop, .markdown-pop, .editor-tools",
+        "button, a, input, textarea, select, #color-pop, #audience-pop, #format-pop, #md-toolbar, #editor-tools, .color-pop, .audience-pop, .format-pop, .md-toolbar, .editor-tools",
       )
     ) {
       return null;
@@ -1949,7 +2053,7 @@ export function wireChrome() {
     }
     if (
       event.target instanceof Element &&
-      event.target.closest("textarea, button, input, #audience-pop, #color-pop, #markdown-pop, #editor-tools")
+      event.target.closest("textarea, button, input, #audience-pop, #color-pop, #format-pop, #md-toolbar, #editor-tools")
     ) {
       return;
     }

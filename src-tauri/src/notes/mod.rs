@@ -5,7 +5,7 @@ mod sync;
 
 pub use db::{
     canonical_visibility, Db, API_FLAVOR, BASE_URL, KEYCHAIN_IMPORTED, MEMO_SPACE, MEMO_VISIBILITY,
-    SNAP_MEMOS, THEME,
+    CODER_EDITOR, MARKDOWN_HIGHLIGHT, MARKDOWN_SCHEME, SNAP_MEMOS, THEME,
 };
 pub use model::{is_offline_private, Note, SpaceView, REMOTE};
 pub use pin_tabs::{tab_at, PinTabHit, PinTabs};

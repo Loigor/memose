@@ -1,3 +1,9 @@
+import { paintEditorField } from "./editor-field.ts";
+
+export function editorShell(area: HTMLTextAreaElement): HTMLElement {
+  return area.closest(".md-field") ?? area;
+}
+
 export function sizeBlockTextarea(area: HTMLTextAreaElement) {
   area.rows = 1;
   const isGrow = area.classList.contains("grow");
@@ -6,12 +12,14 @@ export function sizeBlockTextarea(area: HTMLTextAreaElement) {
   area.classList.toggle("empty-slot", isEmpty && !isGrow && !isInline);
   if (isEmpty && !isGrow && !isInline) {
     area.style.height = "";
+    paintEditorField(area);
     return;
   }
   area.style.height = "0px";
   const minH = isGrow ? 64 : 22;
   const needed = Math.max(minH, area.scrollHeight);
   area.style.height = `${needed}px`;
+  paintEditorField(area);
 }
 
 export function resizeAllBlockTextareas(root: ParentNode = document) {

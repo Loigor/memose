@@ -6,6 +6,7 @@ export type SurfaceLook = {
   hueDark: number | null;
   swatches: number[];
   theme: ThemeName | null;
+  coder: boolean | null;
 };
 
 export function paperAt(theme: ThemeName, hue: number): string {
@@ -109,6 +110,26 @@ export function huePopHtml(): string {
   return `<div class="color-pop" hidden>${huePopInnerHtml()}</div>`;
 }
 
+export function markdownToolbarHtml(): string {
+  return `<div class="md-toolbar" hidden>
+    <button type="button" data-markdown="bold" aria-label="Bold">B</button>
+    <button type="button" data-markdown="italic" aria-label="Italic">I</button>
+    <button type="button" data-markdown="title" aria-label="Title">T</button>
+    <button type="button" data-markdown="task" aria-label="Task list">[ ]</button>
+    <button type="button" data-markdown="code" aria-label="Code">&lt;&gt;</button>
+  </div>`;
+}
+
+export function formatMenuHtml(): string {
+  return `<div class="format-anchor">
+    <button class="format-toggle coder-tool icon-button" type="button" aria-label="Format" aria-expanded="false" title="Format">Format</button>
+    <div class="format-pop" hidden>
+      <button type="button" data-format="document">Format document</button>
+      <button type="button" data-format="wrap" aria-pressed="false">Line wrap</button>
+    </div>
+  </div>`;
+}
+
 export function paintThemeButton(button: HTMLElement, icon: Element, theme: ThemeName, colorMode: boolean) {
   button.classList.toggle("color-mode", colorMode);
   if (colorMode) {
@@ -165,18 +186,13 @@ export function stackHeaderHtml(): string {
             <span class="menu-glyph" aria-hidden="true"></span>
           </button>
           <div class="editor-tools">
-            <div class="markdown-anchor">
-              <button class="markdown-toggle icon-button" type="button" aria-label="Markdown" aria-expanded="false" title="Markdown">
-                <span class="markdown-glyph" aria-hidden="true"></span>
-              </button>
-              <div class="markdown-pop" hidden>
-                <button type="button" data-markdown="bold" aria-label="Bold">B</button>
-                <button type="button" data-markdown="italic" aria-label="Italic">I</button>
-                <button type="button" data-markdown="title" aria-label="Title">T</button>
-                <button type="button" data-markdown="task" aria-label="Task list">[ ]</button>
-                <button type="button" data-markdown="code" aria-label="Code">&lt;&gt;</button>
-              </div>
-            </div>
+            <button class="markdown-toggle icon-button" type="button" aria-label="Markdown toolbar" aria-pressed="false" title="Markdown toolbar">
+              <span class="markdown-glyph" aria-hidden="true"></span>
+            </button>
+            <button class="coder-toggle coder-tool icon-button" type="button" aria-label="Coder editor" aria-pressed="false" title="Coder editor">
+              { }
+            </button>
+            ${formatMenuHtml()}
             <button class="mode-toggle icon-button" type="button" aria-label="Preview" aria-pressed="false" title="Preview">
               <span class="preview-glyph" aria-hidden="true"></span>
             </button>

@@ -617,7 +617,7 @@ impl Db {
     pub fn guest_of(&self, host_id: &str) -> Result<Option<Note>, AppError> {
         self.with(|conn| {
             let mut stmt = conn.prepare(
-                "SELECT id, content, created_at, updated_at, sync_state, remote_name, last_error, pinned, win_x, win_y, win_w, win_h, opacity, hue_light, hue_dark, swatches, visibility, remote_space, collapsed, stack_host, theme FROM notes WHERE stack_host = ?1 LIMIT 1",
+                "SELECT id, content, created_at, updated_at, sync_state, remote_name, last_error, pinned, win_x, win_y, win_w, win_h, opacity, hue_light, hue_dark, swatches, visibility, remote_space, collapsed, stack_host, theme, coder FROM notes WHERE stack_host = ?1 LIMIT 1",
             )?;
             let mut rows = stmt.query(params![host_id])?;
             if let Some(row) = rows.next()? {
@@ -648,6 +648,7 @@ impl Db {
         })
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub fn save_look(
         &self,
         id: &str,
@@ -656,6 +657,7 @@ impl Db {
         hue_dark: Option<u16>,
         swatches: &[u16],
         theme: Option<&str>,
+        coder: Option<bool>,
     ) -> Result<(), AppError> {
         let opacity = opacity.min(100);
         let hue_light = hue_light.filter(|hue| *hue <= 359);
@@ -666,12 +668,13 @@ impl Db {
             Some("light") => Some("light"),
             _ => None,
         };
+        let coder = coder.map(|on| i64::from(u8::from(on)));
         self.with(|conn| {
             conn.execute(
                 "UPDATE notes
-                 SET opacity = ?1, hue_light = ?2, hue_dark = ?3, swatches = ?4, theme = ?5
-                 WHERE id = ?6",
-                params![opacity, hue_light, hue_dark, stored, theme, id],
+                 SET opacity = ?1, hue_light = ?2, hue_dark = ?3, swatches = ?4, theme = ?5, coder = ?6
+                 WHERE id = ?7",
+                params![opacity, hue_light, hue_dark, stored, theme, coder, id],
             )?;
             Ok(())
         })
@@ -1064,6 +1067,9 @@ pub const MEMO_VISIBILITY: &str = "memo_visibility";
 pub const MEMO_SPACE: &str = "memo_space";
 pub const SPACE_CATALOG: &str = "space_catalog";
 pub const SNAP_MEMOS: &str = "snap_memos";
+pub const CODER_EDITOR: &str = "coder_editor";
+pub const MARKDOWN_HIGHLIGHT: &str = "markdown_highlight";
+pub const MARKDOWN_SCHEME: &str = "markdown_scheme";
 
 pub fn canonical_visibility(value: &str) -> String {
     match value.trim().to_ascii_uppercase().as_str() {
@@ -1122,7 +1128,7 @@ fn get_meta(conn: &Connection, key: &str) -> Result<Option<String>, AppError> {
 macro_rules! note_sql {
     ($tail:literal) => {
         concat!(
-            "SELECT id, content, created_at, updated_at, sync_state, remote_name, last_error, pinned, win_x, win_y, win_w, win_h, opacity, hue_light, hue_dark, swatches, visibility, remote_space, collapsed, stack_host, theme ",
+            "SELECT id, content, created_at, updated_at, sync_state, remote_name, last_error, pinned, win_x, win_y, win_w, win_h, opacity, hue_light, hue_dark, swatches, visibility, remote_space, collapsed, stack_host, theme, coder ",
             $tail
         )
     };
@@ -1195,6 +1201,7 @@ fn ensure_note_columns(conn: &Connection) -> Result<(), AppError> {
         ("hue_dark", "ALTER TABLE notes ADD COLUMN hue_dark INTEGER"),
         ("swatches", "ALTER TABLE notes ADD COLUMN swatches TEXT"),
         ("theme", "ALTER TABLE notes ADD COLUMN theme TEXT"),
+        ("coder", "ALTER TABLE notes ADD COLUMN coder INTEGER"),
         ("visibility", "ALTER TABLE notes ADD COLUMN visibility TEXT"),
         (
             "remote_space",
@@ -1367,6 +1374,7 @@ fn map_note(row: &rusqlite::Row<'_>) -> rusqlite::Result<Note> {
         collapsed: row.get::<_, i64>(18)? != 0,
         stack_host: row.get(19)?,
         theme: theme_column(row.get(20)?),
+        coder: row.get::<_, Option<i64>>(21)?.map(|value| value != 0),
     })
 }
 
@@ -1523,6 +1531,7 @@ mod tests {
             Some(400),
             &[12, 200, 400],
             Some("dark"),
+            Some(true),
         )
         .unwrap();
         db.finalize_content("colored").unwrap();
@@ -1533,6 +1542,7 @@ mod tests {
         assert!(note.hue_dark.is_none());
         assert_eq!(note.swatches, vec![12, 200]);
         assert_eq!(note.theme.as_deref(), Some("dark"));
+        assert_eq!(note.coder, Some(true));
     }
 
     #[test]
@@ -1556,7 +1566,7 @@ mod tests {
         db.finalize_content("loose").unwrap();
         db.set_pinned(&first.id, true).unwrap();
         db.set_pinned(&second.id, true).unwrap();
-        db.save_look(&first.id, 80, Some(12), None, &[], None)
+        db.save_look(&first.id, 80, Some(12), None, &[], None, None)
             .unwrap();
         db.set_pinned_opacity(25).unwrap();
         let first = db.get(&first.id).unwrap().unwrap();

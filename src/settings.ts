@@ -23,6 +23,9 @@ type Settings = {
   visibility: string;
   space: string;
   snapMemos: boolean;
+  coderEditor: boolean;
+  markdownHighlight: boolean;
+  markdownScheme: string;
 };
 
 type TabId = "visibility" | "shortcuts" | "sync";
@@ -33,6 +36,9 @@ const tokenHint = document.querySelector<HTMLParagraphElement>("#token-hint");
 const status = document.querySelector<HTMLParagraphElement>("#settings-status");
 const autostart = document.querySelector<HTMLInputElement>("#autostart");
 const snapMemos = document.querySelector<HTMLInputElement>("#snap-memos");
+const coderEditor = document.querySelector<HTMLInputElement>("#coder-editor");
+const markdownHighlight = document.querySelector<HTMLInputElement>("#markdown-highlight");
+const markdownSchemes = document.querySelector<HTMLDivElement>("#markdown-schemes");
 const audience = document.querySelector<HTMLDivElement>("#memos-audience");
 const visibilityChoices = document.querySelector<HTMLDivElement>("#visibility-choices");
 const spaceChoices = document.querySelector<HTMLDivElement>("#space-choices");
@@ -53,6 +59,9 @@ if (
   !status ||
   !autostart ||
   !snapMemos ||
+  !coderEditor ||
+  !markdownHighlight ||
+  !markdownSchemes ||
   !shortcuts ||
   !gesture ||
   !gestureHint ||
@@ -75,6 +84,15 @@ const tokenHintEl = tokenHint;
 const statusEl = status;
 const autostartEl = autostart;
 const snapMemosEl = snapMemos;
+const coderEditorEl = coderEditor;
+const markdownHighlightEl = markdownHighlight;
+const markdownSchemesEl = markdownSchemes;
+let chosenScheme = "paper";
+const schemeChoices = [
+  { id: "paper", label: "Paper" },
+  { id: "cool", label: "Cool" },
+  { id: "mono", label: "Mono" },
+];
 const visibilityChoicesEl = visibilityChoices;
 const spaceChoicesEl = spaceChoices;
 const memoSpaceFieldEl = memoSpaceField;
@@ -252,6 +270,12 @@ async function loadSettings() {
     : "No token saved.";
   autostartEl.checked = settings.launchAtLogin;
   snapMemosEl.checked = settings.snapMemos;
+  coderEditorEl.checked = settings.coderEditor;
+  markdownHighlightEl.checked = settings.markdownHighlight !== false;
+  chosenScheme = settings.markdownScheme === "cool" || settings.markdownScheme === "mono"
+    ? settings.markdownScheme
+    : "paper";
+  paintSchemes();
   chosenVisibility = settings.visibility || "PRIVATE";
   chosenSpace = settings.space || "";
   hasSyncConfigured = settings.baseUrl.trim() !== "" && settings.hasToken;
@@ -565,6 +589,54 @@ snapMemosEl.addEventListener("change", () => {
     .catch((error: unknown) => {
       statusEl.textContent = String(error);
       snapMemosEl.checked = !enabled;
+    });
+});
+
+function paintSchemes() {
+  markdownSchemesEl.replaceChildren();
+  for (const option of schemeChoices) {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.textContent = option.label;
+    button.setAttribute("aria-pressed", String(option.id === chosenScheme));
+    button.addEventListener("click", () => {
+      chosenScheme = option.id;
+      paintSchemes();
+      void invoke("set_markdown_scheme", { scheme: option.id })
+        .then(() => {
+          statusEl.textContent = `${option.label} syntax colors.`;
+        })
+        .catch((error: unknown) => {
+          statusEl.textContent = String(error);
+        });
+    });
+    markdownSchemesEl.append(button);
+  }
+}
+
+coderEditorEl.addEventListener("change", () => {
+  const enabled = coderEditorEl.checked;
+  void invoke("set_coder_editor", { enabled })
+    .then(() => {
+      statusEl.textContent = enabled
+        ? "New memos use the coder editor."
+        : "New memos use the default editor.";
+    })
+    .catch((error: unknown) => {
+      statusEl.textContent = String(error);
+      coderEditorEl.checked = !enabled;
+    });
+});
+
+markdownHighlightEl.addEventListener("change", () => {
+  const enabled = markdownHighlightEl.checked;
+  void invoke("set_markdown_highlight", { enabled })
+    .then(() => {
+      statusEl.textContent = enabled ? "Markdown syntax colors enabled." : "Markdown syntax colors disabled.";
+    })
+    .catch((error: unknown) => {
+      statusEl.textContent = String(error);
+      markdownHighlightEl.checked = !enabled;
     });
 });
 

@@ -20,6 +20,9 @@ pub(crate) struct SettingsView {
     visibility: String,
     space: String,
     snap_memos: bool,
+    coder_editor: bool,
+    markdown_highlight: bool,
+    markdown_scheme: String,
 }
 
 #[tauri::command]
@@ -150,7 +153,42 @@ pub fn get_settings(app: AppHandle, state: State<AppState>) -> Result<SettingsVi
         ),
         space: state.db.get_meta(notes::MEMO_SPACE)?.unwrap_or_default(),
         snap_memos: state.db.get_meta(notes::SNAP_MEMOS)?.as_deref() == Some("1"),
+        coder_editor: state.db.get_meta(notes::CODER_EDITOR)?.as_deref() == Some("1"),
+        markdown_highlight: state.db.get_meta(notes::MARKDOWN_HIGHLIGHT)?.as_deref() != Some("0"),
+        markdown_scheme: markdown_scheme(state.db.get_meta(notes::MARKDOWN_SCHEME)?.as_deref()),
     })
+}
+
+fn markdown_scheme(value: Option<&str>) -> String {
+    match value {
+        Some("cool") => "cool".into(),
+        Some("mono") => "mono".into(),
+        _ => "paper".into(),
+    }
+}
+
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct EditorPrefsView {
+    coder_editor: bool,
+    markdown_highlight: bool,
+    markdown_scheme: String,
+}
+
+fn emit_editor_prefs(app: &AppHandle, state: &State<AppState>) -> Result<(), AppError> {
+    let _ = app.emit(
+        "editor-prefs-changed",
+        EditorPrefsView {
+            coder_editor: state.db.get_meta(notes::CODER_EDITOR)?.as_deref() == Some("1"),
+            markdown_highlight: state
+                .db
+                .get_meta(notes::MARKDOWN_HIGHLIGHT)?
+                .as_deref()
+                != Some("0"),
+            markdown_scheme: markdown_scheme(state.db.get_meta(notes::MARKDOWN_SCHEME)?.as_deref()),
+        },
+    );
+    Ok(())
 }
 
 #[tauri::command]
@@ -164,6 +202,42 @@ pub fn set_snap_memos(
         .set_meta(notes::SNAP_MEMOS, if enabled { "1" } else { "0" })?;
     let _ = app.emit("snap-changed", enabled);
     Ok(())
+}
+
+#[tauri::command]
+pub fn set_coder_editor(
+    app: AppHandle,
+    state: State<AppState>,
+    enabled: bool,
+) -> Result<(), AppError> {
+    state
+        .db
+        .set_meta(notes::CODER_EDITOR, if enabled { "1" } else { "0" })?;
+    emit_editor_prefs(&app, &state)
+}
+
+#[tauri::command]
+pub fn set_markdown_highlight(
+    app: AppHandle,
+    state: State<AppState>,
+    enabled: bool,
+) -> Result<(), AppError> {
+    state
+        .db
+        .set_meta(notes::MARKDOWN_HIGHLIGHT, if enabled { "1" } else { "0" })?;
+    emit_editor_prefs(&app, &state)
+}
+
+#[tauri::command]
+pub fn set_markdown_scheme(
+    app: AppHandle,
+    state: State<AppState>,
+    scheme: String,
+) -> Result<(), AppError> {
+    state
+        .db
+        .set_meta(notes::MARKDOWN_SCHEME, &markdown_scheme(Some(&scheme)))?;
+    emit_editor_prefs(&app, &state)
 }
 
 #[tauri::command]
@@ -510,6 +584,7 @@ pub fn get_theme(state: State<AppState>) -> Result<String, AppError> {
 }
 
 #[tauri::command]
+#[allow(clippy::too_many_arguments)]
 pub fn save_look(
     state: State<AppState>,
     id: String,
@@ -518,6 +593,7 @@ pub fn save_look(
     hue_dark: Option<u16>,
     swatches: Vec<u16>,
     theme: Option<String>,
+    coder: Option<bool>,
 ) -> Result<(), AppError> {
     state.db.save_look(
         &id,
@@ -526,6 +602,7 @@ pub fn save_look(
         hue_dark,
         &swatches,
         theme.as_deref(),
+        coder,
     )
 }
 

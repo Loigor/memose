@@ -54,16 +54,17 @@
               <span class="menu-glyph" aria-hidden="true"></span>
             </button>
             <div id="editor-tools" class="editor-tools">
-              <div class="markdown-anchor">
-                <button id="markdown-toggle" class="markdown-toggle icon-button" type="button" aria-label="Markdown" aria-expanded="false" title="Markdown">
-                  <span class="markdown-glyph" aria-hidden="true"></span>
-                </button>
-                <div id="markdown-pop" hidden>
-                  <button type="button" data-markdown="bold" aria-label="Bold">B</button>
-                  <button type="button" data-markdown="italic" aria-label="Italic">I</button>
-                  <button type="button" data-markdown="title" aria-label="Title">T</button>
-                  <button type="button" data-markdown="task" aria-label="Task list">[ ]</button>
-                  <button type="button" data-markdown="code" aria-label="Code">&lt;&gt;</button>
+              <button id="markdown-toggle" class="markdown-toggle icon-button" type="button" aria-label="Markdown toolbar" aria-pressed="false" title="Markdown toolbar">
+                <span class="markdown-glyph" aria-hidden="true"></span>
+              </button>
+              <button id="coder-toggle" class="coder-toggle coder-tool icon-button" type="button" aria-label="Coder editor" aria-pressed="false" title="Coder editor">
+                { }
+              </button>
+              <div class="format-anchor">
+                <button id="format-toggle" class="format-toggle coder-tool icon-button" type="button" aria-label="Format" aria-expanded="false" title="Format">Format</button>
+                <div id="format-pop" class="format-pop" hidden>
+                  <button type="button" data-format="document">Format document</button>
+                  <button type="button" data-format="wrap" aria-pressed="false">Line wrap</button>
                 </div>
               </div>
               <button id="mode-toggle" class="mode-toggle icon-button" type="button" aria-label="Preview" aria-pressed="false" title="Preview">
@@ -107,6 +108,13 @@
               <button id="conflict-local" type="button">Keep this</button>
               <button id="conflict-remote" type="button">Use server</button>
             </div>
+          </div>
+          <div id="md-toolbar" class="md-toolbar" hidden>
+            <button type="button" data-markdown="bold" aria-label="Bold">B</button>
+            <button type="button" data-markdown="italic" aria-label="Italic">I</button>
+            <button type="button" data-markdown="title" aria-label="Title">T</button>
+            <button type="button" data-markdown="task" aria-label="Task list">[ ]</button>
+            <button type="button" data-markdown="code" aria-label="Code">&lt;&gt;</button>
           </div>
           <div id="blocks"></div>
           <div id="preview" hidden></div>

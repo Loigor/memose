@@ -1,5 +1,5 @@
 import { ensureTextSlots, type Block } from "./markdown-edit.ts";
-import { estimateCharOffsetInLine, measureTextareaLines } from "./textarea.ts";
+import { editorShell, estimateCharOffsetInLine, measureTextareaLines } from "./textarea.ts";
 
 export function handleBlockMediaDeletion(
   container: HTMLElement,
@@ -119,10 +119,11 @@ export function syncInlineLineSlot(
       if (isLast) {
         area.classList.add("grow");
       }
-      if (row && area.parentElement === row) {
-        row.after(area);
-      } else if (area.parentElement !== container) {
-        container.append(area);
+      const shell = editorShell(area);
+      if (row && shell.parentElement === row) {
+        row.after(shell);
+      } else if (shell.parentElement !== container) {
+        container.append(shell);
       }
     }
   } else {
@@ -130,7 +131,7 @@ export function syncInlineLineSlot(
     if (row && !area.classList.contains("inline-line-slot")) {
       area.classList.add("inline-line-slot");
       area.classList.remove("grow");
-      row.append(area);
+      row.append(editorShell(area));
     }
   }
 }
