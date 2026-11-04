@@ -13,7 +13,7 @@ use crate::state::AppState;
 use super::db::{
     canonical_visibility, Db, RemoteLink, API_FLAVOR, BASE_URL, MEMO_SPACE, MEMO_VISIBILITY,
 };
-use super::model::{MemoSpace, Note, MEMOS_CONTENT_LIMIT, REMOTE};
+use super::model::{is_offline_private, MemoSpace, Note, MEMOS_CONTENT_LIMIT, REMOTE};
 
 pub enum Job {
     Cycle,
@@ -282,6 +282,17 @@ async fn drain(
     let mut retry = false;
     let mut did_push = false;
     for note in notes {
+        if note.visibility.as_deref().is_some_and(is_offline_private) {
+            db_call(db.clone(), {
+                let id = note.id.clone();
+                move |db| {
+                    db.mark_local(&id)?;
+                    Ok(())
+                }
+            })
+            .await?;
+            continue;
+        }
         let refs = media::extract_refs(&note.content);
         let remote = media::content_for_remote(&note.content);
         if remote.is_empty() && refs.is_empty() && note.remote_name.is_none() {
@@ -402,6 +413,9 @@ pub fn remote_change(local: Option<&RemoteLink>, remote_updated: i64) -> RemoteC
     let Some(local) = local else {
         return RemoteChange::New;
     };
+    if local.visibility.as_deref().is_some_and(is_offline_private) {
+        return RemoteChange::Unchanged;
+    }
     let Some(stored) = local.remote_updated_at else {
         return RemoteChange::Unchanged;
     };
@@ -1587,6 +1601,7 @@ mod tests {
             sync_state: "synced".into(),
             base_content: Some("hello".into()),
             remote_updated_at: Some(50),
+            visibility: Some("PRIVATE".into()),
         };
         assert_eq!(remote_change(None, 10), RemoteChange::New);
         assert_eq!(remote_change(Some(&local), 50), RemoteChange::Unchanged);
@@ -1605,6 +1620,11 @@ mod tests {
             ..dirty
         };
         assert_eq!(remote_change(Some(&stub), 60), RemoteChange::UpdateStub);
+        let offline = RemoteLink {
+            visibility: Some("OFFLINE_PRIVATE".into()),
+            ..stub
+        };
+        assert_eq!(remote_change(Some(&offline), 99), RemoteChange::Unchanged);
     }
 
     #[test]

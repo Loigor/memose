@@ -26,9 +26,13 @@ test("settings tabs switch with arrow keys", async ({ page }) => {
 
 test("default visibility save and window snap toggle", async ({ page }) => {
   await openSettings(page);
-  await page.locator("#visibility-choices button", { hasText: "Public" }).click();
+  const visibilityButtons = page.locator("#visibility-choices button");
+  await expect(visibilityButtons.first()).toHaveText("Offline Private");
+  await page.locator("#visibility-choices button", { hasText: "Offline Private" }).click();
   await expect(page.locator("#settings-status")).toHaveText("Default memo visibility saved.");
   await expect.poll(async () => invokedCmds(page)).toContain("save_settings");
+  await page.locator("#visibility-choices button", { hasText: "Public" }).click();
+  await expect(page.locator("#settings-status")).toHaveText("Default memo visibility saved.");
   await page.locator("#snap-memos").check();
   await expect(page.locator("#settings-status")).toHaveText("Window snap enabled.");
   await expect.poll(async () => invokedCmds(page)).toContain("set_snap_memos");

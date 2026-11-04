@@ -107,26 +107,29 @@ export function stackHeaderHtml(): string {
         <span class="brand-name">Memose</span>
         <span class="note-title"></span>
         <span class="note-meta">
-          <span class="audience-anchor">
-            <button class="visibility-label" type="button" hidden>Private</button>
-            <div class="audience-pop" hidden>
-              <p class="pop-label">Who can see this</p>
-              <div class="visibility-choices"></div>
-              <div class="space-block" hidden>
-                <p class="pop-label">Space</p>
-                <div class="space-choices"></div>
-              </div>
-              <div class="audience-foot">
-                <button class="delete-note" type="button">Delete memo</button>
-                <div class="delete-confirm" hidden>
-                  <span>Delete this memo?</span>
-                  <span class="audience-confirm-actions">
-                    <button class="delete-no" type="button">Cancel</button>
-                    <button class="delete-yes" type="button">Delete</button>
-                  </span>
+          <span class="note-audience-row">
+            <span class="audience-anchor">
+              <button class="visibility-label" type="button" hidden>Private</button>
+              <div class="audience-pop" hidden>
+                <p class="pop-label">Who can see this</p>
+                <div class="visibility-choices"></div>
+                <div class="space-block" hidden>
+                  <p class="pop-label">Space</p>
+                  <div class="space-choices"></div>
+                </div>
+                <div class="audience-foot">
+                  <button class="delete-note" type="button">Delete memo</button>
+                  <div class="delete-confirm" hidden>
+                    <span>Delete this memo?</span>
+                    <span class="audience-confirm-actions">
+                      <button class="delete-no" type="button">Cancel</button>
+                      <button class="delete-yes" type="button">Delete</button>
+                    </span>
+                  </div>
                 </div>
               </div>
-            </div>
+            </span>
+            <span class="note-sync sync" hidden></span>
           </span>
           <span class="edited-sep" hidden>|</span>
           <span class="edited-at" hidden></span>

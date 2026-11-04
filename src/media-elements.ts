@@ -1,4 +1,5 @@
 import { convertFileSrc, invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
 
 import {
   displayFileName,
@@ -13,6 +14,7 @@ import { inTauri } from "./platform";
 
 export const mediaPointer = {
   dragged: false,
+  draggingName: null as string | null,
 };
 
 export async function mediaSrc(name: string): Promise<string> {
@@ -468,4 +470,49 @@ export async function hydratePreviewContent(
       link.replaceWith(chip);
     }),
   );
+}
+
+export async function showLightbox(
+  lightboxEl: HTMLElement,
+  lightboxImageEl: HTMLImageElement,
+  name: string,
+) {
+  const src = await mediaSrc(name);
+  const existing = lightboxEl.querySelector("video");
+  if (isVideo(name)) {
+    lightboxImageEl.hidden = true;
+    const video = existing ?? document.createElement("video");
+    video.controls = true;
+    video.src = src;
+    if (!existing) {
+      lightboxEl.append(video);
+    }
+    return;
+  }
+  existing?.remove();
+  lightboxImageEl.hidden = false;
+  lightboxImageEl.src = src;
+}
+
+export async function initLightbox(lightboxEl: HTMLElement, lightboxImageEl: HTMLImageElement) {
+  document.documentElement.classList.add("lightbox-window");
+  const current = await invoke<string | null>("current_media_preview");
+  if (current) {
+    await showLightbox(lightboxEl, lightboxImageEl, current);
+  }
+  await listen<string>("show-media", (event) => {
+    void showLightbox(lightboxEl, lightboxImageEl, event.payload).catch((error: unknown) => {
+      console.error(error);
+    });
+  });
+  lightboxEl.addEventListener("click", (event) => {
+    if (event.target === lightboxEl) {
+      void invoke("close_media_preview");
+    }
+  });
+  window.addEventListener("keydown", (event) => {
+    if (event.key === "Escape") {
+      void invoke("close_media_preview");
+    }
+  });
 }

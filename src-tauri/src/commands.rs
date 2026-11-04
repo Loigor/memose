@@ -258,11 +258,14 @@ pub fn save_settings(
     }
     if let Some(visibility) = visibility {
         let visibility = notes::canonical_visibility(&visibility);
-        let space = space.unwrap_or_default();
+        let mut space = space.unwrap_or_default();
         if visibility == "SPACE" && space.trim().is_empty() {
             return Err(AppError::Message(
                 "space members visibility needs a space".into(),
             ));
+        }
+        if notes::is_offline_private(&visibility) {
+            space.clear();
         }
         state.db.set_meta(notes::MEMO_VISIBILITY, &visibility)?;
         state.db.set_meta(notes::MEMO_SPACE, space.trim())?;
@@ -371,13 +374,23 @@ fn memos_context(
 }
 
 #[tauri::command]
-pub fn set_note_audience(
+pub async fn set_note_audience(
     app: AppHandle,
     state: State<'_, AppState>,
     id: String,
     visibility: String,
     space: String,
 ) -> Result<(), AppError> {
+    let visibility = notes::canonical_visibility(&visibility);
+    if notes::is_offline_private(&visibility) {
+        if let Some(note) = state.db.get(&id)? {
+            if let Some(name) = note.remote_name.as_deref() {
+                if let Some((base, token, flavor)) = memos_context(&state)? {
+                    notes::delete_remote_memo(&state.http, &base, flavor, &token, name).await?;
+                }
+            }
+        }
+    }
     if state.db.set_audience(&id, &visibility, &space)? {
         request_sync(&app);
     }

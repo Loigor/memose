@@ -4,6 +4,7 @@ import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 
+import { moveBlockMedia } from "../src/editor-blocks.ts";
 import { uniqueFiles } from "../src/files.ts";
 import { BlockHistory, cloneBlocks } from "../src/history.ts";
 import { defaultLook, lookFromNote, namedTheme } from "../src/look.ts";
@@ -183,6 +184,40 @@ test("media helpers parse, serialize, and extract titles accurately", () => {
   assert.equal(noteTitle("   "), "Note");
 });
 
+test("moveBlockMedia splits a text block at a line or inline caret", () => {
+  const items = ensureTextSlots([
+    { kind: "text", text: "Hello\nWorld" },
+    { kind: "media", name: "a.png", label: "a.png", inline: false },
+  ]);
+  const from = items.findIndex((block) => block.kind === "media");
+  const lineMoved = moveBlockMedia(items, from, { mode: "line", blockIndex: 0, lineIndex: 1, y: 0 });
+  assert.equal(lineMoved[0]?.kind, "text");
+  if (lineMoved[0]?.kind === "text") {
+    assert.equal(lineMoved[0].text, "Hello");
+  }
+  assert.equal(lineMoved[1]?.kind, "media");
+  if (lineMoved[1]?.kind === "media") {
+    assert.equal(lineMoved[1].inline, false);
+  }
+
+  const inlineMoved = moveBlockMedia(items, from, {
+    mode: "inline",
+    blockIndex: 0,
+    charOffset: 2,
+    x: 0,
+    top: 0,
+    height: 16,
+  });
+  assert.equal(inlineMoved[0]?.kind, "text");
+  if (inlineMoved[0]?.kind === "text") {
+    assert.equal(inlineMoved[0].text, "He");
+  }
+  assert.equal(inlineMoved[1]?.kind, "media");
+  if (inlineMoved[1]?.kind === "media") {
+    assert.equal(inlineMoved[1].inline, true);
+  }
+});
+
 test("shortcuts module formats and matches keyboard and mouse chords", () => {
   const defaults = defaultBinds();
   assert.ok(formatBind(defaults.newMemo).length > 0);
@@ -261,6 +296,7 @@ test("relativeTime and exactStamp format nearby and absolute timestamps", () => 
 
 test("visibilityShort labels private, space, and combined audience", () => {
   const spaces = [{ name: "team", title: "Team" }];
+  assert.equal(visibilityShort("OFFLINE_PRIVATE", "", spaces), "Offline");
   assert.equal(visibilityShort("PRIVATE", "", spaces), "Private");
   assert.equal(visibilityShort("SPACE", "team", spaces), "Team");
   assert.equal(visibilityShort("PUBLIC", "team", spaces), "Public | Team");
@@ -312,6 +348,8 @@ test("syncIcon and platform helpers cover common states", () => {
   assert.equal(syncIcon("synced").label, "Synced");
   assert.equal(syncIcon("conflict").label, "Choose a version");
   assert.equal(syncIcon("unknown").label, "Local");
+  assert.equal(syncIcon("local", "OFFLINE_PRIVATE").label, "Offline on this computer");
+  assert.equal(syncIcon("synced", "OFFLINE_PRIVATE").label, "Offline on this computer");
   assert.equal(requireEl("ok", "field"), "ok");
   assert.throws(() => requireEl(null, "field"), /missing field/);
   const rect = { left: 10, right: 20, top: 5, bottom: 15 } as DOMRect;

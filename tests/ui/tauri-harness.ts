@@ -355,7 +355,12 @@ function installBrowserHarness(seed: BrowserSeed) {
         const note = noteById(a.id);
         if (note) {
           note.visibility = a.visibility;
-          note.space = a.space;
+          note.space = a.visibility === "OFFLINE_PRIVATE" ? "" : a.space;
+          if (a.visibility === "OFFLINE_PRIVATE") {
+            note.syncState = "local";
+            note.remoteName = null;
+            note.lastError = null;
+          }
           emit("notes-changed");
         }
         return null;

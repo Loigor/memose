@@ -2,6 +2,19 @@ import { serializeBlocks, type Block } from "./markdown-edit.ts";
 
 export type Caret = { index: number; start: number; end: number };
 
+export function restoreCaret(container: ParentNode, next: Caret | null) {
+  if (!next) {
+    return;
+  }
+  const area = container.querySelector<HTMLTextAreaElement>(`textarea[data-index="${next.index}"]`);
+  if (area) {
+    area.focus();
+    const s = Math.min(next.start, area.value.length);
+    const e = Math.min(next.end, area.value.length);
+    area.setSelectionRange(s, e);
+  }
+}
+
 export type NoteHistoryEntry = {
   blocks: Block[];
   caret: Caret | null;

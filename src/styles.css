@@ -416,6 +416,13 @@ header.compact-meta #edited-sep {
   display: none;
 }
 
+.note-audience-row {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+}
+
 .audience-anchor {
   position: relative;
   display: inline-flex;
@@ -451,6 +458,8 @@ header.compact-meta #edited-sep {
 
 #visibility-label[hidden],
 .visibility-label[hidden],
+#note-sync[hidden],
+.note-sync[hidden],
 #edited-sep[hidden],
 .edited-sep[hidden],
 #edited-at[hidden],
@@ -464,6 +473,16 @@ header.compact-meta #edited-sep {
 #delete-confirm[hidden],
 .delete-confirm[hidden] {
   display: none;
+}
+
+#note-sync,
+.note-sync {
+  display: inline-flex;
+  align-items: center;
+  width: 12px;
+  height: 12px;
+  color: var(--muted);
+  flex: none;
 }
 
 #edited-at,
@@ -485,8 +504,9 @@ header.compact-meta #edited-sep {
   flex-direction: column;
   gap: 2px;
   width: 228px;
-  max-height: 284px;
-  overflow: hidden;
+  max-height: 360px;
+  overflow-x: hidden;
+  overflow-y: auto;
   padding: 4px;
   border: 1px solid var(--line);
   border-radius: 12px;
@@ -510,19 +530,11 @@ header.compact-meta #edited-sep {
 #space-block,
 .space-block {
   display: flex;
-  flex: 1 1 auto;
+  flex: none;
   flex-direction: column;
-  min-height: 0;
   margin-top: 2px;
   padding-top: 2px;
-  overflow: hidden;
   border-top: 1px solid var(--line);
-}
-
-#space-choices,
-.space-choices {
-  min-height: 44px;
-  overflow: auto;
 }
 
 #audience-pop .audience-choice,
@@ -968,6 +980,7 @@ html.collapsed.hover-open #card > header .collapsed-chevron,
 
 #recent .sync {
   display: inline-flex;
+  align-items: center;
   width: 14px;
 }
 

@@ -10,8 +10,8 @@ use uuid::Uuid;
 use crate::error::AppError;
 
 use super::model::{
-    commit_state, MemoSpace, Note, SpaceView, CONFLICT, DRAFT, ERROR, LOCAL, PENDING, REMOTE,
-    SYNCED,
+    commit_state, is_offline_private, MemoSpace, Note, SpaceView, CONFLICT, DRAFT, ERROR, LOCAL,
+    PENDING, REMOTE, SYNCED,
 };
 
 #[derive(Clone)]
@@ -105,15 +105,29 @@ impl Db {
                 conn.execute("DELETE FROM notes WHERE sync_state = ?1", params![DRAFT])?;
                 return Ok(false);
             }
-            let state = commit_state(has_base_url(conn)?);
             let (default_vis, default_space) = default_audience(conn)?;
             let now = now_ms();
             if let Some(existing) = draft(conn)? {
-                let hue_space = existing
-                    .space
+                let visibility = existing
+                    .visibility
                     .as_deref()
-                    .filter(|space| !space.trim().is_empty())
-                    .unwrap_or(default_space.as_str());
+                    .filter(|value| !value.trim().is_empty())
+                    .map(canonical_visibility)
+                    .unwrap_or_else(|| default_vis.clone());
+                let space = if is_offline_private(&visibility) {
+                    String::new()
+                } else {
+                    existing
+                        .space
+                        .clone()
+                        .unwrap_or_else(|| default_space.clone())
+                };
+                let state = commit_state(has_base_url(conn)?, &visibility);
+                let hue_space = if space.is_empty() {
+                    default_space.as_str()
+                } else {
+                    space.as_str()
+                };
                 let hue = space_hue_value(conn, hue_space)?;
                 conn.execute(
                     "UPDATE notes
@@ -121,14 +135,15 @@ impl Db {
                          updated_at = ?2,
                          sync_state = ?3,
                          last_error = NULL,
-                         visibility = COALESCE(NULLIF(visibility, ''), ?5),
-                         remote_space = COALESCE(remote_space, ?6),
+                         visibility = ?5,
+                         remote_space = ?6,
                          hue_light = COALESCE(hue_light, ?7),
                          hue_dark = COALESCE(hue_dark, ?8)
                      WHERE id = ?4",
-                    params![trimmed, now, state, existing.id, default_vis, default_space, hue, hue],
+                    params![trimmed, now, state, existing.id, visibility, space, hue, hue],
                 )?;
             } else {
+                let state = commit_state(has_base_url(conn)?, &default_vis);
                 let id = Uuid::new_v4().to_string();
                 let hue = space_hue_value(conn, &default_space)?;
                 conn.execute(
@@ -300,11 +315,14 @@ impl Db {
 
     pub fn set_audience(&self, id: &str, visibility: &str, space: &str) -> Result<bool, AppError> {
         let visibility = canonical_visibility(visibility);
-        let space = space.trim().to_string();
+        let mut space = space.trim().to_string();
         if visibility == "SPACE" && space.is_empty() {
             return Err(AppError::Message(
                 "space members visibility needs a space".into(),
             ));
+        }
+        if is_offline_private(&visibility) {
+            space.clear();
         }
         self.with(|conn| {
             let linked: Option<(String, Option<String>)> = conn
@@ -317,17 +335,36 @@ impl Db {
             let Some((state, remote_name)) = linked else {
                 return Ok(false);
             };
-            let push =
+            if is_offline_private(&visibility) {
+                conn.execute(
+                    "UPDATE notes
+                     SET visibility = ?1,
+                         remote_space = '',
+                         sync_state = ?2,
+                         remote_name = NULL,
+                         base_content = NULL,
+                         remote_content = NULL,
+                         remote_updated_at = NULL,
+                         last_error = NULL
+                     WHERE id = ?3",
+                    params![visibility, LOCAL, id],
+                )?;
+                return Ok(false);
+            }
+            let has_server = has_base_url(conn)?;
+            let linked_remote =
                 (state == SYNCED || state == PENDING || state == ERROR) && remote_name.is_some();
+            let promote_local = state == LOCAL && has_server;
+            let queue = (linked_remote && state == SYNCED) || promote_local;
             conn.execute(
                 "UPDATE notes
                  SET visibility = ?1,
                      remote_space = ?2,
                      sync_state = CASE WHEN ?3 THEN ?4 ELSE sync_state END
                  WHERE id = ?5",
-                params![visibility, space, push && state == SYNCED, PENDING, id],
+                params![visibility, space, queue, PENDING, id],
             )?;
-            Ok(push)
+            Ok(linked_remote || promote_local)
         })
     }
 
@@ -849,7 +886,7 @@ impl Db {
     pub fn remote_link(&self, remote_name: &str) -> Result<Option<RemoteLink>, AppError> {
         self.with(|conn| {
             let mut stmt = conn.prepare(
-                "SELECT id, content, sync_state, base_content, remote_updated_at
+                "SELECT id, content, sync_state, base_content, remote_updated_at, visibility
                  FROM notes WHERE remote_name = ?1 AND sync_state != ?2
                  LIMIT 1",
             )?;
@@ -863,6 +900,7 @@ impl Db {
                 sync_state: row.get(2)?,
                 base_content: row.get(3)?,
                 remote_updated_at: row.get(4)?,
+                visibility: row.get(5)?,
             }))
         })
     }
@@ -1018,6 +1056,7 @@ pub struct RemoteLink {
     pub sync_state: String,
     pub base_content: Option<String>,
     pub remote_updated_at: Option<i64>,
+    pub visibility: Option<String>,
 }
 
 pub const BASE_URL: &str = "base_url";
@@ -1028,12 +1067,14 @@ pub const SNAP_MEMOS: &str = "snap_memos";
 
 pub fn canonical_visibility(value: &str) -> String {
     match value.trim().to_ascii_uppercase().as_str() {
+        "OFFLINE_PRIVATE" => "OFFLINE_PRIVATE".into(),
         "PROTECTED" => "PROTECTED".into(),
         "PUBLIC" => "PUBLIC".into(),
         "SPACE" => "SPACE".into(),
         _ => "PRIVATE".into(),
     }
 }
+
 pub const API_FLAVOR: &str = "api_flavor";
 pub const THEME: &str = "theme";
 pub const ACCESS_TOKEN: &str = "access_token";
@@ -1059,7 +1100,9 @@ fn default_audience(conn: &Connection) -> Result<(String, String), AppError> {
         .unwrap_or_default()
         .trim()
         .to_string();
-    if visibility == "SPACE" && space.is_empty() {
+    if is_offline_private(&visibility) {
+        Ok(("OFFLINE_PRIVATE".into(), String::new()))
+    } else if visibility == "SPACE" && space.is_empty() {
         Ok(("PRIVATE".into(), String::new()))
     } else {
         Ok((visibility, space))
@@ -1595,6 +1638,42 @@ mod tests {
         assert!(db.set_audience(&draft.id, "SPACE", "").is_err());
         db.delete_note(&draft.id).unwrap();
         assert!(db.get(&draft.id).unwrap().is_none());
+    }
+
+    #[test]
+    fn offline_private_stays_local_even_with_server() {
+        let db = db();
+        db.set_base_url("https://memos.example").unwrap();
+        db.set_meta(MEMO_VISIBILITY, "OFFLINE_PRIVATE").unwrap();
+        db.set_meta(MEMO_SPACE, "spaces/team").unwrap();
+        assert!(db.finalize_content("offline only").unwrap());
+        let note = db.list_recent(10).unwrap().remove(0);
+        assert_eq!(note.sync_state, LOCAL);
+        assert_eq!(note.visibility.as_deref(), Some("OFFLINE_PRIVATE"));
+        assert_eq!(note.space.as_deref(), Some(""));
+        assert!(db.pending_and_errors().unwrap().is_empty());
+        assert!(!db.set_audience(&note.id, "OFFLINE_PRIVATE", "spaces/team").unwrap());
+        let kept = db.get(&note.id).unwrap().unwrap();
+        assert_eq!(kept.sync_state, LOCAL);
+        assert_eq!(kept.space.as_deref(), Some(""));
+        assert!(db.set_audience(&note.id, "PRIVATE", "").unwrap());
+        assert_eq!(db.get(&note.id).unwrap().unwrap().sync_state, PENDING);
+    }
+
+    #[test]
+    fn synced_note_going_offline_stops_syncing() {
+        let db = db();
+        db.set_base_url("https://memos.example").unwrap();
+        let draft = db.upsert_draft("was synced").unwrap().unwrap();
+        db.finalize_content("was synced").unwrap();
+        db.mark_synced(&draft.id, "memos/abc").unwrap();
+        assert!(!db.set_audience(&draft.id, "OFFLINE_PRIVATE", "spaces/team").unwrap());
+        let note = db.get(&draft.id).unwrap().unwrap();
+        assert_eq!(note.sync_state, LOCAL);
+        assert_eq!(note.visibility.as_deref(), Some("OFFLINE_PRIVATE"));
+        assert_eq!(note.space.as_deref(), Some(""));
+        assert!(note.remote_name.is_none());
+        assert!(db.pending_and_errors().unwrap().is_empty());
     }
 
     #[test]

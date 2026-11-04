@@ -56,8 +56,14 @@ pub struct MemoSpace {
     pub title: String,
 }
 
-pub fn commit_state(has_server: bool) -> &'static str {
-    if has_server {
+pub fn is_offline_private(visibility: &str) -> bool {
+    visibility.trim().eq_ignore_ascii_case("OFFLINE_PRIVATE")
+}
+
+pub fn commit_state(has_server: bool, visibility: &str) -> &'static str {
+    if is_offline_private(visibility) {
+        LOCAL
+    } else if has_server {
         PENDING
     } else {
         LOCAL

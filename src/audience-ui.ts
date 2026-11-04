@@ -30,10 +30,12 @@ export function revealPressedChoice(container: HTMLElement) {
   if (!selected) {
     return;
   }
-  const delta = selected.getBoundingClientRect().top - container.getBoundingClientRect().top;
+  const scroller =
+    container.closest<HTMLElement>("#audience-pop, .audience-pop") ?? container;
+  const delta = selected.getBoundingClientRect().top - scroller.getBoundingClientRect().top;
   if (delta < 0) {
-    container.scrollTop += delta;
-  } else if (delta + selected.offsetHeight > container.clientHeight) {
-    container.scrollTop += delta + selected.offsetHeight - container.clientHeight;
+    scroller.scrollTop += delta;
+  } else if (delta + selected.offsetHeight > scroller.clientHeight) {
+    scroller.scrollTop += delta + selected.offsetHeight - scroller.clientHeight;
   }
 }
