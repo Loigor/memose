@@ -197,7 +197,19 @@ pub fn is_previewable_media_ext(ext: &str) -> bool {
 pub fn is_image_ext(ext: &str) -> bool {
     matches!(
         ext.to_ascii_lowercase().as_str(),
-        "png" | "jpg" | "jpeg" | "gif" | "webp" | "svg" | "bmp" | "ico" | "avif" | "heic" | "heif" | "tif" | "tiff"
+        "png"
+            | "jpg"
+            | "jpeg"
+            | "gif"
+            | "webp"
+            | "svg"
+            | "bmp"
+            | "ico"
+            | "avif"
+            | "heic"
+            | "heif"
+            | "tif"
+            | "tiff"
     )
 }
 
@@ -272,7 +284,10 @@ pub fn mime_for_name(name: &str) -> &'static str {
 pub fn extract_refs(content: &str) -> Vec<MediaRef> {
     let mut refs = Vec::new();
     for parsed in extract_inline_tokens(content) {
-        if !refs.iter().any(|existing: &MediaRef| existing.name == parsed.name) {
+        if !refs
+            .iter()
+            .any(|existing: &MediaRef| existing.name == parsed.name)
+        {
             refs.push(parsed);
         }
     }
@@ -436,7 +451,15 @@ fn is_generic_clipboard_name(name: &str) -> bool {
     let lower = name.to_ascii_lowercase();
     matches!(
         lower.as_str(),
-        "image.png" | "image.jpg" | "image.jpeg" | "image.tiff" | "image.tif" | "image.gif" | "image.webp" | "blob" | "clipboard"
+        "image.png"
+            | "image.jpg"
+            | "image.jpeg"
+            | "image.tiff"
+            | "image.tif"
+            | "image.gif"
+            | "image.webp"
+            | "blob"
+            | "clipboard"
     )
 }
 
@@ -456,7 +479,12 @@ fn extension_from_filename(name: &str) -> Option<String> {
 }
 
 fn extension_from_mime(mime: &str) -> Option<&'static str> {
-    let essence = mime.split(';').next().unwrap_or(mime).trim().to_ascii_lowercase();
+    let essence = mime
+        .split(';')
+        .next()
+        .unwrap_or(mime)
+        .trim()
+        .to_ascii_lowercase();
     match essence.as_str() {
         "image/png" => Some("png"),
         "image/jpeg" | "image/jpg" => Some("jpg"),
@@ -495,10 +523,7 @@ fn build_stored_name(orig_name: Option<&str>, ext: &str) -> String {
     let Some(raw) = orig_name else {
         return format!("{uuid}.{ext}");
     };
-    let stem = raw
-        .rsplit_once('.')
-        .map(|(s, _)| s)
-        .unwrap_or(raw);
+    let stem = raw.rsplit_once('.').map(|(s, _)| s).unwrap_or(raw);
     let sanitized: String = stem
         .chars()
         .map(|ch| {
@@ -522,7 +547,10 @@ fn build_stored_name(orig_name: Option<&str>, ext: &str) -> String {
 }
 
 fn ensure_extension(filename: &str, ext: &str) -> String {
-    if filename.rsplit_once('.').is_some_and(|(_, e)| !e.is_empty()) {
+    if filename
+        .rsplit_once('.')
+        .is_some_and(|(_, e)| !e.is_empty())
+    {
         filename.to_string()
     } else {
         format!("{filename}.{ext}")
@@ -544,8 +572,7 @@ fn sanitize_markdown_label(label: &str) -> String {
 }
 
 pub fn is_tiff(bytes: &[u8]) -> bool {
-    bytes.len() >= 4
-        && (&bytes[0..4] == b"II*\x00" || &bytes[0..4] == b"MM\x00*")
+    bytes.len() >= 4 && (&bytes[0..4] == b"II*\x00" || &bytes[0..4] == b"MM\x00*")
 }
 
 fn sniff(bytes: &[u8]) -> Option<&'static str> {
@@ -640,12 +667,20 @@ fn tiff_to_png(bytes: &[u8]) -> Option<Vec<u8>> {
 
     unsafe {
         let _pool = AutoreleasePool::new();
-        let send_data: unsafe extern "C" fn(*mut c_void, *mut c_void, *const u8, usize) -> *mut c_void =
-            std::mem::transmute(objc_msgSend as *const ());
+        let send_data: unsafe extern "C" fn(
+            *mut c_void,
+            *mut c_void,
+            *const u8,
+            usize,
+        ) -> *mut c_void = std::mem::transmute(objc_msgSend as *const ());
         let send_obj1: unsafe extern "C" fn(*mut c_void, *mut c_void, *mut c_void) -> *mut c_void =
             std::mem::transmute(objc_msgSend as *const ());
-        let send_rep: unsafe extern "C" fn(*mut c_void, *mut c_void, usize, *mut c_void) -> *mut c_void =
-            std::mem::transmute(objc_msgSend as *const ());
+        let send_rep: unsafe extern "C" fn(
+            *mut c_void,
+            *mut c_void,
+            usize,
+            *mut c_void,
+        ) -> *mut c_void = std::mem::transmute(objc_msgSend as *const ());
         let send_len: unsafe extern "C" fn(*mut c_void, *mut c_void) -> usize =
             std::mem::transmute(objc_msgSend as *const ());
         let send_bytes: unsafe extern "C" fn(*mut c_void, *mut c_void) -> *const u8 =
@@ -717,9 +752,8 @@ fn paste_clipboard_macos(dir: &Path) -> Result<Vec<String>, AppError> {
 
         let ns_string_cls = objc_getClass(c"NSString".as_ptr());
         let sel_utf8_str = sel_registerName(c"stringWithUTF8String:".as_ptr());
-        let make_nsstring = |s: &CStr| -> *mut c_void {
-            send_str(ns_string_cls, sel_utf8_str, s.as_ptr())
-        };
+        let make_nsstring =
+            |s: &CStr| -> *mut c_void { send_str(ns_string_cls, sel_utf8_str, s.as_ptr()) };
 
         let pb_cls = objc_getClass(c"NSPasteboard".as_ptr());
         let pb = send0(pb_cls, sel_registerName(c"generalPasteboard".as_ptr()));
@@ -765,7 +799,11 @@ fn paste_clipboard_macos(dir: &Path) -> Result<Vec<String>, AppError> {
         let file_url_ns = send_obj1(pb, sel_str_for, file_url_type);
         if !file_url_ns.is_null() {
             let ns_url_cls = objc_getClass(c"NSURL".as_ptr());
-            let url = send_obj1(ns_url_cls, sel_registerName(c"URLWithString:".as_ptr()), file_url_ns);
+            let url = send_obj1(
+                ns_url_cls,
+                sel_registerName(c"URLWithString:".as_ptr()),
+                file_url_ns,
+            );
             if !url.is_null() {
                 let path_ns = send0(url, sel_registerName(c"path".as_ptr()));
                 if !path_ns.is_null() {
@@ -834,7 +872,12 @@ fn paste_clipboard_windows(dir: &Path) -> Result<Vec<String>, AppError> {
 
     #[link(name = "shell32")]
     extern "system" {
-        fn DragQueryFileW(hdrop: *mut std::ffi::c_void, index: u32, buf: *mut u16, size: u32) -> u32;
+        fn DragQueryFileW(
+            hdrop: *mut std::ffi::c_void,
+            index: u32,
+            buf: *mut u16,
+            size: u32,
+        ) -> u32;
     }
 
     struct ClipboardGuard;
@@ -903,7 +946,8 @@ mod tests {
     fn save_named_preserves_document_links_and_audio_previews() {
         let dir = std::env::temp_dir().join(format!("memose-media-{}", Uuid::new_v4()));
         let pdf = b"%PDF-1.7 sample document";
-        let doc_md = save_named(&dir, pdf, Some("Project Plan.pdf"), Some("application/pdf")).unwrap();
+        let doc_md =
+            save_named(&dir, pdf, Some("Project Plan.pdf"), Some("application/pdf")).unwrap();
         assert!(doc_md.starts_with("[Project Plan.pdf](memose-media/"));
         assert!(doc_md.ends_with("-Project_Plan.pdf)"));
         let parsed = parse_media_token(&doc_md).unwrap();
@@ -921,10 +965,14 @@ mod tests {
 
     #[test]
     fn remote_text_omits_local_media_refs() {
-        let content = "hello\n![](memose-media/abc.png)\n[report.pdf](memose-media/123-report.pdf)\nworld";
+        let content =
+            "hello\n![](memose-media/abc.png)\n[report.pdf](memose-media/123-report.pdf)\nworld";
         assert_eq!(content_for_remote(content), "hello\nworld");
         assert_eq!(content_for_remote("![](memose-media/abc.png)"), "");
-        assert_eq!(content_for_remote("[report.pdf](memose-media/123-report.pdf)"), "");
+        assert_eq!(
+            content_for_remote("[report.pdf](memose-media/123-report.pdf)"),
+            ""
+        );
         let inline = "before ![photo.jpg](memose-media/abc.png#w=200&side=1) after";
         assert_eq!(content_for_remote(inline), "before  after");
         let refs = extract_refs(inline);
@@ -954,7 +1002,9 @@ mod tests {
 
     #[test]
     fn parse_media_token_handles_pipe_widths_fragments_and_rejects_traversal() {
-        let piped = parse_media_token("![diagram.png|320](memose-media/12345678-diagram.png#w=320)").unwrap();
+        let piped =
+            parse_media_token("![diagram.png|320](memose-media/12345678-diagram.png#w=320)")
+                .unwrap();
         assert_eq!(piped.name, "12345678-diagram.png");
         assert_eq!(piped.label, "diagram.png");
         assert!(piped.is_media);
@@ -969,7 +1019,10 @@ mod tests {
         assert_eq!(base64_encode(b"f"), "Zg==");
         assert_eq!(base64_encode(b"fo"), "Zm8=");
         assert_eq!(base64_encode(b"foo"), "Zm9v");
-        assert_eq!(base64_encode(b"hello memose 1.0!"), "aGVsbG8gbWVtb3NlIDEuMCE=");
+        assert_eq!(
+            base64_encode(b"hello memose 1.0!"),
+            "aGVsbG8gbWVtb3NlIDEuMCE="
+        );
 
         // Office ZIP containers (PK\x03\x04) defer to the filename extension instead of misclassifying.
         let dir = std::env::temp_dir().join(format!("memose-media-{}", Uuid::new_v4()));

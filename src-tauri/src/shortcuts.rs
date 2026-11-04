@@ -175,7 +175,9 @@ pub fn dispatch_mouse(app: &AppHandle, button: u8, alt: bool, ctrl: bool, shift:
         return;
     }
     {
-        let mut last = LAST_MOUSE.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        let mut last = LAST_MOUSE
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         let now = Instant::now();
         if let Some((when, pressed, last_alt, last_ctrl, last_shift, last_meta)) = *last {
             if pressed == button
@@ -264,7 +266,10 @@ fn canonical_list(binding: &str) -> Result<String, AppError> {
         } else {
             canonical(&part)?
         };
-        if stored.iter().any(|kept: &String| kept.eq_ignore_ascii_case(&next)) {
+        if stored
+            .iter()
+            .any(|kept: &String| kept.eq_ignore_ascii_case(&next))
+        {
             continue;
         }
         stored.push(next);
@@ -288,7 +293,11 @@ fn canonical_mouse(binding: &str) -> Result<String, AppError> {
     let mut shift = false;
     let mut meta = false;
     let mut button: Option<u8> = None;
-    for token in binding.split('+').map(str::trim).filter(|token| !token.is_empty()) {
+    for token in binding
+        .split('+')
+        .map(str::trim)
+        .filter(|token| !token.is_empty())
+    {
         match token.to_lowercase().as_str() {
             "alt" | "option" => alt = true,
             "control" | "ctrl" => ctrl = true,
@@ -335,7 +344,14 @@ fn keyboard_parts(binding: &str) -> Vec<String> {
         .collect()
 }
 
-fn mouse_matches(binding: &str, button: u8, alt: bool, ctrl: bool, shift: bool, meta: bool) -> bool {
+fn mouse_matches(
+    binding: &str,
+    button: u8,
+    alt: bool,
+    ctrl: bool,
+    shift: bool,
+    meta: bool,
+) -> bool {
     split_binds(binding).into_iter().any(|part| {
         let Ok(stored) = canonical_mouse(&part) else {
             return false;
@@ -384,7 +400,10 @@ fn canonical_modifier(value: &str) -> Result<String, AppError> {
 fn require_modifier(binding: &str) -> Result<(), AppError> {
     for part in split_binds(binding) {
         let held = if is_mouse_binding(&part) {
-            mouse_flags(&part)?.1 || mouse_flags(&part)?.2 || mouse_flags(&part)?.3 || mouse_flags(&part)?.4
+            mouse_flags(&part)?.1
+                || mouse_flags(&part)?.2
+                || mouse_flags(&part)?.3
+                || mouse_flags(&part)?.4
         } else {
             !parse_shortcut(&part)?.mods.is_empty()
         };

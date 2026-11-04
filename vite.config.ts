@@ -29,7 +29,7 @@ export default defineConfig(() => ({
   },
   build: {
     rollupOptions: {
-      input: ["index.html", "settings.html"],
+      input: ["index.html", "settings.html", "pin-tabs.html"],
     },
   },
 }));

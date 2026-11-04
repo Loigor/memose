@@ -29,7 +29,7 @@ import {
   toggleTask,
   wrapText,
 } from "../src/markdown-edit.ts";
-import { baseColors, palette, paperAt, stackHeaderHtml, themeGlyph } from "../src/memo-chrome.ts";
+import { baseColors, huePopHtml, palette, paperAt, stackHeaderHtml, tabFill, themeGlyph } from "../src/memo-chrome.ts";
 import { pointIn, requireEl } from "../src/dom.ts";
 import {
   defaultBinds,
@@ -360,6 +360,8 @@ test("syncIcon and platform helpers cover common states", () => {
 test("memo-chrome computes palettes and renders stack header template", () => {
   assert.match(paperAt("light", 48), /^hsl\(48 /);
   assert.match(paperAt("dark", 200), /^hsl\(200 /);
+  assert.equal(tabFill("light", 48), "hsl(48 100% 64%)");
+  assert.equal(tabFill("dark", 210), "hsl(210 82% 46%)");
   assert.equal(baseColors("light")["--paper"], "#fff4b8");
   assert.equal(baseColors("dark")["--paper"], "#25282c");
   const tinted = palette("dark", 180);
@@ -367,6 +369,8 @@ test("memo-chrome computes palettes and renders stack header template", () => {
   assert.ok(themeGlyph(true).includes("circle"));
   assert.ok(themeGlyph(false).includes("path"));
   assert.ok(stackHeaderHtml().includes("class=\"brand-name\""));
+  assert.ok(huePopHtml().includes("hue-slider"));
+  assert.ok(huePopHtml().includes("hue-slot"));
 });
 
 test("release versions and Tauri IPC command contracts stay in sync without dangling handlers", () => {

@@ -28,6 +28,12 @@ export async function openSettings(page: Page, seed: HarnessSeed = {}): Promise<
   await page.locator("#tab-visibility").waitFor();
 }
 
+export async function openPinTabs(page: Page, seed: HarnessSeed = {}): Promise<void> {
+  await installHarness(page, { windowLabel: "pinned-tabs", ...seed });
+  await page.goto("/pin-tabs.html");
+  await page.locator("#strip").waitFor();
+}
+
 export async function composerTextarea(page: Page) {
   return page.locator("#blocks textarea").first();
 }

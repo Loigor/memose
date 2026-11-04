@@ -1,6 +1,9 @@
 mod geom;
 
-pub use geom::{clamp_position, grid_slot, resize_frame, slide_card_into_view, snap_memo_edges, snap_screen_edges, tray_card_origin, ResizeEdge};
+pub use geom::{
+    clamp_position, grid_slot, resize_frame, slide_card_into_view, snap_memo_edges,
+    snap_screen_edges, tray_card_origin, ResizeEdge,
+};
 
 use geom::{closer_snap, closer_snap_x, first_open_tile, nudge_origin, organize_grid, visual_card};
 
@@ -16,7 +19,7 @@ use tauri::{
 
 use crate::error::AppError;
 use crate::media;
-use crate::notes::request_sync;
+use crate::notes::{request_sync, tab_at, PinTabHit};
 use crate::state::AppState;
 
 const PREVIEW: &str = "media-preview";
@@ -24,6 +27,8 @@ const PREVIEW_GRACE: Duration = Duration::from_millis(300);
 
 const WINDOW: &str = "main";
 const SETTINGS: &str = "settings";
+const PIN_TABS: &str = "pinned-tabs";
+const STRIP_H: f64 = 12.0;
 const CARD_WIDTH: f64 = 408.0;
 const CARD_HEIGHT: f64 = 476.0;
 // Shadow gutter on `body` in styles.css. Auto-organize overlaps this so the
@@ -60,9 +65,7 @@ pub fn attach(app: &AppHandle) {
 }
 
 pub fn show_composer(app: &AppHandle) {
-    app.state::<AppState>()
-        .shown
-        .store(true, Ordering::SeqCst);
+    app.state::<AppState>().shown.store(true, Ordering::SeqCst);
     present(app, false);
 }
 
@@ -71,9 +74,7 @@ pub fn show_fresh_memo(app: &AppHandle) {
         cycle_composer(app);
         return;
     }
-    app.state::<AppState>()
-        .shown
-        .store(true, Ordering::SeqCst);
+    app.state::<AppState>().shown.store(true, Ordering::SeqCst);
     present(app, true);
 }
 
@@ -88,6 +89,7 @@ pub fn hide_memos(app: &AppHandle) {
         .pinned_mode
         .store(false, Ordering::SeqCst);
     hide_pinned(app);
+    hide_pin_tabs(app);
     let shown = app.state::<AppState>().shown.load(Ordering::SeqCst);
     let visible = app
         .get_webview_window(WINDOW)
@@ -135,6 +137,101 @@ pub fn show_settings(app: &AppHandle) {
         }
         Err(err) => eprintln!("memose: settings window failed: {err}"),
     }
+}
+
+pub fn hide_pin_tabs(app: &AppHandle) {
+    if let Some(window) = app.get_webview_window(PIN_TABS) {
+        let _ = window.hide();
+    }
+}
+
+pub fn show_pin_tabs(app: &AppHandle) {
+    #[cfg(target_os = "windows")]
+    {
+        let app = app.clone();
+        std::thread::spawn(move || {
+            let handle = app.clone();
+            let _ = app.run_on_main_thread(move || show_pin_tabs_window(&handle));
+        });
+        return;
+    }
+    #[cfg(not(target_os = "windows"))]
+    show_pin_tabs_window(app);
+}
+
+pub fn apply_pin_tab(app: &AppHandle) {
+    if app.state::<AppState>().pinned_mode.load(Ordering::SeqCst) {
+        open_pinned_windows(app);
+    }
+}
+
+fn raise_pin_tabs(app: &AppHandle) {
+    if !app.state::<AppState>().pinned_mode.load(Ordering::SeqCst) {
+        return;
+    }
+    if let Some(window) = app.get_webview_window(PIN_TABS) {
+        let _ = window.set_always_on_top(true);
+    }
+}
+
+fn show_pin_tabs_window(app: &AppHandle) {
+    if let Some(window) = app.get_webview_window(PIN_TABS) {
+        let hidden = !window.is_visible().unwrap_or(false);
+        place_pin_tabs(app, &window, hidden);
+        let _ = window.show();
+        let _ = window.set_always_on_top(true);
+        return;
+    }
+    let script =
+        "if(document.documentElement){document.documentElement.classList.add('pin-tabs-window');}";
+    let builder = tauri::WebviewWindowBuilder::new(
+        app,
+        PIN_TABS,
+        tauri::WebviewUrl::App("pin-tabs.html".into()),
+    )
+    .title("Pinned tabs")
+    .inner_size(800.0, STRIP_H)
+    .decorations(false)
+    .transparent(true)
+    .always_on_top(true)
+    .skip_taskbar(true)
+    .resizable(false)
+    .shadow(false)
+    .focused(false)
+    .visible(false)
+    .initialization_script(script);
+    #[cfg(target_os = "windows")]
+    let builder = builder
+        .no_redirection_bitmap(true)
+        .background_color(tauri::window::Color(0, 0, 0, 0));
+    let window = match builder.build() {
+        Ok(window) => window,
+        Err(err) => {
+            eprintln!("memose: could not open pinned tabs: {err}");
+            return;
+        }
+    };
+    place_pin_tabs(app, &window, true);
+    let _ = window.show();
+    let _ = window.set_always_on_top(true);
+}
+
+fn place_pin_tabs(app: &AppHandle, window: &WebviewWindow, reset_height: bool) {
+    let Some(monitor) = monitor_for_placement(app) else {
+        return;
+    };
+    let area = monitor.work_area();
+    let scale = monitor.scale_factor().max(0.5);
+    let height = if reset_height {
+        (STRIP_H * scale).round().max(1.0) as u32
+    } else {
+        window
+            .outer_size()
+            .map(|size| size.height.max(1))
+            .unwrap_or_else(|_| (STRIP_H * scale).round().max(1.0) as u32)
+    };
+    let _ = window.set_size(PhysicalSize::new(area.size.width.max(1), height));
+    let _ = window.set_position(PhysicalPosition::new(area.position.x, area.position.y));
 }
 
 fn schedule_resign(app: &AppHandle) {
@@ -256,12 +353,7 @@ fn hide_and_save(app: &AppHandle, from_blur: bool) {
     });
 }
 
-pub fn submit_flush(
-    app: &AppHandle,
-    generation: u64,
-    content: String,
-    note_id: Option<String>,
-) {
+pub fn submit_flush(app: &AppHandle, generation: u64, content: String, note_id: Option<String>) {
     let state = app.state::<AppState>();
     if state.handled_flush.load(Ordering::SeqCst) == generation && generation != 0 {
         return;
@@ -447,10 +539,16 @@ fn place_near_tray(
 fn place_at_cursor(app: &AppHandle, window: &WebviewWindow) -> Option<(i32, i32)> {
     let cursor = app.cursor_position().ok()?;
     let monitors = app.available_monitors().ok()?;
-    let monitor = monitors.iter().find(|monitor| contains(monitor, cursor)).cloned();
+    let monitor = monitors
+        .iter()
+        .find(|monitor| contains(monitor, cursor))
+        .cloned();
     let monitor = match monitor {
         Some(monitor) => Some(monitor),
-        None => window.current_monitor().ok()?.or(app.primary_monitor().ok()?),
+        None => window
+            .current_monitor()
+            .ok()?
+            .or(app.primary_monitor().ok()?),
     };
     let monitor = monitor?;
     let area = monitor.work_area();
@@ -516,20 +614,17 @@ pub fn open_media_preview(app: &AppHandle, name: &str) -> Result<(), AppError> {
         let _ = window.set_focus();
         return Ok(());
     }
-    let builder = tauri::WebviewWindowBuilder::new(
-        app,
-        PREVIEW,
-        tauri::WebviewUrl::App("index.html".into()),
-    )
-    .title("Preview")
-    .inner_size(840.0, 640.0)
-    .decorations(false)
-    .transparent(true)
-    .always_on_top(true)
-    .skip_taskbar(true)
-    .shadow(false)
-    .center()
-    .initialization_script("document.documentElement.classList.add('lightbox-window')");
+    let builder =
+        tauri::WebviewWindowBuilder::new(app, PREVIEW, tauri::WebviewUrl::App("index.html".into()))
+            .title("Preview")
+            .inner_size(840.0, 640.0)
+            .decorations(false)
+            .transparent(true)
+            .always_on_top(true)
+            .skip_taskbar(true)
+            .shadow(false)
+            .center()
+            .initialization_script("document.documentElement.classList.add('lightbox-window')");
     #[cfg(target_os = "windows")]
     let builder = builder
         .no_redirection_bitmap(true)
@@ -605,6 +700,7 @@ pub fn toggle_pinned(app: &AppHandle) {
     if state.pinned_mode.load(Ordering::SeqCst) {
         state.pinned_mode.store(false, Ordering::SeqCst);
         hide_pinned(app);
+        hide_pin_tabs(app);
         if !composer_open(app) {
             #[cfg(target_os = "macos")]
             let _ = app.set_activation_policy(tauri::ActivationPolicy::Accessory);
@@ -641,9 +737,7 @@ impl TrayAnchor {
 pub fn show_from_tray(app: &AppHandle, anchor: Option<TrayAnchor>) {
     let anchor = anchor.or_else(|| tray_anchor(app));
     open_pinned_windows(app);
-    app.state::<AppState>()
-        .shown
-        .store(true, Ordering::SeqCst);
+    app.state::<AppState>().shown.store(true, Ordering::SeqCst);
     present_at(app, true, anchor);
     request_sync(app);
 }
@@ -651,6 +745,16 @@ pub fn show_from_tray(app: &AppHandle, anchor: Option<TrayAnchor>) {
 fn tray_anchor(app: &AppHandle) -> Option<TrayAnchor> {
     let tray = app.tray_by_id("main")?;
     tray.rect().ok().flatten().map(TrayAnchor::from_rect)
+}
+
+fn active_pin_note_ids(app: &AppHandle) -> HashSet<String> {
+    match app.state::<AppState>().db.pin_tabs() {
+        Ok(state) => state.active_note_ids(),
+        Err(err) => {
+            eprintln!("memose: pin tabs failed: {err}");
+            HashSet::new()
+        }
+    }
 }
 
 fn open_pinned_windows(app: &AppHandle) {
@@ -661,13 +765,32 @@ fn open_pinned_windows(app: &AppHandle) {
             return;
         }
     };
+    let active = active_pin_note_ids(app);
+    let mut keep = HashSet::new();
     #[cfg(target_os = "macos")]
     let _ = app.set_activation_policy(tauri::ActivationPolicy::Regular);
     for note in notes {
-        if note.stack_host.is_some() {
+        if note.stack_host.is_some() || !active.contains(&note.id) {
             continue;
         }
+        keep.insert(note.id.clone());
         open_pin(app, &note.id);
+    }
+    for (label, window) in app.webview_windows() {
+        let Some(id) = label.strip_prefix("pin-") else {
+            continue;
+        };
+        if keep.contains(id) {
+            continue;
+        }
+        if window.is_visible().unwrap_or(false) {
+            save_pin_frame(app, id, &window);
+        }
+        let _ = window.set_always_on_top(false);
+        let _ = window.hide();
+    }
+    if app.state::<AppState>().pinned_mode.load(Ordering::SeqCst) {
+        show_pin_tabs(app);
     }
 }
 
@@ -712,7 +835,11 @@ pub fn organize_pinned(app: &AppHandle) {
     );
     let win_w = (CARD_WIDTH * scale).round() as i32;
     let win_h = (CARD_HEIGHT * scale).round() as i32;
-    let notes: Vec<_> = notes.into_iter().filter(|note| note.stack_host.is_none()).collect();
+    let active = active_pin_note_ids(app);
+    let notes: Vec<_> = notes
+        .into_iter()
+        .filter(|note| note.stack_host.is_none() && active.contains(&note.id))
+        .collect();
     for (index, note) in notes.iter().enumerate() {
         let (x, y) = grid_slot(
             index,
@@ -836,7 +963,8 @@ fn occupied_rects(app: &AppHandle, except: &str) -> Vec<(i32, i32, i32, i32)> {
             if note.id == except || note.stack_host.is_some() {
                 continue;
             }
-            if let (Some(x), Some(y), Some(w), Some(h)) = (note.win_x, note.win_y, note.win_w, note.win_h)
+            if let (Some(x), Some(y), Some(w), Some(h)) =
+                (note.win_x, note.win_y, note.win_w, note.win_h)
             {
                 rects.push((x, y, w, h));
             }
@@ -845,7 +973,12 @@ fn occupied_rects(app: &AppHandle, except: &str) -> Vec<(i32, i32, i32, i32)> {
     if let Some(window) = app.get_webview_window(WINDOW) {
         if window.is_visible().unwrap_or(false) {
             if let (Ok(position), Ok(size)) = (window.outer_position(), window.outer_size()) {
-                rects.push((position.x, position.y, size.width as i32, size.height as i32));
+                rects.push((
+                    position.x,
+                    position.y,
+                    size.width as i32,
+                    size.height as i32,
+                ));
             }
         }
     }
@@ -866,9 +999,9 @@ pub fn close_pinned(app: &AppHandle, id: &str) {
 
 #[cfg(target_os = "macos")]
 fn pin_windows_visible(app: &AppHandle) -> bool {
-    app.webview_windows().into_iter().any(|(label, window)| {
-        label.starts_with("pin-") && window.is_visible().unwrap_or(false)
-    })
+    app.webview_windows()
+        .into_iter()
+        .any(|(label, window)| label.starts_with("pin-") && window.is_visible().unwrap_or(false))
 }
 
 fn composer_open(app: &AppHandle) -> bool {
@@ -912,10 +1045,13 @@ fn open_pin(app: &AppHandle, id: &str) {
 fn open_pin_window(app: &AppHandle, id: &str) {
     let label = pin_label(id);
     if let Some(window) = app.get_webview_window(&label) {
-        place_pin(app, id, &window);
+        if !drag_active(&label) {
+            place_pin(app, id, &window);
+        }
         let _ = window.show();
         let _ = window.set_always_on_top(true);
         let _ = window.emit_to(&label, "show-pin", id);
+        raise_pin_tabs(app);
         return;
     }
     let id_js = serde_json::to_string(id).unwrap_or_else(|_| "\"\"".into());
@@ -941,18 +1077,19 @@ fn open_pin_window(app: &AppHandle, id: &str) {
          }}"
     );
     let page = format!("index.html?pin={id}");
-    let builder = tauri::WebviewWindowBuilder::new(app, &label, tauri::WebviewUrl::App(page.into()))
-        .title("Memose")
-        .inner_size(CARD_WIDTH, CARD_HEIGHT)
-        .position(-10000.0, -10000.0)
-        .decorations(false)
-        .transparent(true)
-        .always_on_top(true)
-        .skip_taskbar(true)
-        .resizable(true)
-        .shadow(false)
-        .visible(false)
-        .initialization_script(&script);
+    let builder =
+        tauri::WebviewWindowBuilder::new(app, &label, tauri::WebviewUrl::App(page.into()))
+            .title("Memose")
+            .inner_size(CARD_WIDTH, CARD_HEIGHT)
+            .position(-10000.0, -10000.0)
+            .decorations(false)
+            .transparent(true)
+            .always_on_top(true)
+            .skip_taskbar(true)
+            .resizable(true)
+            .shadow(false)
+            .visible(false)
+            .initialization_script(&script);
     #[cfg(target_os = "windows")]
     // A second DwmEnableBlurBehindWindow call aborts the process. This flag
     // keeps the window transparent without that call.
@@ -970,6 +1107,7 @@ fn open_pin_window(app: &AppHandle, id: &str) {
     let _ = window.show();
     let _ = window.set_always_on_top(true);
     let _ = window.emit_to(&label, "show-pin", id);
+    raise_pin_tabs(app);
     let note_id = id.to_string();
     let handle = app.clone();
     let accept_moves_at = Instant::now() + Duration::from_millis(250);
@@ -1010,18 +1148,24 @@ type FrameRect = (i32, i32, i32, i32);
 type PlaceMap = HashMap<String, FrameRect>;
 
 fn place_at() -> &'static Mutex<PlaceMap> {
-    static PLACE: LazyLock<Mutex<PlaceMap>> =
-        LazyLock::new(|| Mutex::new(HashMap::new()));
+    static PLACE: LazyLock<Mutex<PlaceMap>> = LazyLock::new(|| Mutex::new(HashMap::new()));
     &PLACE
 }
 
 fn place_pin(app: &AppHandle, id: &str, window: &WebviewWindow) {
     let label = pin_label(id);
     suppress_settle(&label, Duration::from_millis(500));
-    if let Some((x, y, width, height)) = place_at().lock().ok().and_then(|mut pending| pending.remove(id)) {
+    if let Some((x, y, width, height)) = place_at()
+        .lock()
+        .ok()
+        .and_then(|mut pending| pending.remove(id))
+    {
         let _ = window.set_size(PhysicalSize::new(width.max(1) as u32, height.max(1) as u32));
         let _ = window.set_position(PhysicalPosition::new(x, y));
-        let _ = app.state::<AppState>().db.save_frame(id, x, y, width, height);
+        let _ = app
+            .state::<AppState>()
+            .db
+            .save_frame(id, x, y, width, height);
         return;
     }
     let Ok(Some(note)) = app.state::<AppState>().db.get(id) else {
@@ -1035,15 +1179,11 @@ fn place_pin(app: &AppHandle, id: &str, window: &WebviewWindow) {
         },
     };
     let _ = window.set_size(PhysicalSize::new(width as u32, height as u32));
-    let Some((x, y)) = note
-        .win_x
-        .zip(note.win_y)
-        .or_else(|| {
-            app.cursor_position()
-                .ok()
-                .map(|cursor| (cursor.x.round() as i32, cursor.y.round() as i32))
-        })
-    else {
+    let Some((x, y)) = note.win_x.zip(note.win_y).or_else(|| {
+        app.cursor_position()
+            .ok()
+            .map(|cursor| (cursor.x.round() as i32, cursor.y.round() as i32))
+    }) else {
         return;
     };
     let taken = pinned_origins(app, id);
@@ -1100,7 +1240,10 @@ fn schedule_settle(app: &AppHandle, label: &str, note_id: Option<String>, resize
             .settle
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
-        let previous = tickets.get(label).copied().unwrap_or((0, false, Instant::now()));
+        let previous = tickets
+            .get(label)
+            .copied()
+            .unwrap_or((0, false, Instant::now()));
         let next = previous.0.wrapping_add(1);
         // A resize also emits a move. Keep the resize so an edge can still meet the screen.
         let resize = resize || (previous.1 && previous.2.elapsed() < Duration::from_millis(200));
@@ -1155,7 +1298,11 @@ fn settle_window(app: &AppHandle, label: &str, note_id: Option<&str>, resize: bo
         }
     }
     if let Some(id) = note_id {
-        if parks().lock().ok().is_none_or(|parked| !parked.contains_key(label)) {
+        if parks()
+            .lock()
+            .ok()
+            .is_none_or(|parked| !parked.contains_key(label))
+        {
             save_pin_frame(app, id, &window);
         }
     }
@@ -1165,7 +1312,8 @@ fn neighbor_cards(app: &AppHandle, window: &WebviewWindow) -> Vec<(i32, i32, i32
     let self_label = window.label();
     let mut cards = Vec::new();
     for (label, other) in app.webview_windows() {
-        if label == self_label || !label.starts_with("pin-") || !other.is_visible().unwrap_or(false) {
+        if label == self_label || !label.starts_with("pin-") || !other.is_visible().unwrap_or(false)
+        {
             continue;
         }
         let (Ok(position), Ok(size), Ok(other_scale)) = (
@@ -1345,10 +1493,16 @@ fn aim_pending(guest_id: &str) -> bool {
         .ok()
         .and_then(|aims| aims.get(guest_id).map(|_| ()))
         .is_some()
+        || tab_aims()
+            .lock()
+            .ok()
+            .and_then(|aims| aims.get(guest_id).map(|_| ()))
+            .is_some()
 }
 
 fn dragging() -> &'static Mutex<HashSet<String>> {
-    static DRAGGING: LazyLock<Mutex<HashSet<String>>> = LazyLock::new(|| Mutex::new(HashSet::new()));
+    static DRAGGING: LazyLock<Mutex<HashSet<String>>> =
+        LazyLock::new(|| Mutex::new(HashSet::new()));
     &DRAGGING
 }
 
@@ -1361,7 +1515,8 @@ fn drag_active(label: &str) -> bool {
 }
 
 fn corner_resizing() -> &'static Mutex<HashSet<String>> {
-    static RESIZING: LazyLock<Mutex<HashSet<String>>> = LazyLock::new(|| Mutex::new(HashSet::new()));
+    static RESIZING: LazyLock<Mutex<HashSet<String>>> =
+        LazyLock::new(|| Mutex::new(HashSet::new()));
     &RESIZING
 }
 
@@ -1461,10 +1616,8 @@ pub fn begin_corner_resize(
                         let _ = window.set_position(PhysicalPosition::new(x, y));
                     }
                     if (width, height) != (prev_rect.2, prev_rect.3) {
-                        let _ = window.set_size(PhysicalSize::new(
-                            width.max(1) as u32,
-                            height.max(1) as u32,
-                        ));
+                        let _ = window
+                            .set_size(PhysicalSize::new(width.max(1) as u32, height.max(1) as u32));
                     }
                     next_rect = (x, y, width, height);
                 }
@@ -1507,7 +1660,12 @@ pub fn begin_corner_resize(
         let app2 = app.clone();
         let label2 = label.clone();
         let _ = app.run_on_main_thread(move || {
-            schedule_settle(&app2, &label2, label2.strip_prefix("pin-").map(str::to_string), true);
+            schedule_settle(
+                &app2,
+                &label2,
+                label2.strip_prefix("pin-").map(str::to_string),
+                true,
+            );
         });
         finish(done);
     });
@@ -1521,14 +1679,23 @@ pub fn set_window_height(app: &AppHandle, label: &str, logical_height: i32) {
         return;
     };
     if let Ok(mut map) = height_sizing().lock() {
-        map.insert(label.to_string(), Instant::now() + Duration::from_millis(300));
+        map.insert(
+            label.to_string(),
+            Instant::now() + Duration::from_millis(300),
+        );
     }
     let scale = window.scale_factor().unwrap_or(1.0).max(0.5);
-    let height = ((f64::from(logical_height.max(96))) * scale).round().max(1.0) as u32;
+    let height = ((f64::from(logical_height.max(96))) * scale)
+        .round()
+        .max(1.0) as u32;
     let width = size.width.max(1);
     let _ = window.set_size(PhysicalSize::new(width, height));
     if let Some(id) = label.strip_prefix("pin-") {
-        if parks().lock().ok().is_none_or(|parked| !parked.contains_key(label)) {
+        if parks()
+            .lock()
+            .ok()
+            .is_none_or(|parked| !parked.contains_key(label))
+        {
             save_pin_frame(app, id, &window);
         }
     }
@@ -1578,11 +1745,18 @@ pub fn begin_memo_drag(app: AppHandle, label: String) {
                         let raw_y = cursor.y.round() as i32 - grab_y;
                         let (mut x, mut y) = (raw_x, raw_y);
                         let guest_id = label2.strip_prefix("pin-");
+                        pulse_strip_cursor(&app2);
                         if let Some(id) = guest_id {
-                            arm_stack_attach(&app2, id, &window);
+                            if arm_tab_move(&app2, id) {
+                                clear_aim(&app2, id);
+                            } else {
+                                arm_stack_attach(&app2, id, &window);
+                            }
                         }
                         if snap_enabled(&app2) && !aim_pending(guest_id.unwrap_or("")) {
-                            if let Some(snapped) = snap_target_for_origin(&app2, &window, raw_x, raw_y) {
+                            if let Some(snapped) =
+                                snap_target_for_origin(&app2, &window, raw_x, raw_y)
+                            {
                                 x = snapped.0;
                                 y = snapped.1;
                             }
@@ -1641,7 +1815,12 @@ fn finish_memo_drag(app: &AppHandle, label: &str) {
         .unwrap_or(false);
     let note_id = label.strip_prefix("pin-");
     if let Some(guest_id) = note_id {
-        if let Some(aim) = stack_aims().lock().ok().and_then(|mut aims| aims.remove(guest_id)) {
+        clear_tab_aim(app, guest_id);
+        if let Some(aim) = stack_aims()
+            .lock()
+            .ok()
+            .and_then(|mut aims| aims.remove(guest_id))
+        {
             show_aim(app, &aim.host, "off");
             if aim.ready {
                 if let Some(window) = app.get_webview_window(label) {
@@ -1655,6 +1834,7 @@ fn finish_memo_drag(app: &AppHandle, label: &str) {
     if was_dragging {
         settle_window(app, label, note_id, false);
     }
+    emit_strip_cursor(app, None);
 }
 
 fn show_aim(app: &AppHandle, host_id: &str, mode: &str) {
@@ -1664,7 +1844,11 @@ fn show_aim(app: &AppHandle, host_id: &str, mode: &str) {
 }
 
 fn clear_aim(app: &AppHandle, guest_id: &str) {
-    if let Some(aim) = stack_aims().lock().ok().and_then(|mut aims| aims.remove(guest_id)) {
+    if let Some(aim) = stack_aims()
+        .lock()
+        .ok()
+        .and_then(|mut aims| aims.remove(guest_id))
+    {
         show_aim(app, &aim.host, "off");
     }
 }
@@ -1676,7 +1860,9 @@ fn arm_stack_attach(app: &AppHandle, guest_id: &str, window: &WebviewWindow) {
         .ok()
         .map(|point| (point.x.round() as i32, point.y.round() as i32))
         .unwrap_or((0, 0));
-    let mut aims = stack_aims().lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+    let mut aims = stack_aims()
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
     match target {
         Some(host) => {
             if let Some(aim) = aims.get_mut(guest_id) {
@@ -1715,6 +1901,182 @@ fn arm_stack_attach(app: &AppHandle, guest_id: &str, window: &WebviewWindow) {
             }
         }
     }
+}
+
+struct TabAim {
+    tab: String,
+    anchor: (i32, i32),
+    since: Instant,
+    ready: bool,
+}
+
+fn tab_hits() -> &'static Mutex<Vec<PinTabHit>> {
+    static HITS: LazyLock<Mutex<Vec<PinTabHit>>> = LazyLock::new(|| Mutex::new(Vec::new()));
+    &HITS
+}
+
+fn tab_aims() -> &'static Mutex<HashMap<String, TabAim>> {
+    static AIMS: LazyLock<Mutex<HashMap<String, TabAim>>> =
+        LazyLock::new(|| Mutex::new(HashMap::new()));
+    &AIMS
+}
+
+pub fn set_pin_tab_hits(hits: Vec<PinTabHit>) {
+    if let Ok(mut stored) = tab_hits().lock() {
+        *stored = hits;
+    }
+}
+
+fn emit_strip_cursor(app: &AppHandle, local: Option<(i32, i32)>) {
+    if let Some(window) = app.get_webview_window(PIN_TABS) {
+        let _ = window.emit("window-cursor", local);
+    }
+}
+
+fn pulse_strip_cursor(app: &AppHandle) {
+    let Some(window) = app.get_webview_window(PIN_TABS) else {
+        return;
+    };
+    if !window.is_visible().unwrap_or(false) {
+        emit_strip_cursor(app, None);
+        return;
+    }
+    let (Ok(cursor), Ok(position), Ok(size)) =
+        (app.cursor_position(), window.outer_position(), window.outer_size())
+    else {
+        return;
+    };
+    let over = cursor.x >= f64::from(position.x)
+        && cursor.y >= f64::from(position.y)
+        && cursor.x < f64::from(position.x) + f64::from(size.width)
+        && cursor.y < f64::from(position.y) + f64::from(size.height);
+    if over {
+        let scale = window.scale_factor().unwrap_or(1.0).max(0.01);
+        emit_strip_cursor(
+            app,
+            Some((
+                ((cursor.x - f64::from(position.x)) / scale).round() as i32,
+                ((cursor.y - f64::from(position.y)) / scale).round() as i32,
+            )),
+        );
+    } else {
+        emit_strip_cursor(app, None);
+    }
+}
+
+fn tab_under_cursor(app: &AppHandle) -> Option<String> {
+    let window = app.get_webview_window(PIN_TABS)?;
+    if !window.is_visible().unwrap_or(false) {
+        return None;
+    }
+    let cursor = app.cursor_position().ok()?;
+    let position = window.outer_position().ok()?;
+    let scale = window.scale_factor().unwrap_or(1.0).max(0.01);
+    let x = (cursor.x - f64::from(position.x)) / scale;
+    let y = (cursor.y - f64::from(position.y)) / scale;
+    let hits = tab_hits().lock().ok()?;
+    tab_at(&hits, x, y).map(str::to_string)
+}
+
+fn show_tab_aim(app: &AppHandle, tab_id: &str, mode: &str) {
+    if let Some(window) = app.get_webview_window(PIN_TABS) {
+        let _ = window.emit("pin-tab-aim", (tab_id, mode));
+    }
+}
+
+fn clear_tab_aim(app: &AppHandle, guest_id: &str) {
+    if let Some(aim) = tab_aims()
+        .lock()
+        .ok()
+        .and_then(|mut aims| aims.remove(guest_id))
+    {
+        show_tab_aim(app, &aim.tab, "off");
+    }
+}
+
+fn note_on_tab(app: &AppHandle, note_id: &str, tab_id: &str) -> bool {
+    app.state::<AppState>()
+        .db
+        .pin_tabs()
+        .ok()
+        .and_then(|state| {
+            state
+                .tabs
+                .iter()
+                .find(|tab| tab.id == tab_id)
+                .map(|tab| tab.notes.iter().any(|note| note.id == note_id))
+        })
+        .unwrap_or(false)
+}
+
+fn commit_tab_move(app: &AppHandle, note_id: &str, tab_id: &str) {
+    if app
+        .state::<AppState>()
+        .db
+        .move_pinned_note_to_tab(note_id, tab_id)
+        .is_err()
+    {
+        return;
+    }
+    apply_pin_tab(app);
+    let _ = app.emit("pin-tabs-changed", ());
+    show_tab_aim(app, tab_id, "ready");
+}
+
+fn arm_tab_move(app: &AppHandle, guest_id: &str) -> bool {
+    let Some(tab_id) = tab_under_cursor(app) else {
+        clear_tab_aim(app, guest_id);
+        return false;
+    };
+    if note_on_tab(app, guest_id, &tab_id) {
+        let keep_ready = tab_aims().lock().ok().is_some_and(|aims| {
+            aims.get(guest_id)
+                .is_some_and(|aim| aim.ready && aim.tab == tab_id)
+        });
+        if !keep_ready {
+            clear_tab_aim(app, guest_id);
+        }
+        return true;
+    }
+    let cursor = app
+        .cursor_position()
+        .ok()
+        .map(|point| (point.x.round() as i32, point.y.round() as i32))
+        .unwrap_or((0, 0));
+    let mut aims = tab_aims()
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    if let Some(aim) = aims.get_mut(guest_id) {
+        if aim.tab == tab_id {
+            let moved = (cursor.0 - aim.anchor.0).abs() > STACK_STILL_RADIUS
+                || (cursor.1 - aim.anchor.1).abs() > STACK_STILL_RADIUS;
+            if moved && !aim.ready {
+                aim.anchor = cursor;
+                aim.since = Instant::now();
+                return true;
+            }
+            if !aim.ready && aim.since.elapsed() >= STACK_HOLD {
+                aim.ready = true;
+                drop(aims);
+                commit_tab_move(app, guest_id, &tab_id);
+            }
+            return true;
+        }
+    }
+    if let Some(previous) = aims.remove(guest_id) {
+        show_tab_aim(app, &previous.tab, "off");
+    }
+    show_tab_aim(app, &tab_id, "hold");
+    aims.insert(
+        guest_id.to_string(),
+        TabAim {
+            tab: tab_id,
+            anchor: cursor,
+            since: Instant::now(),
+            ready: false,
+        },
+    );
+    true
 }
 
 const STACK_NOTE_OPEN_H: f64 = 420.0;
@@ -1758,8 +2120,8 @@ fn attach_if_covering(
     window: &WebviewWindow,
     preferred_host: Option<&str>,
 ) -> bool {
-    let Some(root_id) = stack_target(app, guest_id, window)
-        .or_else(|| preferred_host.map(str::to_string))
+    let Some(root_id) =
+        stack_target(app, guest_id, window).or_else(|| preferred_host.map(str::to_string))
     else {
         return false;
     };
@@ -1773,8 +2135,14 @@ fn attach_if_covering(
     if tail == guest_id {
         return false;
     }
-    let incoming = db.chain_after(guest_id).map(|chain| chain.len()).unwrap_or(0);
-    let already = db.chain_after(&root_id).map(|chain| chain.len()).unwrap_or(0);
+    let incoming = db
+        .chain_after(guest_id)
+        .map(|chain| chain.len())
+        .unwrap_or(0);
+    let already = db
+        .chain_after(&root_id)
+        .map(|chain| chain.len())
+        .unwrap_or(0);
     if already + 1 + incoming > STACK_LIMIT {
         return false;
     }
@@ -1832,7 +2200,13 @@ fn stack_target(app: &AppHandle, guest_id: &str, _window: &WebviewWindow) -> Opt
         if id == guest_id || !other.is_visible().unwrap_or(false) {
             continue;
         }
-        if db.get(id).ok().flatten().and_then(|note| note.stack_host).is_some() {
+        if db
+            .get(id)
+            .ok()
+            .flatten()
+            .and_then(|note| note.stack_host)
+            .is_some()
+        {
             continue;
         }
         if chain_contains(&db, guest_id, id) {
@@ -1852,7 +2226,8 @@ fn stack_target(app: &AppHandle, guest_id: &str, _window: &WebviewWindow) -> Opt
         let left = other_pos.x + pad_x;
         let top = other_pos.y + pad_top;
         let width = (other_size.width as i32 - pad_x.saturating_mul(2)).max(1);
-        let height = (other_size.height as i32 - pad_top - (CARD_PAD_BOTTOM * scale).round() as i32).max(1);
+        let height =
+            (other_size.height as i32 - pad_top - (CARD_PAD_BOTTOM * scale).round() as i32).max(1);
         let inset_x = (24.0 * scale).round().min(f64::from(width) * 0.2) as i32;
         let inset_y = (16.0 * scale).round().min(f64::from(height) * 0.2) as i32;
         let point_inside = |(px, py): (i32, i32)| {
@@ -1957,7 +2332,8 @@ fn keep_stack_look(db: &crate::notes::Db, id: &str, opacity: u8, shown_theme: Op
 }
 
 fn following() -> &'static Mutex<HashSet<String>> {
-    static FOLLOWING: LazyLock<Mutex<HashSet<String>>> = LazyLock::new(|| Mutex::new(HashSet::new()));
+    static FOLLOWING: LazyLock<Mutex<HashSet<String>>> =
+        LazyLock::new(|| Mutex::new(HashSet::new()));
     &FOLLOWING
 }
 
@@ -2002,7 +2378,9 @@ fn follow_detached(
                         if pulled_far {
                             arm_stack_attach(&app2, &id, &window);
                             if snap_enabled(&app2) && !aim_pending(&id) {
-                                if let Some(snapped) = snap_target_for_origin(&app2, &window, raw_x, raw_y) {
+                                if let Some(snapped) =
+                                    snap_target_for_origin(&app2, &window, raw_x, raw_y)
+                                {
                                     x = snapped.0;
                                     y = snapped.1;
                                 }
@@ -2054,7 +2432,11 @@ fn follow_detached(
                 return;
             }
             let label = pin_label(&id);
-            if let Some(aim) = stack_aims().lock().ok().and_then(|mut aims| aims.remove(&id)) {
+            if let Some(aim) = stack_aims()
+                .lock()
+                .ok()
+                .and_then(|mut aims| aims.remove(&id))
+            {
                 show_aim(&app2, &aim.host, "off");
                 if aim.ready {
                     if let Some(window) = app2.get_webview_window(&label) {
@@ -2161,7 +2543,10 @@ pub fn prepare_remove(app: &AppHandle, id: &str) {
             keep_stack_look(&db, &child.id, host.opacity, host.theme.as_deref());
         }
         let child_collapsed = child.collapsed;
-        let tail_len = db.chain_after(&child.id).map(|chain| chain.len()).unwrap_or(0);
+        let tail_len = db
+            .chain_after(&child.id)
+            .map(|chain| chain.len())
+            .unwrap_or(0);
         let frame = app
             .get_webview_window(&pin_label(id))
             .and_then(|win| {
@@ -2201,7 +2586,8 @@ struct Park {
 }
 
 fn parks() -> &'static Mutex<HashMap<String, Park>> {
-    static PARKS: LazyLock<Mutex<HashMap<String, Park>>> = LazyLock::new(|| Mutex::new(HashMap::new()));
+    static PARKS: LazyLock<Mutex<HashMap<String, Park>>> =
+        LazyLock::new(|| Mutex::new(HashMap::new()));
     &PARKS
 }
 
@@ -2209,12 +2595,25 @@ fn park_quiet(label: &str) -> bool {
     parks()
         .lock()
         .ok()
-        .and_then(|parked| parked.get(label).map(|park| park.quiet_until > Instant::now()))
+        .and_then(|parked| {
+            parked
+                .get(label)
+                .map(|park| park.quiet_until > Instant::now())
+        })
         .unwrap_or(false)
 }
 
 #[allow(clippy::too_many_arguments)]
-fn glide_window(app: AppHandle, label: String, ticket: u64, from_x: i32, from_y: i32, to_x: i32, to_y: i32, clear: bool) {
+fn glide_window(
+    app: AppHandle,
+    label: String,
+    ticket: u64,
+    from_x: i32,
+    from_y: i32,
+    to_x: i32,
+    to_y: i32,
+    clear: bool,
+) {
     tauri::async_runtime::spawn(async move {
         let steps = 8;
         for step in 1..=steps {
@@ -2228,7 +2627,10 @@ fn glide_window(app: AppHandle, label: String, ticket: u64, from_x: i32, from_y:
             let label2 = label.clone();
             let _ = app.run_on_main_thread(move || {
                 let current = parks().lock().ok().and_then(|parked| {
-                    parked.get(&label2).filter(|park| park.ticket == ticket).map(|_| ())
+                    parked
+                        .get(&label2)
+                        .filter(|park| park.ticket == ticket)
+                        .map(|_| ())
                 });
                 if current.is_none() || drag_active(&label2) {
                     return;
@@ -2238,7 +2640,10 @@ fn glide_window(app: AppHandle, label: String, ticket: u64, from_x: i32, from_y:
                 }
                 if done && clear {
                     if let Ok(mut parked) = parks().lock() {
-                        if parked.get(&label2).is_some_and(|park| park.ticket == ticket) {
+                        if parked
+                            .get(&label2)
+                            .is_some_and(|park| park.ticket == ticket)
+                        {
                             parked.remove(&label2);
                         }
                     }
@@ -2249,7 +2654,10 @@ fn glide_window(app: AppHandle, label: String, ticket: u64, from_x: i32, from_y:
 }
 
 pub fn slide_into_view(app: &AppHandle, label: &str) {
-    if drag_active(label) || resize_active(label) || follow_active(label.strip_prefix("pin-").unwrap_or("")) {
+    if drag_active(label)
+        || resize_active(label)
+        || follow_active(label.strip_prefix("pin-").unwrap_or(""))
+    {
         return;
     }
     let Some(window) = app.get_webview_window(label) else {
@@ -2271,7 +2679,8 @@ pub fn slide_into_view(app: &AppHandle, label: &str) {
         return;
     };
     let area = monitor.work_area();
-    if size.width as i32 >= area.size.width as i32 || size.height as i32 >= area.size.height as i32 {
+    if size.width as i32 >= area.size.width as i32 || size.height as i32 >= area.size.height as i32
+    {
         return;
     }
     let pad_x = (CARD_PAD_X * scale).round() as i32;
@@ -2302,9 +2711,19 @@ pub fn slide_into_view(app: &AppHandle, label: &str) {
         let Ok(mut parked) = parks().lock() else {
             return;
         };
-        let home_x = parked.get(label).map(|park| park.home_x).unwrap_or(position.x);
-        let home_y = parked.get(label).map(|park| park.home_y).unwrap_or(position.y);
-        let ticket = parked.get(label).map(|park| park.ticket).unwrap_or(0).wrapping_add(1);
+        let home_x = parked
+            .get(label)
+            .map(|park| park.home_x)
+            .unwrap_or(position.x);
+        let home_y = parked
+            .get(label)
+            .map(|park| park.home_y)
+            .unwrap_or(position.y);
+        let ticket = parked
+            .get(label)
+            .map(|park| park.ticket)
+            .unwrap_or(0)
+            .wrapping_add(1);
         parked.insert(
             label.to_string(),
             Park {
@@ -2360,7 +2779,16 @@ pub fn slide_back(app: &AppHandle, label: &str) {
         }
         home
     };
-    glide_window(app.clone(), label.to_string(), ticket, position.x, position.y, home_x, home_y, true);
+    glide_window(
+        app.clone(),
+        label.to_string(),
+        ticket,
+        position.x,
+        position.y,
+        home_x,
+        home_y,
+        true,
+    );
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -2404,8 +2832,14 @@ fn clear_hover_cursors(app: &AppHandle) {
 }
 
 fn gesture_blocks_hover() -> bool {
-    let dragging = dragging().lock().ok().is_some_and(|labels| !labels.is_empty());
-    let resizing = corner_resizing().lock().ok().is_some_and(|labels| !labels.is_empty());
+    let dragging = dragging()
+        .lock()
+        .ok()
+        .is_some_and(|labels| !labels.is_empty());
+    let resizing = corner_resizing()
+        .lock()
+        .ok()
+        .is_some_and(|labels| !labels.is_empty());
     dragging || resizing
 }
 
@@ -2449,7 +2883,9 @@ fn tick_offscreen_hover(app: &AppHandle) {
             None
         };
         cursor_hits.insert(label.clone(), local);
-        hits.push((label, over_window, window.is_focused().unwrap_or(false)));
+        if label != PIN_TABS {
+            hits.push((label, over_window, window.is_focused().unwrap_or(false)));
+        }
     }
     if let Ok(mut cursors) = hover_cursors().lock() {
         cursors.retain(|label, _| {
@@ -2474,7 +2910,8 @@ fn tick_offscreen_hover(app: &AppHandle) {
                 None => {
                     if cursors.remove(&label).is_some() {
                         if let Some(window) = app.get_webview_window(&label) {
-                            let _ = window.emit_to(&label, "window-cursor", Option::<(i32, i32)>::None);
+                            let _ =
+                                window.emit_to(&label, "window-cursor", Option::<(i32, i32)>::None);
                         }
                     }
                 }
@@ -2497,7 +2934,8 @@ fn tick_offscreen_hover(app: &AppHandle) {
         .unwrap_or_default();
     let mut next = HashSet::new();
     for (label, is_over, focused) in hits {
-        let was_over = over.contains(&label) || (!is_over && !focused && parked_labels.contains(&label));
+        let was_over =
+            over.contains(&label) || (!is_over && !focused && parked_labels.contains(&label));
         match offscreen_hover_step(was_over, is_over, focused) {
             HoverStep::Reveal => slide_into_view(app, &label),
             HoverStep::Restore => slide_back(app, &label),
@@ -2511,48 +2949,46 @@ fn tick_offscreen_hover(app: &AppHandle) {
 }
 
 pub fn watch_offscreen_hover(app: AppHandle) {
-    std::thread::spawn(move || {
-        loop {
-            std::thread::sleep(Duration::from_millis(40));
-            if gesture_blocks_hover() {
-                continue;
-            }
-            #[cfg(any(target_os = "macos", target_os = "windows"))]
-            if left_button_down() {
-                continue;
-            }
-            let state = app.state::<AppState>();
-            let any_hover = hover_over()
-                .lock()
-                .ok()
-                .is_some_and(|over| !over.is_empty());
-            let any_cursor = hover_cursors()
-                .lock()
-                .ok()
-                .is_some_and(|cursors| !cursors.is_empty());
-            let has_pins = app
-                .webview_windows()
-                .keys()
-                .any(|label| label.starts_with("pin-"));
-            if !state.pinned_mode.load(Ordering::SeqCst)
-                && !state.shown.load(Ordering::SeqCst)
-                && !has_pins
-                && !any_hover
-                && !any_cursor
-            {
-                continue;
-            }
-            let (tx, rx) = std::sync::mpsc::channel();
-            let app2 = app.clone();
-            let posted = app.run_on_main_thread(move || {
-                tick_offscreen_hover(&app2);
-                let _ = tx.send(());
-            });
-            if posted.is_err() {
-                break;
-            }
-            let _ = rx.recv_timeout(Duration::from_millis(120));
+    std::thread::spawn(move || loop {
+        std::thread::sleep(Duration::from_millis(40));
+        if gesture_blocks_hover() {
+            continue;
         }
+        #[cfg(any(target_os = "macos", target_os = "windows"))]
+        if left_button_down() {
+            continue;
+        }
+        let state = app.state::<AppState>();
+        let any_hover = hover_over()
+            .lock()
+            .ok()
+            .is_some_and(|over| !over.is_empty());
+        let any_cursor = hover_cursors()
+            .lock()
+            .ok()
+            .is_some_and(|cursors| !cursors.is_empty());
+        let has_pins = app
+            .webview_windows()
+            .keys()
+            .any(|label| label.starts_with("pin-"));
+        if !state.pinned_mode.load(Ordering::SeqCst)
+            && !state.shown.load(Ordering::SeqCst)
+            && !has_pins
+            && !any_hover
+            && !any_cursor
+        {
+            continue;
+        }
+        let (tx, rx) = std::sync::mpsc::channel();
+        let app2 = app.clone();
+        let posted = app.run_on_main_thread(move || {
+            tick_offscreen_hover(&app2);
+            let _ = tx.send(());
+        });
+        if posted.is_err() {
+            break;
+        }
+        let _ = rx.recv_timeout(Duration::from_millis(120));
     });
 }
 

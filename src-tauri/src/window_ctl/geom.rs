@@ -388,15 +388,23 @@ pub fn slide_card_into_view(
     if left < area_x && overlap_span(left, width, area_x, area_right) > 0 {
         next_left = area_x;
         moved = true;
-    } else if left.saturating_add(width) > area_right && overlap_span(left, width, area_x, area_right) > 0 {
+    } else if left.saturating_add(width) > area_right
+        && overlap_span(left, width, area_x, area_right) > 0
+    {
         next_left = area_right.saturating_sub(width);
         moved = true;
     }
-    if top.saturating_add(height) > area_bottom && overlap_span(top, height, area_y, area_bottom) > 0 {
+    if top.saturating_add(height) > area_bottom
+        && overlap_span(top, height, area_y, area_bottom) > 0
+    {
         next_top = area_bottom.saturating_sub(height);
         moved = true;
     }
-    if moved { Some((next_left, next_top)) } else { None }
+    if moved {
+        Some((next_left, next_top))
+    } else {
+        None
+    }
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -429,7 +437,6 @@ pub fn clamp_position(
     (x, y)
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -456,13 +463,34 @@ mod tests {
         assert_eq!(right, Some((700, 40)));
         let bottom = slide_card_into_view(40, 700, 300, 200, 0, 0, 1000, 800);
         assert_eq!(bottom, Some((40, 600)));
-        assert_eq!(slide_card_into_view(40, 40, 300, 200, 0, 0, 1000, 800), None);
-        assert_eq!(slide_card_into_view(-8, 40, 300, 200, 0, 0, 1000, 800), Some((0, 40)));
-        assert_eq!(slide_card_into_view(-294, 40, 300, 200, 0, 0, 1000, 800), Some((0, 40)));
-        assert_eq!(slide_card_into_view(-400, 40, 300, 200, 0, 0, 1000, 800), None);
-        assert_eq!(slide_card_into_view(-140, 0, 300, 800, 0, 0, 1000, 800), None);
-        assert_eq!(slide_card_into_view(-140, -50, 300, 900, 0, 0, 1000, 800), None);
-        assert_eq!(slide_card_into_view(-140, 40, 1000, 200, 0, 0, 1000, 800), None);
+        assert_eq!(
+            slide_card_into_view(40, 40, 300, 200, 0, 0, 1000, 800),
+            None
+        );
+        assert_eq!(
+            slide_card_into_view(-8, 40, 300, 200, 0, 0, 1000, 800),
+            Some((0, 40))
+        );
+        assert_eq!(
+            slide_card_into_view(-294, 40, 300, 200, 0, 0, 1000, 800),
+            Some((0, 40))
+        );
+        assert_eq!(
+            slide_card_into_view(-400, 40, 300, 200, 0, 0, 1000, 800),
+            None
+        );
+        assert_eq!(
+            slide_card_into_view(-140, 0, 300, 800, 0, 0, 1000, 800),
+            None
+        );
+        assert_eq!(
+            slide_card_into_view(-140, -50, 300, 900, 0, 0, 1000, 800),
+            None
+        );
+        assert_eq!(
+            slide_card_into_view(-140, 40, 1000, 200, 0, 0, 1000, 800),
+            None
+        );
     }
 
     #[test]
@@ -595,8 +623,19 @@ mod tests {
             24,
             32,
         );
-        let (screen_x, _) =
-            snap_screen_edges(first_x, layout.origin_y, 360, 420, 24, 24, 0, 0, 1400, 900, 36);
+        let (screen_x, _) = snap_screen_edges(
+            first_x,
+            layout.origin_y,
+            360,
+            420,
+            24,
+            24,
+            0,
+            0,
+            1400,
+            900,
+            36,
+        );
         let (memo_x, _) =
             snap_memo_edges(first_x, layout.origin_y, 360, 420, 24, 24, &[second], 36);
         let chosen_x = closer_snap_x(first_x, screen_x, memo_x);

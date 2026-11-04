@@ -7,8 +7,8 @@ use std::time::Instant;
 use tauri::menu::CheckMenuItem;
 use tauri::Wry;
 
-use crate::notes::Job;
 use crate::notes::Db;
+use crate::notes::Job;
 use crate::shortcuts::ShortcutBinds;
 
 pub struct AppState {

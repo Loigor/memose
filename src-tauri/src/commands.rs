@@ -1,9 +1,11 @@
+use std::sync::atomic::Ordering;
+
 use serde::Serialize;
 use tauri::{AppHandle, Emitter, State};
 use tauri_plugin_autostart::ManagerExt;
 
 use crate::error::AppError;
-use crate::notes::{self, request_sync, Note, SpaceView};
+use crate::notes::{self, request_sync, Note, PinTabHit, PinTabs, SpaceView};
 use crate::shortcuts::{self, ShortcutBinds};
 use crate::state::AppState;
 use crate::tray;
@@ -603,15 +605,66 @@ pub fn set_pinned(
     }
     state.db.set_pinned(&id, pinned)?;
     if pinned {
-        window_ctl::open_pinned(&app, &id);
+        let new_tab = !state.pinned_mode.load(Ordering::SeqCst);
+        state.db.assign_pinned_note(&id, new_tab)?;
+        if new_tab {
+            state.pinned_mode.store(true, Ordering::SeqCst);
+            window_ctl::apply_pin_tab(&app);
+        } else {
+            window_ctl::open_pinned(&app, &id);
+            window_ctl::show_pin_tabs(&app);
+        }
         if !from_composer {
             window_ctl::dismiss_composer(&app);
         }
     } else {
+        state.db.unassign_pinned_note(&id)?;
         window_ctl::close_pinned(&app, &id);
     }
+    let _ = app.emit("pin-tabs-changed", ());
     let _ = app.emit("notes-changed", ());
     Ok(())
+}
+
+#[tauri::command]
+pub fn list_pin_tabs(state: State<'_, AppState>) -> Result<PinTabs, AppError> {
+    state.db.pin_tabs()
+}
+
+#[tauri::command]
+pub fn add_pin_tab(app: AppHandle, state: State<'_, AppState>) -> Result<PinTabs, AppError> {
+    let tabs = state.db.add_pin_tab()?;
+    window_ctl::apply_pin_tab(&app);
+    let _ = app.emit("pin-tabs-changed", ());
+    Ok(tabs)
+}
+
+#[tauri::command]
+pub fn select_pin_tab(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    id: String,
+) -> Result<PinTabs, AppError> {
+    let tabs = state.db.select_pin_tab(&id)?;
+    window_ctl::apply_pin_tab(&app);
+    let _ = app.emit("pin-tabs-changed", ());
+    Ok(tabs)
+}
+
+#[tauri::command]
+pub fn set_pin_tab_hits(hits: Vec<PinTabHit>) {
+    window_ctl::set_pin_tab_hits(hits);
+}
+
+#[tauri::command]
+pub fn update_pin_tab(
+    state: State<'_, AppState>,
+    id: String,
+    name: Option<String>,
+    hue: Option<u16>,
+    swatches: Option<Vec<u16>>,
+) -> Result<PinTabs, AppError> {
+    state.db.update_pin_tab(&id, name, hue, swatches)
 }
 
 #[tauri::command]
