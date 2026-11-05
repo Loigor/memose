@@ -103,7 +103,7 @@ Rust allows more than one `impl Db`. Keep `open`, `with`, schema, and `map_note`
 
 1. Space catalog. Done: `notes/db/spaces.rs` holds the catalog methods and `StoredSpace`. `Db::with` and `get_meta` stay in `db.rs`. Note writes still call `spaces::space_hue_value`.
 2. Stack and pin frames. Done: `notes/db/stack.rs` holds collapse, stack links, pin flag, window frame, and `list_pinned`. `save_look` and `set_pinned_opacity` stay in `db.rs`. `map_note` and `LIST_PINNED` stay there too; the stack module calls them.
-3. Sync row updates (`mark_synced`, conflict, remote stubs).
+3. Sync row updates. Done: `notes/db/remote.rs` holds push completion, error/local marks, remote stubs, and conflict resolution. `RemoteLink` is re-exported from `db`. Settings, tokens, and media upload rows stay in `db.rs`.
 
 The public `Db` methods stay on `Db`. `notes/mod.rs` re-exports do not change.
 
@@ -144,6 +144,6 @@ Do not add `vercel-react-best-practices`. This app is vanilla TypeScript.
 - [ ] 5. `stack.ts` extracts
 - [ ] 6. `main.ts` extracts
 - [ ] 7. `window_ctl` leaves
-- [ ] 8. `Db` impl groups (space catalog and stack/pin frames done)
+- [x] 8. `Db` impl groups
 - [ ] 9. Sync parsers
 - [ ] 10. Media clipboard
