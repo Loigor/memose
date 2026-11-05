@@ -3,12 +3,12 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import DOMPurify from "dompurify";
 import { marked } from "marked";
 
-import { audienceChoice, revealPressedChoice } from "./audience-ui";
-import { applyMediaFigureSize, handleBlockAreaNavigation, handleBlockMediaDeletion, syncInlineLineSlot } from "./editor-blocks";
-import { memoUsesCoder, refreshEditorFields, wrapEditorField } from "./editor-field";
-import { filesFromTransfer } from "./files";
-import { BlockHistory, cloneBlocks, restoreCaret, type Caret } from "./history";
-import { namedTheme, type Look } from "./look";
+import { audienceChoice, revealPressedChoice } from "./look/audience-ui";
+import { applyMediaFigureSize, handleBlockAreaNavigation, handleBlockMediaDeletion, syncInlineLineSlot } from "./editor/editor-blocks";
+import { memoUsesCoder, refreshEditorFields, wrapEditorField } from "./editor/editor-field";
+import { filesFromTransfer } from "./media/files";
+import { BlockHistory, cloneBlocks, restoreCaret, type Caret } from "./editor/history";
+import { namedTheme, type Look } from "./look/look";
 import {
   applyCode,
   applyJsonFormat,
@@ -25,16 +25,16 @@ import {
   wrapText,
   type Block,
   type Edit,
-} from "./markdown-edit";
-import { hydratePreviewContent, mediaPointer } from "./media-elements";
-import { createMedia, type MediaNoteMutator } from "./media-dnd";
-import { markdownToolbarHtml, paintSurface, paintThemeButton, paperAt, stackHeaderHtml, type ThemeName } from "./memo-chrome";
+} from "./editor/markdown-edit";
+import { hydratePreviewContent, mediaPointer } from "./media/media-elements";
+import { createMedia, type MediaNoteMutator } from "./media/media-dnd";
+import { markdownToolbarHtml, paintSurface, paintThemeButton, paperAt, stackHeaderHtml, type ThemeName } from "./look/memo-chrome";
 import { inTauri, isPreviewWindow } from "./platform";
-import { editorShell, resizeAllBlockTextareas, sizeBlockTextarea } from "./textarea";
+import { editorShell, resizeAllBlockTextareas, sizeBlockTextarea } from "./editor/textarea";
 import { exactStamp, relativeTime } from "./time";
 import type { MemoSpace, Note } from "./types";
-import { syncIcon } from "./sync-status";
-import { isOfflinePrivate, visibilityOptions, visibilityShort } from "./visibility";
+import { syncIcon } from "./look/sync-status";
+import { isOfflinePrivate, visibilityOptions, visibilityShort } from "./look/visibility";
 
 export type StackHost = {
   cardEl: HTMLElement;

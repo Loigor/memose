@@ -4,12 +4,12 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import DOMPurify from "dompurify";
 import { marked } from "marked";
 
-import { audienceChoice, revealPressedChoice } from "./audience-ui";
-import { applyMediaFigureSize, handleBlockAreaNavigation, handleBlockMediaDeletion, syncInlineLineSlot } from "./editor-blocks";
-import { memoUsesCoder, refreshEditorFields, setEditorPrefs, wrapEditorField, type EditorPrefs } from "./editor-field";
-import { filesFromTransfer, uniqueFiles } from "./files";
-import { BlockHistory, cloneBlocks, restoreCaret, type Caret } from "./history";
-import { darkHue, defaultLook, lightHue, lookFromNote, tinted, type Look } from "./look";
+import { audienceChoice, revealPressedChoice } from "./look/audience-ui";
+import { applyMediaFigureSize, handleBlockAreaNavigation, handleBlockMediaDeletion, syncInlineLineSlot } from "./editor/editor-blocks";
+import { memoUsesCoder, refreshEditorFields, setEditorPrefs, wrapEditorField, type EditorPrefs } from "./editor/editor-field";
+import { filesFromTransfer, uniqueFiles } from "./media/files";
+import { BlockHistory, cloneBlocks, restoreCaret, type Caret } from "./editor/history";
+import { darkHue, defaultLook, lightHue, lookFromNote, tinted, type Look } from "./look/look";
 import {
   applyCode,
   applyJsonFormat,
@@ -26,16 +26,16 @@ import {
   wrapText,
   type Block,
   type Edit,
-} from "./markdown-edit";
-import { bindMediaEditor, createMedia, isDraggingMedia } from "./media-dnd";
+} from "./editor/markdown-edit";
+import { bindMediaEditor, createMedia, isDraggingMedia } from "./media/media-dnd";
 import {
   closeMediaContextMenu,
   hydratePreviewContent,
   initLightbox,
   mediaContextMenuOpen,
   previewBodyTarget,
-} from "./media-elements";
-import { paintSurface, paintThemeButton, palette, paperAt, type ThemeName } from "./memo-chrome";
+} from "./media/media-elements";
+import { paintSurface, paintThemeButton, palette, paperAt, type ThemeName } from "./look/memo-chrome";
 import { pointIn, requireEl } from "./dom";
 import { inTauri, isPreviewWindow } from "./platform";
 import { defaultBinds, domMouseButton, formatBind, isModifierKey, matchBind, matchMouse, modifierDown, type ShortcutBinds } from "./shortcuts";
@@ -68,11 +68,11 @@ import {
   undoSection,
   wireChrome,
 } from "./stack";
-import { syncIcon } from "./sync-status";
-import { editorShell, resizeAllBlockTextareas, sizeBlockTextarea } from "./textarea";
+import { syncIcon } from "./look/sync-status";
+import { editorShell, resizeAllBlockTextareas, sizeBlockTextarea } from "./editor/textarea";
 import { exactStamp, relativeTime } from "./time";
 import type { MemoSpace, Note } from "./types";
-import { isOfflinePrivate, visibilityOptions, visibilityShort } from "./visibility";
+import { isOfflinePrivate, visibilityOptions, visibilityShort } from "./look/visibility";
 
 const card = document.querySelector<HTMLElement>("#card");
 const blocks = document.querySelector<HTMLDivElement>("#blocks");

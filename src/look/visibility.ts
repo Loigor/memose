@@ -1,4 +1,4 @@
-import type { MemoSpace } from "./types.ts";
+import type { MemoSpace } from "../types.ts";
 
 export const visibilityOptions = [
   { value: "OFFLINE_PRIVATE", label: "Offline Private", short: "Offline", hint: "This computer only, never synced" },

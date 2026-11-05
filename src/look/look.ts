@@ -1,5 +1,5 @@
 import { type SurfaceLook, type ThemeName } from "./memo-chrome.ts";
-import type { Note } from "./types.ts";
+import type { Note } from "../types.ts";
 
 export type Look = SurfaceLook;
 

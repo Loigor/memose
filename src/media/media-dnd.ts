@@ -3,8 +3,8 @@ import {
   findMediaDropTarget,
   moveBlockMedia,
   type MediaDropTarget,
-} from "./editor-blocks";
-import { displayFileName, isAudio, isImage, isVideo, type Block } from "./markdown-edit";
+} from "../editor/editor-blocks";
+import { displayFileName, isAudio, isImage, isVideo, type Block } from "../editor/markdown-edit";
 import {
   createAudioElement,
   createFileAttachmentChip,
@@ -13,7 +13,7 @@ import {
   mediaSrc,
   showMediaContextMenu,
 } from "./media-elements";
-import { resizeAllBlockTextareas } from "./textarea";
+import { resizeAllBlockTextareas } from "../editor/textarea";
 
 export type MediaNoteMutator = {
   getBlocks: () => Block[];

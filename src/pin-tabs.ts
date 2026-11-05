@@ -3,8 +3,8 @@ import { getCurrentWindow, LogicalSize } from "@tauri-apps/api/window";
 import { listen } from "@tauri-apps/api/event";
 
 import { requireEl } from "./dom.ts";
-import { bindHuePop } from "./hue-pop.ts";
-import { paintSurface, tabFill, type ThemeName } from "./memo-chrome.ts";
+import { bindHuePop } from "./look/hue-pop.ts";
+import { paintSurface, tabFill, type ThemeName } from "./look/memo-chrome.ts";
 import { inTauri } from "./platform.ts";
 import type { PinTab, PinTabHit, PinTabs } from "./types.ts";
 
@@ -95,7 +95,8 @@ function paint() {
 
 function applyAim() {
   for (const button of tabsEl.querySelectorAll<HTMLElement>(".pin-tab")) {
-    const mode = lastAim?.id === button.dataset.id ? lastAim.mode : "off";
+    const aim = lastAim;
+    const mode = aim !== null && aim.id === button.dataset.id ? aim.mode : "off";
     button.classList.toggle("pin-tab-aim", mode === "hold" || mode === "ready");
     button.classList.toggle("pin-tab-ready", mode === "ready");
   }

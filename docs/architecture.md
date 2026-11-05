@@ -44,12 +44,10 @@ These are helpers, not a component framework:
 | `main.ts` | App controller: editor state, drafts, pinning, recent list, IPC, event listeners |
 | `settings.ts` | Settings window controller |
 | `stack.ts` | Stacked memos drawn under a host window |
-| `editor-blocks.ts`, `markdown-edit.ts`, `textarea.ts`, `history.ts` | Block editor, markdown transforms, undo |
-| `media-dnd.ts`, `media-elements.ts`, `files.ts` | Paste/drop, resize, lightbox, attachments |
-| `look.ts`, `memo-chrome.ts` | Per-note hue, theme, paper tint |
-| `audience-ui.ts`, `visibility.ts` | Private / Protected / Public / Space |
+| `editor/` (`markdown-edit.ts`, `editor-blocks.ts`, `editor-field.ts`, `textarea.ts`, `history.ts`, `md-highlight.ts`) | Block editor, markdown transforms, undo |
+| `media/` (`media-dnd.ts`, `media-elements.ts`, `files.ts`) | Paste/drop, resize, lightbox, attachments |
+| `look/` (`look.ts`, `memo-chrome.ts`, `hue-pop.ts`, `audience-ui.ts`, `visibility.ts`, `sync-status.ts`) | Hue, theme, audience, sync icon |
 | `shortcuts.ts` | Shortcut matching (shared with settings) |
-| `sync-status.ts` | Sync-state icons |
 | `types.ts` | `Note` / `MemoSpace` shapes matching Rust `#[serde(rename_all = "camelCase")]` |
 
 `main.ts` boots in three modes from the **same** `index.html`:

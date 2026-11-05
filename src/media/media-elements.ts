@@ -9,8 +9,8 @@ import {
   isVideo,
   mediaPrefix,
   parseMediaMeta,
-} from "./markdown-edit";
-import { inTauri } from "./platform";
+} from "../editor/markdown-edit";
+import { inTauri } from "../platform";
 
 export const mediaPointer = {
   dragged: false,

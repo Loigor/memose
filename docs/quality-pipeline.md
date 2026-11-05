@@ -22,7 +22,7 @@ npm run check
    - Verifies multi-page bundling (`index.html` and `settings.html`) and asset resolution.
 4. **Frontend Unit & IPC Contract Tests (`npm run test:ts`)**
    - Runs `tests/frontend.test.ts` via Node's built-in test runner (`node --test`).
-   - Tests pure markdown editing (`wrapText`, `applyCode`, `applyTitle`, `applyTask`, `toggleTask`, `taskListOnEnter`, `tabOnMarkdown`, `renumberOrderedLists`), media block parsing/serialization (`parseBlocks`, `serializeBlocks`, `ensureTextSlots`, `parseMediaMeta`, `mediaMarkdown`, `noteTitle`), shortcut parsing/matching (`src/shortcuts.ts`), theme chrome (`src/memo-chrome.ts`), version parity, and **1-to-1 bidirectional Tauri IPC command registration**.
+   - Tests pure markdown editing (`wrapText`, `applyCode`, `applyTitle`, `applyTask`, `toggleTask`, `taskListOnEnter`, `tabOnMarkdown`, `renumberOrderedLists`), media block parsing/serialization (`parseBlocks`, `serializeBlocks`, `ensureTextSlots`, `parseMediaMeta`, `mediaMarkdown`, `noteTitle`), shortcut parsing/matching (`src/shortcuts.ts`), theme chrome (`src/look/memo-chrome.ts`), version parity, and **1-to-1 bidirectional Tauri IPC command registration**.
 5. **Rust Static Analysis (`npm run lint:rust`)**
    - Runs `cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings`.
    - Treats all Clippy warnings across library, binary, and test targets as hard errors.
@@ -47,7 +47,7 @@ npm run test:scale       # Playwright @scale memory/DOM + ignored 10k SQLite tes
 
 ### 2.1 Tauri IPC & Command Boundary Discipline
 
-- **1-to-1 IPC Contract Enforcement**: Every `#[tauri::command]` registered in `tauri::generate_handler![...]` (`src-tauri/src/lib.rs`) must be actively used by the frontend (`src/main.ts` or `src/settings.ts`), and every frontend `invoke("...")` call must match a registered command. Because `generate_handler!` references command functions, Rust's `dead_code` lint will not catch unused Tauri commands—`tests/frontend.test.ts` enforces this automatically.
+- **1-to-1 IPC Contract Enforcement**: Every `#[tauri::command]` registered in `tauri::generate_handler![...]` (`src-tauri/src/lib.rs`) must be actively used by the frontend (any `.ts` file under `src/`), and every frontend `invoke("...")` call must match a registered command. Because `generate_handler!` references command functions, Rust's `dead_code` lint will not catch unused Tauri commands—`tests/frontend.test.ts` walks `src/` recursively and enforces this automatically.
 - **Never Block the Async Runtime**: Any command or worker performing synchronous disk I/O or heavier SQLite work inside an `async fn` must offload blocking work via `tokio::task::spawn_blocking` (or `db_call`).
 - **`tauri::State<'_, T>` is a Reference Wrapper, Not a Lock Guard**: Never call `std::mem::drop(state)` on `tauri::State<'_, AppState>` (flagged by `clippy::drop_non_drop`). Only drop explicit `MutexGuard` values when you need to release a lock before an `.await` or cross-thread call.
 - **Path Traversal & Input Validation**: Never trust filenames or identifiers passed over IPC or downloaded from a remote server. Always validate attachment names through `media::valid_name` / `media::resolve` (rejecting `..`, `/`, `\`, leading dots, or non-ASCII-alphanumeric characters) before touching the filesystem.
@@ -77,7 +77,7 @@ npm run test:scale       # Playwright @scale memory/DOM + ignored 10k SQLite tes
   - Always sanitize markdown HTML with `DOMPurify.sanitize(html)` before assigning to `.innerHTML`.
   - Never interpolate filenames, note titles, or user labels into `.innerHTML` template strings—always create the element and assign `.textContent` (prevents DOM XSS via crafted attachment filenames).
 - **Pure Logic Extraction**:
-  - Keep markdown transformations (`src/markdown-edit.ts`), shortcut matching (`src/shortcuts.ts`), and theme palette math (`src/memo-chrome.ts`) free of top-level DOM side effects so they remain directly testable under `node --test`.
+  - Keep markdown transformations (`src/editor/markdown-edit.ts`), shortcut matching (`src/shortcuts.ts`), and theme palette math (`src/look/memo-chrome.ts`) free of top-level DOM side effects so they remain directly testable under `node --test`.
 - **DOM Event Bubbling Guards**:
   - In `dragleave` handlers on container elements (`#card`, `.stack-note`), check `event.relatedTarget instanceof Node && container.contains(event.relatedTarget)` before removing `.dropping` classes to prevent flicker when dragging over child elements.
   - Exclude interactive controls (`a, input, img, video, audio, .media-audio, .file-attachment, button`) from drag-start and double-click preview-toggle handlers.
