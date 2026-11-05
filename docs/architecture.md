@@ -136,7 +136,7 @@ Edits of an already-synced note set `base_content` (last known server body) and 
 
 ## Sync (useMemos, offline-first)
 
-All HTTP lives in `src-tauri/src/notes/sync.rs`. A background Tokio task owns an `mpsc` of `Job`s:
+HTTP stays in `src-tauri/src/notes/sync.rs`. JSON parsers and request bodies live in `notes/sync/parse.rs`. A background Tokio task owns an `mpsc` of `Job`s:
 
 - `Cycle` — debounce 400ms, coalesce extras, then `run_cycle`
 - `Materialize(id)` — fetch a `remote` stub's full body + attachments

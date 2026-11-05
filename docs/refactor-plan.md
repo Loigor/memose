@@ -109,7 +109,7 @@ The public `Db` methods stay on `Db`. `notes/mod.rs` re-exports do not change.
 
 ### 9. `notes/sync.rs`
 
-Move pure parsers and body builders first (`parse_memo_page`, `parse_time`, `create_body`, `create_space_body`, `remote_change`). The worker (`start_worker`, `drain`) stays in `sync.rs` and calls the new module. The HTTP tests at the bottom stay next to the functions they hit, or call `super::`.
+Done: `notes/sync/parse.rs` holds the memo and space parsers, time parsing, request bodies, and `remote_change`. `RemoteChange` and `space_uid` stay reachable from `sync`. The worker (`start_worker`, `drain`) and the HTTP tests stay in `sync.rs`. Tests that call a parser import it from `super::parse`.
 
 ### 10. `media.rs`
 
@@ -145,5 +145,5 @@ Do not add `vercel-react-best-practices`. This app is vanilla TypeScript.
 - [ ] 6. `main.ts` extracts
 - [ ] 7. `window_ctl` leaves
 - [x] 8. `Db` impl groups
-- [ ] 9. Sync parsers
+- [x] 9. Sync parsers
 - [ ] 10. Media clipboard
