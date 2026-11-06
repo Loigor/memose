@@ -49,13 +49,13 @@ Moved, names unchanged:
 
 The IPC contract test now walks every `.ts` file under `src/`.
 
-### 2. Media folder
+### 2. Media folder — done
 
-Move `media-dnd.ts`, `media-elements.ts`, and `files.ts` to `src/media/`. `media-elements.ts` calls `invoke`, so this step depends on the recursive test from step 1. Check: `npm run test:ts` and `npx tsc --noEmit`.
+Moved, names unchanged: `src/media/media-dnd.ts`, `src/media/media-elements.ts`, `src/media/files.ts`. `media-elements.ts` still calls `invoke`, and the IPC test walks every `.ts` file under `src/`.
 
-### 3. Look and audience folder
+### 3. Look and audience folder — done
 
-Move `look.ts`, `memo-chrome.ts`, `hue-pop.ts`, `audience-ui.ts`, `visibility.ts`, and `sync-status.ts` to `src/look/`. Update `tests/frontend.test.ts` imports. Same check as step 2.
+Moved, names unchanged: `src/look/look.ts`, `src/look/memo-chrome.ts`, `src/look/hue-pop.ts`, `src/look/audience-ui.ts`, `src/look/visibility.ts`, `src/look/sync-status.ts`. Call sites and `tests/frontend.test.ts` import those paths.
 
 Leave `shortcuts.ts`, `types.ts`, `platform.ts`, `dom.ts`, and `time.ts` at `src/` until a later reader actually gets lost. They are small and shared by every page.
 
@@ -63,7 +63,7 @@ Leave `shortcuts.ts`, `types.ts`, `platform.ts`, `dom.ts`, and `time.ts` at `src
 
 `src/styles.css` mixes stack, header, audience, and editor rules in one cascade. Pulling every `.stack-note` rule into one file would change which rule wins. Split only into contiguous slices, imported from `src/styles.css` in today's order. Do not retune a rule. Check: `npm run test:ts` (it reads `textarea::selection` from `src/styles.css`) and a load of `index.html` in Vite.
 
-Slices so far, imported in this order: `src/styles/shell.css` (tokens, page chrome, collapsed card, resize, stack, through `.lifting`), `src/styles/header.css` (the `header` rule through the hue controls), then `src/styles/controls.css` (`.icon-button` through the block textarea sizes). `styles.css` continues at `.media-row`. The selection rules stay in `styles.css`.
+Slices so far, imported in this order: `src/styles/shell.css` (tokens, page chrome, collapsed card, resize, stack, through `.lifting`), `src/styles/header.css` (the `header` rule through the hue controls), `src/styles/controls.css` (`.icon-button` through the block textarea sizes), then `src/styles/field.css` (`.media-row` through the base `.md-hl` rule). `styles.css` continues at `html[data-mdhl] .md-hl`. The selection rules stay in `styles.css`.
 
 ### 5. `stack.ts`, one piece at a time
 
@@ -99,7 +99,7 @@ The boot at the bottom of `main.ts` (composer vs pinned vs media preview) stays 
 
 Check each cut with `npm run test:rust` and `npm run lint:rust`. Geometry tests already live on `geom.rs`.
 
-### 8. `notes/db.rs` by `impl Db` blocks
+### 8. `notes/db.rs` by `impl Db` blocks — done
 
 Rust allows more than one `impl Db`. Keep `open`, `with`, schema, and `map_note` in `notes/db.rs`. Move one group per step, tests with the methods they call:
 
@@ -109,11 +109,11 @@ Rust allows more than one `impl Db`. Keep `open`, `with`, schema, and `map_note`
 
 The public `Db` methods stay on `Db`. `notes/mod.rs` re-exports do not change.
 
-### 9. `notes/sync.rs`
+### 9. `notes/sync.rs` — done
 
 Done: `notes/sync/parse.rs` holds the memo and space parsers, time parsing, request bodies, and `remote_change`. `RemoteChange` and `space_uid` stay reachable from `sync`. The worker (`start_worker`, `drain`) and the HTTP tests stay in `sync.rs`. Tests that call a parser import it from `super::parse`.
 
-### 10. `media.rs`
+### 10. `media.rs` — done
 
 Done: `media/clipboard.rs` holds `paste_clipboard` and the macOS and Windows paste implementations, plus TIFF-to-PNG conversion. `paste_clipboard` is re-exported from `media`. Path checks (`valid_name`, `resolve`) and markdown token rewrite stay in `media.rs`.
 

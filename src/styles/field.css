@@ -1,0 +1,75 @@
+.media-row {
+  display: flex;
+  align-items: flex-end;
+  gap: 8px;
+  margin: 4px 0;
+  min-width: 0;
+}
+
+#blocks textarea.inline-line-slot,
+.stack-blocks textarea.inline-line-slot {
+  flex: 1 1 80px;
+  min-width: 48px;
+  min-height: 22px;
+  align-self: flex-end;
+}
+
+.md-field {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: stretch;
+  min-width: 0;
+}
+
+#blocks .md-field:has(textarea.grow),
+.stack-blocks .md-field:has(textarea.grow) {
+  flex: 1 0 auto;
+  min-height: 64px;
+}
+
+#blocks .md-field:has(textarea.inline-line-slot),
+.stack-blocks .md-field:has(textarea.inline-line-slot) {
+  flex: 1 1 80px;
+  min-width: 48px;
+  align-self: flex-end;
+}
+
+.md-gutter {
+  display: none;
+  flex: none;
+  box-sizing: border-box;
+  width: 2.2em;
+  margin: 0;
+  padding: 0 6px 0 4px;
+  overflow: hidden;
+  text-align: right;
+  white-space: pre;
+  color: color-mix(in srgb, var(--ink) 42%, transparent);
+  pointer-events: none;
+  user-select: none;
+}
+
+.md-surface {
+  position: relative;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.md-hl {
+  position: absolute;
+  inset: 0;
+  display: none;
+  box-sizing: border-box;
+  margin: 0;
+  overflow: hidden;
+  font: inherit;
+  font-size: 16px;
+  line-height: 1.4;
+  letter-spacing: inherit;
+  white-space: pre-wrap;
+  word-wrap: break-word;
+  overflow-wrap: break-word;
+  color: inherit;
+  background: transparent;
+  pointer-events: none;
+}
