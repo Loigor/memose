@@ -75,17 +75,15 @@ Imported in this order:
 
 `styles.css` continues at `#memo-list`. The selection check reads `src/styles.css` and the slices it imports, in that order.
 
-### 5. `stack.ts`, one piece at a time
+### 5. `stack.ts` — left in place
 
-The height helpers (`targetWindowHeight` through `tweenWindowHeight`) are not a closed set. They read `stackState`, `openNoteHeight`, `hostCollapsed`, and the tween timers, and `loadStack`, `paintChrome`, and resize call them back. Move that shared state with the functions. Do not add a controller type.
+Checked the three cuts. None is a closed set, and a new controller type is out of scope.
 
-Extract in this order, only when the functions and their helpers move together:
+1. Window height. `targetWindowHeight` through `tweenWindowHeight` read `stackState`, `hostCollapsed`, and the tween timers. `loadStack`, `paintChrome`, `setHostCollapsed`, and resize write `openNoteHeight`, `savedHostHeight`, `chromeSignature`, and `initialSizeSynced`, and call the helpers back.
+2. Section block render. `renderSectionBlocks` and the save/edit helpers are called from `buildSection`, undo/redo, and section preview.
+3. Chrome drag and resize. `startWindowDrag` reads `sectionLift`, which `buildSection` writes.
 
-1. Window height tween (`targetWindowHeight` through `tweenWindowHeight`), together with the lets it writes.
-2. Section block render (`renderSectionBlocks` and the save/edit helpers it calls).
-3. Chrome drag and resize (`wireChrome`, `startWindowDrag`, `startResize`).
-
-`bindStack` and the exports `main.ts` already uses stay in `src/stack.ts`.
+TypeScript cannot assign an imported `let`. Moving the lets with the functions still leaves those callers writing them, which is a circular module. They stay in `src/stack.ts`. `bindStack` and the exports `main.ts` uses stay there too.
 
 ### 6. `main.ts`, one piece at a time
 
@@ -102,8 +100,8 @@ The boot at the bottom of `main.ts` (composer vs pinned vs media preview) stays 
 
 `geom.rs` is already the pattern: private module, re-export what `commands.rs` calls.
 
-1. Confirm `open_media_preview` / `close_media_preview` do not call pin or drag helpers. If they don't, move them to `window_ctl/preview.rs`. If they do, skip them and do not force the split.
-2. Pin-window open, place, and organize.
+1. Preview stays. `open_media_preview` calls `schedule_resign`, which hides the composer or the pins.
+2. Pin-window open, place, and organize. Done: `window_ctl/pin.rs` holds `toggle_pinned`, `open_pinned`, `close_pinned`, `organize_pinned`, `place_for_pin`, and the helpers they call. `window_ctl::` still re-exports those names. `pin_label`, `place_at`, and `save_pin_frame` stay in `mod.rs` because drag and settle write them. `place_in_free_space` is private to the pin module; nothing outside called it.
 3. Composer present / hide / flush.
 4. Drag, snap, and stack attach last. Those functions share the static maps (`dragging`, `stack_aims`, `following`). Move the maps with the functions into one `drag.rs`. Do not invent a controller type.
 
@@ -153,9 +151,9 @@ Do not add `vercel-react-best-practices`. This app is vanilla TypeScript.
 - [x] 2. `src/media/`
 - [x] 3. `src/look/`
 - [x] 4. Stylesheet split, same cascade
-- [ ] 5. `stack.ts` extracts
+- [x] 5. `stack.ts` — left in place (not a closed extract)
 - [ ] 6. `main.ts` extracts
-- [ ] 7. `window_ctl` leaves
+- [ ] 7. `window_ctl` leaves (preview stays; pin open, place, and organize moved)
 - [x] 8. `Db` impl groups
 - [x] 9. Sync parsers
 - [x] 10. Media clipboard

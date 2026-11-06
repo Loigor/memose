@@ -1,11 +1,14 @@
 mod geom;
+mod pin;
+
+pub use pin::{close_pinned, open_pinned, organize_pinned, place_for_pin, toggle_pinned};
 
 pub use geom::{
-    clamp_position, grid_slot, resize_frame, slide_card_into_view, snap_memo_edges,
+    clamp_position, resize_frame, slide_card_into_view, snap_memo_edges,
     snap_screen_edges, tray_card_origin, ResizeEdge,
 };
 
-use geom::{closer_snap, closer_snap_x, first_open_tile, nudge_origin, organize_grid, visual_card};
+use geom::{closer_snap, closer_snap_x};
 
 use std::collections::{HashMap, HashSet};
 use std::sync::atomic::Ordering;
@@ -88,7 +91,7 @@ pub fn hide_memos(app: &AppHandle) {
     app.state::<AppState>()
         .pinned_mode
         .store(false, Ordering::SeqCst);
-    hide_pinned(app);
+    pin::hide_pinned(app);
     hide_pin_tabs(app);
     let shown = app.state::<AppState>().shown.load(Ordering::SeqCst);
     let visible = app
@@ -161,7 +164,7 @@ pub fn show_pin_tabs(app: &AppHandle) {
 
 pub fn apply_pin_tab(app: &AppHandle) {
     if app.state::<AppState>().pinned_mode.load(Ordering::SeqCst) {
-        open_pinned_windows(app);
+        pin::open_pinned_windows(app);
     }
 }
 
@@ -265,7 +268,7 @@ fn hide_on_resign(app: &AppHandle) {
         hide_composer(app);
         return;
     }
-    hide_pinned(app);
+    pin::hide_pinned(app);
     let shown = app.state::<AppState>().shown.load(Ordering::SeqCst);
     let visible = app
         .get_webview_window(WINDOW)
@@ -695,24 +698,6 @@ fn snap_enabled(app: &AppHandle) -> bool {
         == Some("1")
 }
 
-pub fn toggle_pinned(app: &AppHandle) {
-    let state = app.state::<AppState>();
-    if state.pinned_mode.load(Ordering::SeqCst) {
-        state.pinned_mode.store(false, Ordering::SeqCst);
-        hide_pinned(app);
-        hide_pin_tabs(app);
-        if !composer_open(app) {
-            #[cfg(target_os = "macos")]
-            let _ = app.set_activation_policy(tauri::ActivationPolicy::Accessory);
-        }
-        return;
-    }
-    state.pinned_mode.store(true, Ordering::SeqCst);
-    open_pinned_windows(app);
-    dismiss_composer(app);
-    request_sync(app);
-}
-
 #[derive(Clone, Copy)]
 pub struct TrayAnchor {
     pub x: i32,
@@ -736,7 +721,7 @@ impl TrayAnchor {
 
 pub fn show_from_tray(app: &AppHandle, anchor: Option<TrayAnchor>) {
     let anchor = anchor.or_else(|| tray_anchor(app));
-    open_pinned_windows(app);
+    pin::open_pinned_windows(app);
     app.state::<AppState>().shown.store(true, Ordering::SeqCst);
     present_at(app, true, anchor);
     request_sync(app);
@@ -745,191 +730,6 @@ pub fn show_from_tray(app: &AppHandle, anchor: Option<TrayAnchor>) {
 fn tray_anchor(app: &AppHandle) -> Option<TrayAnchor> {
     let tray = app.tray_by_id("main")?;
     tray.rect().ok().flatten().map(TrayAnchor::from_rect)
-}
-
-fn active_pin_note_ids(app: &AppHandle) -> HashSet<String> {
-    match app.state::<AppState>().db.pin_tabs() {
-        Ok(state) => state.active_note_ids(),
-        Err(err) => {
-            eprintln!("memose: pin tabs failed: {err}");
-            HashSet::new()
-        }
-    }
-}
-
-fn open_pinned_windows(app: &AppHandle) {
-    let notes = match app.state::<AppState>().db.list_pinned() {
-        Ok(notes) => notes,
-        Err(err) => {
-            eprintln!("memose: pinned notes failed: {err}");
-            return;
-        }
-    };
-    let active = active_pin_note_ids(app);
-    let mut keep = HashSet::new();
-    #[cfg(target_os = "macos")]
-    let _ = app.set_activation_policy(tauri::ActivationPolicy::Regular);
-    for note in notes {
-        if note.stack_host.is_some() || !active.contains(&note.id) {
-            continue;
-        }
-        keep.insert(note.id.clone());
-        open_pin(app, &note.id);
-    }
-    for (label, window) in app.webview_windows() {
-        let Some(id) = label.strip_prefix("pin-") else {
-            continue;
-        };
-        if keep.contains(id) {
-            continue;
-        }
-        if window.is_visible().unwrap_or(false) {
-            save_pin_frame(app, id, &window);
-        }
-        let _ = window.set_always_on_top(false);
-        let _ = window.hide();
-    }
-    if app.state::<AppState>().pinned_mode.load(Ordering::SeqCst) {
-        show_pin_tabs(app);
-    }
-}
-
-pub fn organize_pinned(app: &AppHandle) {
-    let notes = match app.state::<AppState>().db.list_pinned() {
-        Ok(notes) => notes,
-        Err(err) => {
-            eprintln!("memose: pinned notes failed: {err}");
-            return;
-        }
-    };
-    if notes.is_empty() {
-        return;
-    }
-    let Ok(cursor) = app.cursor_position() else {
-        return;
-    };
-    let Ok(monitors) = app.available_monitors() else {
-        return;
-    };
-    let Some(monitor) = monitors
-        .iter()
-        .find(|monitor| contains(monitor, cursor))
-        .cloned()
-        .or_else(|| app.primary_monitor().ok().flatten())
-    else {
-        return;
-    };
-    let area = monitor.work_area();
-    let scale = monitor.scale_factor();
-    let layout = organize_grid(
-        area.position.x,
-        area.position.y,
-        area.size.width as i32,
-        area.size.height as i32,
-        (CARD_WIDTH * scale).round() as i32,
-        (CARD_HEIGHT * scale).round() as i32,
-        (CARD_PAD_X * scale).round() as i32,
-        (CARD_PAD_TOP * scale).round() as i32,
-        (CARD_PAD_BOTTOM * scale).round() as i32,
-        (ORGANIZE_GAP * scale).round() as i32,
-    );
-    let win_w = (CARD_WIDTH * scale).round() as i32;
-    let win_h = (CARD_HEIGHT * scale).round() as i32;
-    let active = active_pin_note_ids(app);
-    let notes: Vec<_> = notes
-        .into_iter()
-        .filter(|note| note.stack_host.is_none() && active.contains(&note.id))
-        .collect();
-    for (index, note) in notes.iter().enumerate() {
-        let (x, y) = grid_slot(
-            index,
-            layout.columns,
-            layout.origin_x,
-            layout.origin_y,
-            layout.step_x,
-            layout.step_y,
-            0,
-        );
-        let label = pin_label(&note.id);
-        suppress_settle(&label, Duration::from_millis(600));
-        if let Ok(mut parked) = parks().lock() {
-            parked.remove(&label);
-        }
-        let _ = app
-            .state::<AppState>()
-            .db
-            .save_frame(&note.id, x, y, win_w, win_h);
-        open_pin(app, &note.id);
-    }
-}
-
-pub fn place_for_pin(app: &AppHandle, id: &str) {
-    if snap_enabled(app) {
-        if let Some(window) = app.get_webview_window(WINDOW) {
-            if window.is_visible().unwrap_or(false) {
-                if let (Ok(position), Ok(size)) = (window.outer_position(), window.outer_size()) {
-                    let _ = app.state::<AppState>().db.save_frame(
-                        id,
-                        position.x,
-                        position.y,
-                        size.width as i32,
-                        size.height as i32,
-                    );
-                    return;
-                }
-            }
-        }
-    }
-    place_in_free_space(app, id);
-}
-
-pub fn place_in_free_space(app: &AppHandle, id: &str) {
-    let Some(monitor) = monitor_for_placement(app) else {
-        return;
-    };
-    let area = monitor.work_area();
-    let scale = monitor.scale_factor();
-    let pad_x = (CARD_PAD_X * scale).round() as i32;
-    let pad_top = (CARD_PAD_TOP * scale).round() as i32;
-    let pad_bottom = (CARD_PAD_BOTTOM * scale).round() as i32;
-    let gap = (ORGANIZE_GAP * scale).round() as i32;
-    let win_w = (CARD_WIDTH * scale).round() as i32;
-    let win_h = (CARD_HEIGHT * scale).round() as i32;
-    let layout = organize_grid(
-        area.position.x,
-        area.position.y,
-        area.size.width as i32,
-        area.size.height as i32,
-        win_w,
-        win_h,
-        pad_x,
-        pad_top,
-        pad_bottom,
-        gap,
-    );
-    let occupied: Vec<(i32, i32, i32, i32)> = occupied_rects(app, id)
-        .into_iter()
-        .map(|(x, y, w, h)| visual_card(x, y, w, h, pad_x, pad_top, pad_bottom))
-        .collect();
-    let card = visual_card(0, 0, win_w, win_h, pad_x, pad_top, pad_bottom);
-    let (x, y) = first_open_tile(
-        &occupied,
-        layout.origin_x,
-        layout.origin_y,
-        layout.step_x,
-        layout.step_y,
-        pad_x,
-        pad_top,
-        card.2,
-        card.3,
-        layout.columns,
-        layout.rows,
-        gap,
-    );
-    let _ = app
-        .state::<AppState>()
-        .db
-        .save_frame(id, x, y, win_w, win_h);
 }
 
 pub fn dismiss_composer(app: &AppHandle) {
@@ -956,47 +756,6 @@ fn monitor_for_placement(app: &AppHandle) -> Option<tauri::Monitor> {
         .or_else(|| app.primary_monitor().ok().flatten())
 }
 
-fn occupied_rects(app: &AppHandle, except: &str) -> Vec<(i32, i32, i32, i32)> {
-    let mut rects = Vec::new();
-    if let Ok(notes) = app.state::<AppState>().db.list_pinned() {
-        for note in notes {
-            if note.id == except || note.stack_host.is_some() {
-                continue;
-            }
-            if let (Some(x), Some(y), Some(w), Some(h)) =
-                (note.win_x, note.win_y, note.win_w, note.win_h)
-            {
-                rects.push((x, y, w, h));
-            }
-        }
-    }
-    if let Some(window) = app.get_webview_window(WINDOW) {
-        if window.is_visible().unwrap_or(false) {
-            if let (Ok(position), Ok(size)) = (window.outer_position(), window.outer_size()) {
-                rects.push((
-                    position.x,
-                    position.y,
-                    size.width as i32,
-                    size.height as i32,
-                ));
-            }
-        }
-    }
-    rects
-}
-
-pub fn open_pinned(app: &AppHandle, id: &str) {
-    #[cfg(target_os = "macos")]
-    let _ = app.set_activation_policy(tauri::ActivationPolicy::Regular);
-    open_pin(app, id);
-}
-
-pub fn close_pinned(app: &AppHandle, id: &str) {
-    if let Some(window) = app.get_webview_window(&pin_label(id)) {
-        let _ = window.destroy();
-    }
-}
-
 #[cfg(target_os = "macos")]
 fn pin_windows_visible(app: &AppHandle) -> bool {
     app.webview_windows()
@@ -1012,138 +771,6 @@ fn composer_open(app: &AppHandle) -> bool {
             .unwrap_or(false)
 }
 
-fn hide_pinned(app: &AppHandle) {
-    for (label, window) in app.webview_windows() {
-        let Some(id) = label.strip_prefix("pin-") else {
-            continue;
-        };
-        if window.is_visible().unwrap_or(false) {
-            save_pin_frame(app, id, &window);
-        }
-        let _ = window.set_always_on_top(false);
-        let _ = window.hide();
-    }
-}
-
-fn open_pin(app: &AppHandle, id: &str) {
-    // Building a WebView2 window pumps the Windows message loop. Doing that
-    // inside the click that requested the pin re-enters the webview and
-    // crashes the process. Post the creation onto the UI thread instead.
-    #[cfg(target_os = "windows")]
-    {
-        let app = app.clone();
-        let id = id.to_string();
-        std::thread::spawn(move || {
-            let handle = app.clone();
-            let _ = app.run_on_main_thread(move || open_pin_window(&handle, &id));
-        });
-    }
-    #[cfg(not(target_os = "windows"))]
-    open_pin_window(app, id);
-}
-
-fn open_pin_window(app: &AppHandle, id: &str) {
-    let label = pin_label(id);
-    if let Some(window) = app.get_webview_window(&label) {
-        if !drag_active(&label) {
-            place_pin(app, id, &window);
-        }
-        let _ = window.show();
-        let _ = window.set_always_on_top(true);
-        let _ = window.emit_to(&label, "show-pin", id);
-        raise_pin_tabs(app);
-        return;
-    }
-    let id_js = serde_json::to_string(id).unwrap_or_else(|_| "\"\"".into());
-    let theme_js = match app
-        .state::<AppState>()
-        .db
-        .get(id)
-        .ok()
-        .flatten()
-        .and_then(|note| note.theme)
-        .as_deref()
-    {
-        Some("dark") => "\"dark\"",
-        Some("light") => "\"light\"",
-        _ => "null",
-    };
-    let script = format!(
-        "globalThis.__memosePin={id_js};\
-         globalThis.__memoseTheme={theme_js};\
-         if(document.documentElement){{\
-           document.documentElement.dataset.noteId={id_js};\
-           document.documentElement.classList.add('pin-window');\
-         }}"
-    );
-    let page = format!("index.html?pin={id}");
-    let builder =
-        tauri::WebviewWindowBuilder::new(app, &label, tauri::WebviewUrl::App(page.into()))
-            .title("Memose")
-            .inner_size(CARD_WIDTH, CARD_HEIGHT)
-            .position(-10000.0, -10000.0)
-            .decorations(false)
-            .transparent(true)
-            .always_on_top(true)
-            .skip_taskbar(true)
-            .resizable(true)
-            .shadow(false)
-            .visible(false)
-            .initialization_script(&script);
-    #[cfg(target_os = "windows")]
-    // A second DwmEnableBlurBehindWindow call aborts the process. This flag
-    // keeps the window transparent without that call.
-    let builder = builder
-        .no_redirection_bitmap(true)
-        .background_color(tauri::window::Color(0, 0, 0, 0));
-    let window = match builder.build() {
-        Ok(window) => window,
-        Err(err) => {
-            eprintln!("memose: could not open pinned note: {err}");
-            return;
-        }
-    };
-    place_pin(app, id, &window);
-    let _ = window.show();
-    let _ = window.set_always_on_top(true);
-    let _ = window.emit_to(&label, "show-pin", id);
-    raise_pin_tabs(app);
-    let note_id = id.to_string();
-    let handle = app.clone();
-    let accept_moves_at = Instant::now() + Duration::from_millis(250);
-    window.on_window_event(move |event| match event {
-        WindowEvent::Focused(false) => {
-            slide_back(&handle, &pin_label(&note_id));
-            schedule_resign(&handle);
-        }
-        WindowEvent::Moved(_) => {
-            if follow_active(&note_id) || Instant::now() < accept_moves_at {
-                return;
-            }
-            let label = pin_label(&note_id);
-            schedule_settle(&handle, &label, Some(note_id.clone()), false);
-        }
-        WindowEvent::Resized(_) => {
-            if Instant::now() < accept_moves_at {
-                return;
-            }
-            let label = pin_label(&note_id);
-            schedule_settle(&handle, &label, Some(note_id.clone()), true);
-        }
-        WindowEvent::CloseRequested { api, .. } => {
-            api.prevent_close();
-            if let Some(window) = handle.get_webview_window(&pin_label(&note_id)) {
-                if window.is_visible().unwrap_or(false) {
-                    save_pin_frame(&handle, &note_id, &window);
-                }
-                let _ = window.set_always_on_top(false);
-                let _ = window.hide();
-            }
-        }
-        _ => {}
-    });
-}
-
 type FrameRect = (i32, i32, i32, i32);
 type PlaceMap = HashMap<String, FrameRect>;
 
@@ -1151,64 +778,6 @@ fn place_at() -> &'static Mutex<PlaceMap> {
     static PLACE: LazyLock<Mutex<PlaceMap>> = LazyLock::new(|| Mutex::new(HashMap::new()));
     &PLACE
 }
-
-fn place_pin(app: &AppHandle, id: &str, window: &WebviewWindow) {
-    let label = pin_label(id);
-    suppress_settle(&label, Duration::from_millis(500));
-    if let Some((x, y, width, height)) = place_at()
-        .lock()
-        .ok()
-        .and_then(|mut pending| pending.remove(id))
-    {
-        let _ = window.set_size(PhysicalSize::new(width.max(1) as u32, height.max(1) as u32));
-        let _ = window.set_position(PhysicalPosition::new(x, y));
-        let _ = app
-            .state::<AppState>()
-            .db
-            .save_frame(id, x, y, width, height);
-        return;
-    }
-    let Ok(Some(note)) = app.state::<AppState>().db.get(id) else {
-        return;
-    };
-    let (width, height) = match (note.win_w, note.win_h) {
-        (Some(width), Some(height)) => (width.max(1), height.max(1)),
-        _ => match window.outer_size() {
-            Ok(size) => (size.width.max(1) as i32, size.height.max(1) as i32),
-            Err(_) => (CARD_WIDTH as i32, CARD_HEIGHT as i32),
-        },
-    };
-    let _ = window.set_size(PhysicalSize::new(width as u32, height as u32));
-    let Some((x, y)) = note.win_x.zip(note.win_y).or_else(|| {
-        app.cursor_position()
-            .ok()
-            .map(|cursor| (cursor.x.round() as i32, cursor.y.round() as i32))
-    }) else {
-        return;
-    };
-    let taken = pinned_origins(app, id);
-    let (x, y) = nudge_origin(x, y, &taken, PIN_CASCADE);
-    if note.win_x != Some(x) || note.win_y != Some(y) {
-        let _ = app
-            .state::<AppState>()
-            .db
-            .save_frame(id, x, y, width, height);
-    }
-    let _ = window.set_position(PhysicalPosition::new(x, y));
-}
-
-fn pinned_origins(app: &AppHandle, except: &str) -> Vec<(i32, i32)> {
-    app.state::<AppState>()
-        .db
-        .list_pinned()
-        .unwrap_or_default()
-        .into_iter()
-        .filter(|note| note.id != except && note.stack_host.is_none())
-        .filter_map(|note| note.win_x.zip(note.win_y))
-        .collect()
-}
-
-const PIN_CASCADE: i32 = 36;
 
 fn height_sizing() -> &'static Mutex<HashMap<String, Instant>> {
     static SIZING: LazyLock<Mutex<HashMap<String, Instant>>> =
@@ -2164,7 +1733,7 @@ fn attach_if_covering(
     let extra = card_logical_height(window);
     resize_stack_window_with_open(app, &root_id, held_open);
     let _ = app.emit("stack-changed", extra);
-    close_pinned(app, guest_id);
+    pin::close_pinned(app, guest_id);
     if let Some(host_window) = app.get_webview_window(&pin_label(&root_id)) {
         let _ = host_window.set_focus();
     }
@@ -2296,7 +1865,7 @@ pub fn detach_guest(
             active.insert(guest_id.to_string());
         }
     }
-    open_pinned(app, guest_id);
+    pin::open_pinned(app, guest_id);
     if app.get_webview_window(&pin_label(&root)).is_some() {
         resize_stack_window(app, &root);
         let _ = app.emit("stack-changed", 0_i32);
@@ -2424,7 +1993,7 @@ fn follow_detached(
             if !pulled {
                 clear_aim(&app2, &id);
                 let _ = db.set_stack_host(&id, Some(&parent));
-                close_pinned(&app2, &id);
+                pin::close_pinned(&app2, &id);
                 let root = db.stack_root_id(&parent).unwrap_or(parent);
                 if app2.get_webview_window(&pin_label(&root)).is_some() {
                     resize_stack_window(&app2, &root);
@@ -2575,7 +2144,7 @@ pub fn prepare_remove(app: &AppHandle, id: &str) {
                 pending.insert(child.id.clone(), frame);
             }
         }
-        open_pin(app, &child.id);
+        pin::open_pin(app, &child.id);
     }
 }
 
