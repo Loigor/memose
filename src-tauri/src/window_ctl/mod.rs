@@ -100,7 +100,6 @@ pub fn show_pin_tabs(app: &AppHandle) {
             let handle = app.clone();
             let _ = app.run_on_main_thread(move || show_pin_tabs_window(&handle));
         });
-        return;
     }
     #[cfg(not(target_os = "windows"))]
     show_pin_tabs_window(app);
