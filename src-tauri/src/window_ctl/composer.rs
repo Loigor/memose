@@ -3,11 +3,12 @@ use std::time::{Duration, Instant};
 
 use tauri::{Emitter, LogicalSize, Manager, PhysicalPosition, WebviewWindow, WindowEvent};
 
+use super::drag::{schedule_settle, slide_back};
 use super::pin::{hide_pinned, open_pinned_windows};
 use super::{
-    clamp_position, contains, hide_pin_tabs, schedule_resign, schedule_settle, slide_back,
-    snap_enabled, snap_screen_edges, tray_card_origin, CARD_HEIGHT, CARD_PAD_BOTTOM, CARD_PAD_TOP,
-    CARD_PAD_X, CARD_WIDTH, EDGE_CATCH, FOCUS_GRACE, WINDOW,
+    clamp_position, contains, hide_pin_tabs, schedule_resign, snap_enabled, snap_screen_edges,
+    tray_card_origin, CARD_HEIGHT, CARD_PAD_BOTTOM, CARD_PAD_TOP, CARD_PAD_X, CARD_WIDTH,
+    EDGE_CATCH, FOCUS_GRACE, WINDOW,
 };
 use crate::notes::request_sync;
 use crate::state::AppState;
