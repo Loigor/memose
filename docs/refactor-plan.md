@@ -63,7 +63,7 @@ Leave `shortcuts.ts`, `types.ts`, `platform.ts`, `dom.ts`, and `time.ts` at `src
 
 `src/styles.css` mixes stack, header, audience, and editor rules in one cascade. Pulling every `.stack-note` rule into one file would change which rule wins. Split only into contiguous slices, imported from `src/styles.css` in today's order. Do not retune a rule. Check: `npm run test:ts` (the selection check reads `src/styles.css` and the slices it imports, in that order) and a load of `index.html` in Vite.
 
-Slices so far, imported in this order: `src/styles/shell.css` (tokens, page chrome, collapsed card, resize, stack, through `.lifting`), `src/styles/header.css` (the `header` rule through the hue controls), `src/styles/controls.css` (`.icon-button` through the block textarea sizes), `src/styles/field.css` (`.media-row` through the base `.md-hl` rule), then `src/styles/highlight.css` (`html[data-mdhl]` through the coder wrap rules). `styles.css` continues at `.media`.
+Slices so far, imported in this order: `src/styles/shell.css` (tokens, page chrome, collapsed card, resize, stack, through `.lifting`), `src/styles/header.css` (the `header` rule through the hue controls), `src/styles/controls.css` (`.icon-button` through the block textarea sizes), `src/styles/field.css` (`.media-row` through the base `.md-hl` rule), `src/styles/highlight.css` (`html[data-mdhl]` through the coder wrap rules), then `src/styles/media.css` (`.media` through the media context menu). `styles.css` continues at `textarea::spelling-error`.
 
 ### 5. `stack.ts`, one piece at a time
 
