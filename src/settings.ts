@@ -1,7 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 
-import { paperAt } from "./memo-chrome";
+import { paperAt } from "./look/memo-chrome";
 import type { MemoSpace } from "./types";
 import {
   eventToBind,
@@ -14,7 +14,7 @@ import {
   splitBinds,
   type ShortcutBinds,
 } from "./shortcuts";
-import { isOfflinePrivate, visibilityOptions } from "./visibility";
+import { isOfflinePrivate, visibilityOptions } from "./look/visibility";
 
 type Settings = {
   baseUrl: string;

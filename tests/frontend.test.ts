@@ -4,11 +4,11 @@ import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 
-import { moveBlockMedia } from "../src/editor-blocks.ts";
-import { highlightMarkdown } from "../src/md-highlight.ts";
-import { uniqueFiles } from "../src/files.ts";
-import { BlockHistory, cloneBlocks } from "../src/history.ts";
-import { defaultLook, lookFromNote, namedTheme } from "../src/look.ts";
+import { moveBlockMedia } from "../src/editor/editor-blocks.ts";
+import { highlightMarkdown } from "../src/editor/md-highlight.ts";
+import { uniqueFiles } from "../src/media/files.ts";
+import { BlockHistory, cloneBlocks } from "../src/editor/history.ts";
+import { defaultLook, lookFromNote, namedTheme } from "../src/look/look.ts";
 import {
   applyCode,
   applyTask,
@@ -31,8 +31,8 @@ import {
   taskListOnEnter,
   toggleTask,
   wrapText,
-} from "../src/markdown-edit.ts";
-import { baseColors, huePopHtml, palette, paperAt, stackHeaderHtml, tabFill, themeGlyph } from "../src/memo-chrome.ts";
+} from "../src/editor/markdown-edit.ts";
+import { baseColors, huePopHtml, palette, paperAt, stackHeaderHtml, tabFill, themeGlyph } from "../src/look/memo-chrome.ts";
 import { pointIn, requireEl } from "../src/dom.ts";
 import {
   defaultBinds,
@@ -46,9 +46,22 @@ import {
   modifierDown,
   mouseChordToBind,
 } from "../src/shortcuts.ts";
-import { syncIcon } from "../src/sync-status.ts";
+import { syncIcon } from "../src/look/sync-status.ts";
 import { exactStamp, relativeTime } from "../src/time.ts";
-import { visibilityShort } from "../src/visibility.ts";
+import { visibilityShort } from "../src/look/visibility.ts";
+
+function walkTs(dir: string): string[] {
+  const found: string[] = [];
+  for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+    const full = path.join(dir, entry.name);
+    if (entry.isDirectory()) {
+      found.push(...walkTs(full));
+    } else if (entry.name.endsWith(".ts")) {
+      found.push(full);
+    }
+  }
+  return found;
+}
 
 test("wrapText wraps selection and places cursor inside empty markers", () => {
   const wrapped = wrapText("hello world", 0, 5, "**", "**");
@@ -364,9 +377,21 @@ test("syncIcon and platform helpers cover common states", () => {
   assert.equal(pointIn(rect, 9, 10), false);
 });
 
+function readCascade(file: string): string {
+  const css = fs.readFileSync(file, "utf8");
+  const dir = path.dirname(file);
+  let imported = "";
+  const rest = css.replace(/@import\s+"([^"]+)";\n?/g, (_full, spec: string) => {
+    imported += fs.readFileSync(path.resolve(dir, spec), "utf8");
+    imported += "\n";
+    return "";
+  });
+  return imported + rest;
+}
+
 test("overlay editor keeps selected textarea glyphs invisible", () => {
   const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-  const css = fs.readFileSync(path.join(root, "src/styles.css"), "utf8");
+  const css = readCascade(path.join(root, "src/styles.css"));
   assert.match(css, /textarea::selection/);
   assert.doesNotMatch(css, /textarea::selection,[^}]*::-moz-selection/);
   assert.doesNotMatch(css, /\.md-field\.is-selecting/);
@@ -466,13 +491,10 @@ test("release versions and Tauri IPC command contracts stay in sync without dang
   const handlerBlock = libRs.match(/generate_handler!\[([\s\S]*?)\]/)?.[1] ?? "";
   const registered = [...handlerBlock.matchAll(/commands::([a-z0-9_]+)/g)].map((m) => m[1]).sort();
 
-  const tsFiles = fs
-    .readdirSync(path.join(root, "src"))
-    .filter((name) => name.endsWith(".ts"))
-    .map((name) => path.join("src", name));
+  const tsFiles = walkTs(path.join(root, "src"));
   const invokedSet = new Set<string>();
-  for (const rel of tsFiles) {
-    const src = fs.readFileSync(path.join(root, rel), "utf8");
+  for (const file of tsFiles) {
+    const src = fs.readFileSync(file, "utf8");
     for (const match of src.matchAll(/\binvoke(?:<[^>]*>)?\(\s*"([a-z0-9_]+)"/g)) {
       invokedSet.add(match[1]);
     }

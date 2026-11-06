@@ -33,7 +33,7 @@ Vite is configured as a multi-page build (`vite.config.ts`) with two entries:
 | `index.html` | `src/main.ts` | Memo card: editor, recent list, pin window, media lightbox |
 | `settings.html` | `src/settings.ts` | Settings: visibility, shortcuts, useMemos sync |
 
-Markup for the note card, toolbar, audience popover, conflict banner, recent list, stack container, and resize handles lives in `index.html`. Settings tabs live in `settings.html`. Shared look is in `src/styles.css` / `src/settings.css`.
+Markup for the note card, toolbar, audience popover, conflict banner, recent list, stack container, and resize handles lives in `index.html`. Settings tabs live in `settings.html`. Shared look is in `src/styles.css`. It imports `shell.css`, `header.css`, `controls.css`, `field.css`, `highlight.css`, `media.css`, and `preview.css` from `src/styles/` in that order, then the recent list. Settings use `src/settings.css`.
 
 ### TypeScript modules (`src/`)
 
@@ -44,12 +44,10 @@ These are helpers, not a component framework:
 | `main.ts` | App controller: editor state, drafts, pinning, recent list, IPC, event listeners |
 | `settings.ts` | Settings window controller |
 | `stack.ts` | Stacked memos drawn under a host window |
-| `editor-blocks.ts`, `markdown-edit.ts`, `textarea.ts`, `history.ts` | Block editor, markdown transforms, undo |
-| `media-dnd.ts`, `media-elements.ts`, `files.ts` | Paste/drop, resize, lightbox, attachments |
-| `look.ts`, `memo-chrome.ts` | Per-note hue, theme, paper tint |
-| `audience-ui.ts`, `visibility.ts` | Private / Protected / Public / Space |
+| `editor/` (`markdown-edit.ts`, `editor-blocks.ts`, `editor-field.ts`, `textarea.ts`, `history.ts`, `md-highlight.ts`) | Block editor, markdown transforms, undo |
+| `media/` (`media-dnd.ts`, `media-elements.ts`, `files.ts`) | Paste/drop, resize, lightbox, attachments |
+| `look/` (`look.ts`, `memo-chrome.ts`, `hue-pop.ts`, `audience-ui.ts`, `visibility.ts`, `sync-status.ts`) | Hue, theme, audience, sync icon |
 | `shortcuts.ts` | Shortcut matching (shared with settings) |
-| `sync-status.ts` | Sync-state icons |
 | `types.ts` | `Note` / `MemoSpace` shapes matching Rust `#[serde(rename_all = "camelCase")]` |
 
 `main.ts` boots in three modes from the **same** `index.html`:
@@ -101,7 +99,7 @@ Engineering rules for this boundary (no blocking the async runtime, path validat
 | `tray.rs` | Tray icon + menu |
 | `shortcuts.rs` | Global hotkeys persisted in SQLite `meta` |
 | `mouse_hook.rs` | Mouse4/Mouse5 (macOS/Windows; no-op on Linux) |
-| `media.rs` | Save/paste/reveal attachments, sniff types, path safety |
+| `media.rs` | Save/reveal attachments, sniff types, path safety. Paste and TIFF conversion live in `media/clipboard.rs` |
 | `auth.rs` | One-time copy of an old keychain token into SQLite |
 | `state.rs` | Process-wide `AppState` |
 | `error.rs` | `AppError` for IPC |
@@ -138,7 +136,7 @@ Edits of an already-synced note set `base_content` (last known server body) and 
 
 ## Sync (useMemos, offline-first)
 
-All HTTP lives in `src-tauri/src/notes/sync.rs`. A background Tokio task owns an `mpsc` of `Job`s:
+HTTP stays in `src-tauri/src/notes/sync.rs`. JSON parsers and request bodies live in `notes/sync/parse.rs`. A background Tokio task owns an `mpsc` of `Job`s:
 
 - `Cycle` — debounce 400ms, coalesce extras, then `run_cycle`
 - `Materialize(id)` — fetch a `remote` stub's full body + attachments

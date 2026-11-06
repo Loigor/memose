@@ -1,0 +1,560 @@
+header {
+  position: relative;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 4px;
+  padding: 10px 8px 6px 12px;
+  font-family: system-ui, sans-serif;
+  font-size: 13px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--muted);
+  cursor: grab;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  flex: 1;
+}
+
+.header-actions,
+.editor-tools {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.editor-tools-anchor {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+}
+
+header:not(.compact-tools) .editor-menu-toggle {
+  display: none;
+}
+
+header.compact-tools .editor-menu-toggle {
+  display: inline-flex;
+}
+
+header.compact-tools .editor-tools {
+  display: none;
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  z-index: 4;
+  gap: 4px;
+  padding: 4px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--paper);
+  box-shadow: 0 8px 16px var(--shadow);
+}
+
+header.compact-tools .editor-tools.open {
+  display: flex;
+}
+
+.brand {
+  min-width: 0;
+  flex: 1;
+}
+
+.brand-name {
+  transition: color 120ms ease, font-weight 120ms ease;
+}
+
+#card.is-editing > header .brand-name,
+.stack-note.is-editing > header .brand-name {
+  color: var(--ink);
+  font-weight: 600;
+}
+
+.note-meta {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+  color: var(--muted);
+  font-size: 10px;
+  letter-spacing: 0;
+  line-height: 1.2;
+  text-transform: none;
+  white-space: nowrap;
+}
+
+html.collapsed:not(.hover-open) #card > header .note-meta,
+#frame.has-stack #card.is-bar > header .note-meta,
+.stack-note.is-bar > header .note-meta {
+  margin-left: auto;
+}
+
+header.compact-meta .note-meta {
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 1px;
+}
+
+header.compact-meta .edited-sep,
+header.compact-meta #edited-sep {
+  display: none;
+}
+
+.note-audience-row {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+}
+
+.audience-anchor {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  min-width: 0;
+}
+
+#visibility-label,
+.visibility-label {
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  padding: 0;
+  color: inherit;
+  font: inherit;
+  font-size: 10px;
+  line-height: 1.2;
+  letter-spacing: 0;
+  text-transform: none;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+#visibility-label:hover,
+#visibility-label[aria-expanded="true"],
+.visibility-label:hover,
+.visibility-label[aria-expanded="true"] {
+  background: transparent;
+  text-decoration: underline;
+}
+
+#visibility-label[hidden],
+.visibility-label[hidden],
+#note-sync[hidden],
+.note-sync[hidden],
+#edited-sep[hidden],
+.edited-sep[hidden],
+#edited-at[hidden],
+.edited-at[hidden],
+#audience-pop[hidden],
+.audience-pop[hidden],
+#space-block[hidden],
+.space-block[hidden],
+#delete-note[hidden],
+.delete-note[hidden],
+#delete-confirm[hidden],
+.delete-confirm[hidden] {
+  display: none;
+}
+
+#note-sync,
+.note-sync {
+  display: inline-flex;
+  align-items: center;
+  width: 12px;
+  height: 12px;
+  color: var(--muted);
+  flex: none;
+}
+
+#edited-at,
+.edited-at {
+  min-width: 0;
+  max-width: 108px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+#audience-pop,
+.audience-pop {
+  position: absolute;
+  top: calc(100% + 8px);
+  left: 0;
+  z-index: 3;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  width: 228px;
+  max-height: 360px;
+  overflow-x: hidden;
+  overflow-y: auto;
+  padding: 4px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--paper);
+  box-shadow: 0 10px 22px var(--shadow);
+  font-size: 13px;
+  letter-spacing: 0;
+  line-height: 1.3;
+  text-transform: none;
+}
+
+#visibility-choices,
+.visibility-choices,
+#space-choices,
+.space-choices {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+#space-block,
+.space-block {
+  display: flex;
+  flex: none;
+  flex-direction: column;
+  margin-top: 2px;
+  padding-top: 2px;
+  border-top: 1px solid var(--line);
+}
+
+#audience-pop .audience-choice,
+.audience-pop .audience-choice {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  border-radius: 8px;
+  background: transparent;
+  padding: 4px 8px;
+  text-align: left;
+}
+
+#audience-pop .audience-choice:hover,
+.audience-pop .audience-choice:hover {
+  background: var(--button);
+}
+
+#audience-pop .audience-choice[aria-pressed="true"],
+.audience-pop .audience-choice[aria-pressed="true"] {
+  background: var(--button);
+}
+
+.audience-choice-copy {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+  flex: 1;
+}
+
+.audience-choice-title {
+  overflow: hidden;
+  color: var(--ink);
+  font-size: 13px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.audience-choice-hint {
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.audience-check {
+  display: flex;
+  flex: none;
+  width: 12px;
+  color: transparent;
+}
+
+#audience-pop .audience-choice[aria-pressed="true"] .audience-check,
+.audience-pop .audience-choice[aria-pressed="true"] .audience-check {
+  color: var(--ink);
+}
+
+.audience-foot {
+  flex: none;
+  margin-top: 4px;
+  padding-top: 4px;
+  border-top: 1px solid var(--line);
+}
+
+#delete-note,
+.delete-note {
+  width: 100%;
+  border-radius: 8px;
+  background: transparent;
+  padding: 6px 8px;
+  color: var(--muted);
+  font-size: 12px;
+  text-align: left;
+}
+
+#delete-note:hover,
+.delete-note:hover {
+  background: var(--button);
+  color: var(--ink);
+}
+
+#delete-confirm,
+.delete-confirm {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 4px 8px;
+}
+
+#delete-confirm > span,
+.delete-confirm > span {
+  color: var(--ink);
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.audience-confirm-actions {
+  display: flex;
+  gap: 4px;
+}
+
+#delete-confirm button,
+.delete-confirm button {
+  width: auto;
+  border-radius: 999px;
+  background: transparent;
+  padding: 3px 8px;
+  font-size: 11px;
+  text-align: center;
+}
+
+#delete-confirm button:hover,
+.delete-confirm button:hover {
+  background: var(--button);
+}
+
+#delete-confirm #delete-yes,
+.delete-confirm .delete-yes {
+  background: var(--ink);
+  color: var(--paper);
+}
+
+#delete-confirm #delete-yes:hover,
+.delete-confirm .delete-yes:hover {
+  background: var(--ink);
+  opacity: 0.86;
+}
+
+.pop-label {
+  margin: 3px 8px 1px;
+  color: var(--muted);
+  font-size: 10px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.theme-anchor,
+.format-anchor {
+  position: relative;
+}
+
+.format-anchor {
+  display: none;
+}
+
+#card[data-coder] .format-anchor,
+.stack-note[data-coder] .format-anchor {
+  display: inline-flex;
+  align-items: center;
+}
+
+.format-pop {
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  z-index: 3;
+  display: flex;
+  flex-direction: column;
+  min-width: 148px;
+  padding: 4px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--paper);
+  box-shadow: 0 10px 22px var(--shadow);
+  letter-spacing: 0;
+  text-transform: none;
+}
+
+.format-pop[hidden] {
+  display: none;
+}
+
+.format-pop button {
+  width: 100%;
+  padding: 6px 10px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--ink);
+  font: inherit;
+  font-size: 12px;
+  text-align: left;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.format-pop button:hover,
+.format-pop button[aria-pressed="true"] {
+  background: var(--button-hover);
+}
+
+.md-toolbar {
+  display: flex;
+  flex: none;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+  margin: 0 0 8px;
+  padding: 4px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--ink) 6%, var(--paper));
+}
+
+.md-toolbar[hidden] {
+  display: none;
+}
+
+.stack-note .md-toolbar {
+  margin: 0 18px 8px;
+}
+
+.md-toolbar button {
+  min-width: 28px;
+  height: 26px;
+  padding: 4px 8px;
+  font-size: 12px;
+  line-height: 1.2;
+  text-align: center;
+  white-space: nowrap;
+}
+
+.md-toolbar button[data-markdown="bold"] {
+  font-weight: 700;
+}
+
+.md-toolbar button[data-markdown="italic"] {
+  font-family: Palatino, Georgia, serif;
+  font-style: italic;
+  font-weight: 600;
+}
+
+#color-pop,
+.color-pop {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  z-index: 3;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: max-content;
+  padding: 8px;
+  border-radius: 12px;
+  background: var(--paper);
+  box-shadow: 0 8px 16px var(--shadow);
+}
+
+#color-pop[hidden],
+.color-pop[hidden] {
+  display: none;
+}
+
+.hue-track {
+  position: relative;
+  z-index: 0;
+  height: 14px;
+  overflow: hidden;
+  display: flex;
+  align-items: center;
+}
+
+#hue-slider,
+.hue-slider {
+  -webkit-appearance: none;
+  appearance: none;
+  position: relative;
+  z-index: 0;
+  display: block;
+  width: 100%;
+  height: 14px;
+  margin: 0;
+  border-radius: 999px;
+  background: linear-gradient(90deg, #f00 0%, #ff0 17%, #0f0 33%, #0ff 50%, #00f 67%, #f0f 83%, #f00 100%);
+}
+
+#hue-slider::-webkit-slider-thumb,
+.hue-slider::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 14px;
+  height: 14px;
+  border: 2px solid var(--ink);
+  border-radius: 50%;
+  background: var(--thumb, #fff);
+}
+
+#hue-slider::-moz-range-thumb,
+.hue-slider::-moz-range-thumb {
+  width: 14px;
+  height: 14px;
+  border: 2px solid var(--ink);
+  border-radius: 50%;
+  background: var(--thumb, #fff);
+}
+
+#hue-slots,
+.hue-slots {
+  position: relative;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  background: var(--paper);
+}
+
+.hue-slot,
+#hue-add,
+.hue-add {
+  flex: none;
+  width: 16px;
+  height: 16px;
+  padding: 0;
+  border-radius: 50%;
+  line-height: 14px;
+  font-size: 13px;
+}
+
+.hue-slot {
+  background: transparent;
+  box-shadow: inset 0 0 0 1px var(--rule);
+}
+
+.hue-slot[aria-pressed="true"] {
+  box-shadow: 0 0 0 1px var(--ink);
+}
+
+#hue-add:disabled,
+.hue-add:disabled {
+  opacity: 0.35;
+}

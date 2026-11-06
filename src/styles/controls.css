@@ -1,0 +1,330 @@
+.icon-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+}
+
+.fold-toggle {
+  flex: none;
+  background: transparent;
+  border-radius: 0;
+  color: var(--ink);
+  opacity: 0.92;
+}
+
+.fold-toggle:hover {
+  background: transparent;
+  opacity: 1;
+}
+
+.collapsed-chevron {
+  display: block;
+  flex: none;
+  width: 14px;
+  height: 14px;
+  background: currentColor;
+  -webkit-mask: url("./assets/codicon-fold.png") center / contain no-repeat;
+  mask: url("./assets/codicon-fold.png") center / contain no-repeat;
+  mask-mode: alpha;
+  filter: drop-shadow(0 0 0.45px currentColor);
+}
+
+html.collapsed:not(.hover-open) #card > header .fold-toggle,
+#frame.has-stack #card.is-bar > header .fold-toggle,
+.stack-note.is-bar > header .fold-toggle,
+html.collapsed.hover-open #card > header .fold-toggle,
+.stack-note.hover-open > header .fold-toggle {
+  color: var(--muted);
+  opacity: 0.72;
+}
+
+html.collapsed:not(.hover-open) #card > header .fold-toggle:hover,
+#frame.has-stack #card.is-bar > header .fold-toggle:hover,
+.stack-note.is-bar > header .fold-toggle:hover,
+html.collapsed.hover-open #card > header .fold-toggle:hover,
+.stack-note.hover-open > header .fold-toggle:hover {
+  color: var(--ink);
+  opacity: 1;
+}
+
+html.collapsed:not(.hover-open) #card > header .collapsed-chevron,
+#frame.has-stack #card.is-bar > header .collapsed-chevron,
+.stack-note.is-bar > header .collapsed-chevron {
+  -webkit-mask: url("./assets/codicon-chevron-left.png") center / contain no-repeat;
+  mask: url("./assets/codicon-chevron-left.png") center / contain no-repeat;
+  filter: none;
+}
+
+html.collapsed.hover-open #card > header .collapsed-chevron,
+.stack-note.hover-open > header .collapsed-chevron {
+  -webkit-mask: url("./assets/codicon-chevron-down.png") center / contain no-repeat;
+  mask: url("./assets/codicon-chevron-down.png") center / contain no-repeat;
+  filter: none;
+}
+
+.pin-glyph,
+.preview-glyph,
+.markdown-glyph,
+.menu-glyph,
+.theme-toggle.color-mode .theme-icon {
+  display: block;
+  width: 14px;
+  height: 14px;
+}
+
+.pin-glyph,
+.preview-glyph,
+.markdown-glyph,
+.menu-glyph,
+.theme-toggle.color-mode .theme-icon {
+  background: currentColor;
+  mask-mode: alpha;
+}
+
+.menu-glyph {
+  -webkit-mask: url("./assets/codicon-menu.png") center / contain no-repeat;
+  mask: url("./assets/codicon-menu.png") center / contain no-repeat;
+}
+
+.theme-toggle.color-mode .theme-icon {
+  -webkit-mask: url("./assets/codicon-color-mode.png") center / contain no-repeat;
+  mask: url("./assets/codicon-color-mode.png") center / contain no-repeat;
+}
+
+.pin-glyph {
+  -webkit-mask: url("./assets/codicon-pin.png") center / contain no-repeat;
+  mask: url("./assets/codicon-pin.png") center / contain no-repeat;
+}
+
+#pin-toggle[aria-pressed="true"] .pin-glyph,
+.pin-toggle[aria-pressed="true"] .pin-glyph,
+#recent .pin[aria-pressed="true"] .pin-glyph {
+  -webkit-mask: url("./assets/codicon-pinned.png") center / contain no-repeat;
+  mask: url("./assets/codicon-pinned.png") center / contain no-repeat;
+}
+
+.preview-glyph {
+  -webkit-mask: url("./assets/codicon-open-preview.png") center / contain no-repeat;
+  mask: url("./assets/codicon-open-preview.png") center / contain no-repeat;
+}
+
+.markdown-glyph {
+  -webkit-mask: url("./assets/codicon-markdown.png") center / contain no-repeat;
+  mask: url("./assets/codicon-markdown.png") center / contain no-repeat;
+}
+
+#mode-toggle[aria-pressed="true"],
+.mode-toggle[aria-pressed="true"],
+#coder-toggle[aria-pressed="true"],
+.coder-toggle[aria-pressed="true"],
+#markdown-toggle[aria-pressed="true"],
+.markdown-toggle[aria-pressed="true"],
+#format-toggle[aria-expanded="true"],
+.format-toggle[aria-expanded="true"],
+#editor-menu-toggle[aria-expanded="true"],
+.editor-menu-toggle[aria-expanded="true"] {
+  background: var(--button-hover);
+}
+
+#coder-toggle.coder-tool,
+.coder-toggle.coder-tool,
+#format-toggle.coder-tool,
+.format-toggle.coder-tool {
+  color: color-mix(in srgb, var(--ink) 55%, #0f766e);
+  background: color-mix(in srgb, #0f766e 16%, var(--button));
+}
+
+html[data-theme="dark"] #coder-toggle.coder-tool,
+html[data-theme="dark"] .coder-toggle.coder-tool,
+html[data-theme="dark"] #format-toggle.coder-tool,
+html[data-theme="dark"] .format-toggle.coder-tool {
+  color: color-mix(in srgb, var(--ink) 55%, #5eead4);
+  background: color-mix(in srgb, #5eead4 18%, var(--button));
+}
+
+#coder-toggle.coder-tool[aria-pressed="true"],
+.coder-toggle.coder-tool[aria-pressed="true"],
+#format-toggle.coder-tool[aria-expanded="true"],
+.format-toggle.coder-tool[aria-expanded="true"] {
+  background: color-mix(in srgb, #0f766e 28%, var(--button));
+}
+
+html[data-theme="dark"] #coder-toggle.coder-tool[aria-pressed="true"],
+html[data-theme="dark"] .coder-toggle.coder-tool[aria-pressed="true"],
+html[data-theme="dark"] #format-toggle.coder-tool[aria-expanded="true"],
+html[data-theme="dark"] .format-toggle.coder-tool[aria-expanded="true"] {
+  background: color-mix(in srgb, #5eead4 30%, var(--button));
+}
+
+.coder-toggle {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: -0.04em;
+}
+
+.format-toggle {
+  width: auto;
+  padding: 0 7px;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+}
+
+#pin-toggle,
+.pin-toggle,
+#recent .pin {
+  color: var(--pin);
+  background: transparent;
+  border-radius: 0;
+  opacity: 0.45;
+}
+
+#pin-toggle:hover,
+.pin-toggle:hover,
+#recent .pin:hover {
+  background: transparent;
+  opacity: 0.8;
+}
+
+#pin-toggle[aria-pressed="true"],
+.pin-toggle[aria-pressed="true"],
+#recent .pin[aria-pressed="true"] {
+  color: var(--pin-on);
+  background: transparent;
+  opacity: 1;
+}
+
+#pin-toggle[aria-pressed="true"]:hover,
+.pin-toggle[aria-pressed="true"]:hover,
+#recent .pin[aria-pressed="true"]:hover {
+  background: transparent;
+}
+
+#recent .when,
+#recent .sync {
+  flex: none;
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1;
+}
+
+#recent .sync {
+  display: inline-flex;
+  align-items: center;
+  width: 14px;
+}
+
+#recent .pin {
+  flex: none;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+}
+
+html.pin-window:not(.pin-search-open) #memo-list,
+html.pin-window:not(.pin-search-open) #recent-more {
+  display: none;
+}
+
+header button {
+  cursor: pointer;
+}
+
+button,
+input {
+  font-family: system-ui, sans-serif;
+}
+
+button {
+  border: 0;
+  border-radius: 999px;
+  background: var(--button);
+  color: var(--ink);
+  padding: 4px 10px;
+  font-size: 12px;
+}
+
+button:hover {
+  background: var(--button-hover);
+}
+
+#composer-view {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  flex: 1;
+  overflow: hidden;
+  padding: 0 12px 12px;
+}
+
+#note-pane {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: auto;
+}
+
+#conflict {
+  flex: none;
+  margin-bottom: 8px;
+  padding: 8px;
+  border-radius: 10px;
+  background: var(--button);
+  font-size: 12px;
+}
+
+#conflict[hidden] {
+  display: none;
+}
+
+#conflict p {
+  margin: 0 0 6px;
+}
+
+#conflict div {
+  display: flex;
+  gap: 6px;
+}
+
+#blocks {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: auto;
+}
+
+#blocks[hidden] {
+  display: none;
+}
+
+#blocks textarea,
+.stack-blocks textarea {
+  flex: 0 0 auto;
+  min-height: 22px;
+  padding: 0;
+  margin: 0;
+  overflow: hidden;
+}
+
+#blocks textarea.empty-slot,
+.stack-blocks textarea.empty-slot {
+  min-height: 8px;
+  height: 8px;
+}
+
+#blocks textarea.empty-slot:focus,
+.stack-blocks textarea.empty-slot:focus {
+  min-height: 22px;
+  height: 22px;
+}
+
+#blocks textarea.grow,
+.stack-blocks textarea.grow {
+  flex: 1 0 auto;
+  min-height: 64px;
+}
