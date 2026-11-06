@@ -61,7 +61,9 @@ Leave `shortcuts.ts`, `types.ts`, `platform.ts`, `dom.ts`, and `time.ts` at `src
 
 ### 4. Stylesheet, same cascade
 
-`src/styles.css` mixes stack, header, audience, and editor rules in one cascade. Pulling every `.stack-note` rule into one file would change which rule wins. Split only into contiguous slices, imported from `src/styles.css` in today's order, or leave the sheet until a visual pass. Do not retune a rule. Check: `npm run test:ts` (it reads `textarea::selection` from `src/styles.css`) and a load of `index.html` in Vite.
+`src/styles.css` mixes stack, header, audience, and editor rules in one cascade. Pulling every `.stack-note` rule into one file would change which rule wins. Split only into contiguous slices, imported from `src/styles.css` in today's order. Do not retune a rule. Check: `npm run test:ts` (it reads `textarea::selection` from `src/styles.css`) and a load of `index.html` in Vite.
+
+First slice done: `src/styles/shell.css` holds the opening rules through `.lifting` (tokens, page chrome, collapsed card, resize, stack). `styles.css` imports it before `header`. The selection rules stay in `styles.css`.
 
 ### 5. `stack.ts`, one piece at a time
 

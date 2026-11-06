@@ -33,7 +33,7 @@ Vite is configured as a multi-page build (`vite.config.ts`) with two entries:
 | `index.html` | `src/main.ts` | Memo card: editor, recent list, pin window, media lightbox |
 | `settings.html` | `src/settings.ts` | Settings: visibility, shortcuts, useMemos sync |
 
-Markup for the note card, toolbar, audience popover, conflict banner, recent list, stack container, and resize handles lives in `index.html`. Settings tabs live in `settings.html`. Shared look is in `src/styles.css` / `src/settings.css`.
+Markup for the note card, toolbar, audience popover, conflict banner, recent list, stack container, and resize handles lives in `index.html`. Settings tabs live in `settings.html`. Shared look is in `src/styles.css` (the opening slice is `src/styles/shell.css`) and `src/settings.css`.
 
 ### TypeScript modules (`src/`)
 
