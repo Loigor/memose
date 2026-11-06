@@ -377,9 +377,21 @@ test("syncIcon and platform helpers cover common states", () => {
   assert.equal(pointIn(rect, 9, 10), false);
 });
 
+function readCascade(file: string): string {
+  const css = fs.readFileSync(file, "utf8");
+  const dir = path.dirname(file);
+  let imported = "";
+  const rest = css.replace(/@import\s+"([^"]+)";\n?/g, (_full, spec: string) => {
+    imported += fs.readFileSync(path.resolve(dir, spec), "utf8");
+    imported += "\n";
+    return "";
+  });
+  return imported + rest;
+}
+
 test("overlay editor keeps selected textarea glyphs invisible", () => {
   const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-  const css = fs.readFileSync(path.join(root, "src/styles.css"), "utf8");
+  const css = readCascade(path.join(root, "src/styles.css"));
   assert.match(css, /textarea::selection/);
   assert.doesNotMatch(css, /textarea::selection,[^}]*::-moz-selection/);
   assert.doesNotMatch(css, /\.md-field\.is-selecting/);
