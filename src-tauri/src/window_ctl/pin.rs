@@ -4,12 +4,13 @@ use std::time::{Duration, Instant};
 
 use tauri::{Emitter, Manager, PhysicalPosition, PhysicalSize, WebviewWindow, WindowEvent};
 
+use super::composer::{composer_open, dismiss_composer};
 use super::geom::{first_open_tile, grid_slot, nudge_origin, organize_grid, visual_card};
 use super::{
-    composer_open, contains, dismiss_composer, drag_active, follow_active, hide_pin_tabs,
-    monitor_for_placement, parks, pin_label, place_at, raise_pin_tabs, save_pin_frame,
-    schedule_resign, schedule_settle, show_pin_tabs, slide_back, snap_enabled, suppress_settle,
-    CARD_HEIGHT, CARD_PAD_BOTTOM, CARD_PAD_TOP, CARD_PAD_X, CARD_WIDTH, ORGANIZE_GAP, WINDOW,
+    contains, drag_active, follow_active, hide_pin_tabs, monitor_for_placement, parks, pin_label,
+    place_at, raise_pin_tabs, save_pin_frame, schedule_resign, schedule_settle, show_pin_tabs,
+    slide_back, snap_enabled, suppress_settle, CARD_HEIGHT, CARD_PAD_BOTTOM, CARD_PAD_TOP,
+    CARD_PAD_X, CARD_WIDTH, ORGANIZE_GAP, WINDOW,
 };
 use crate::notes::request_sync;
 use crate::state::AppState;

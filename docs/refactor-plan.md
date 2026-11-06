@@ -85,16 +85,16 @@ Checked the three cuts. None is a closed set, and a new controller type is out o
 
 TypeScript cannot assign an imported `let`. Moving the lets with the functions still leaves those callers writing them, which is a circular module. They stay in `src/stack.ts`. `bindStack` and the exports `main.ts` uses stay there too.
 
-### 6. `main.ts`, one piece at a time
+### 6. `main.ts` — left in place
 
-Same rule. Suggested order, smallest closed set first:
+Checked the four cuts. None is a closed set, and a new bag of callbacks is out of scope.
 
-1. Recent list (`refreshRecent`, search, row paint).
-2. Look paint (`paintLook`, hue slots, theme toggle).
-3. Audience menu.
-4. Draft persist (`scheduleDraft`, `persistDraft`, `loadDraft`).
+1. Recent list. `refreshRecent` writes `chosenSyncState`, `chosenVisibility`, and `chosenSyncError`, and the row click calls `openRecent`.
+2. Look paint. `paintLook` calls the coder chrome, the theme icon, and stack recolor, and `adoptLook` plus the boot path call it back.
+3. Audience menu. `paintAudience` is called from `openRecent`, `loadDraft`, and the delete path, and it paints the look.
+4. Draft persist. `scheduleDraft` and `persistDraft` read `editingId`, `noteContent`, `lookUnsaved`, and `audienceDirty`. Undo, the editor, and `openRecent` call them.
 
-The boot at the bottom of `main.ts` (composer vs pinned vs media preview) stays in `main.ts`.
+TypeScript cannot assign an imported `let`. Moving the lets with the functions still leaves those callers writing them. They stay in `src/main.ts`. The boot at the bottom (composer vs pinned vs media preview) stays there too.
 
 ### 7. `window_ctl`, leaves first
 
@@ -102,7 +102,7 @@ The boot at the bottom of `main.ts` (composer vs pinned vs media preview) stays 
 
 1. Preview stays. `open_media_preview` calls `schedule_resign`, which hides the composer or the pins.
 2. Pin-window open, place, and organize. Done: `window_ctl/pin.rs` holds `toggle_pinned`, `open_pinned`, `close_pinned`, `organize_pinned`, `place_for_pin`, and the helpers they call. `window_ctl::` still re-exports those names. `pin_label`, `place_at`, and `save_pin_frame` stay in `mod.rs` because drag and settle write them. `place_in_free_space` is private to the pin module; nothing outside called it.
-3. Composer present / hide / flush.
+3. Composer present / hide / flush. Done: `window_ctl/composer.rs` holds `attach`, `show_composer`, `show_fresh_memo`, `hide_composer`, `hide_memos`, `submit_flush`, `dismiss_composer`, `show_from_tray`, and `TrayAnchor`. `window_ctl::` still re-exports those names. Resign stays in `mod.rs` because preview and pin windows call it; it calls `composer::hide_and_save`.
 4. Drag, snap, and stack attach last. Those functions share the static maps (`dragging`, `stack_aims`, `following`). Move the maps with the functions into one `drag.rs`. Do not invent a controller type.
 
 Check each cut with `npm run test:rust` and `npm run lint:rust`. Geometry tests already live on `geom.rs`.
@@ -152,8 +152,8 @@ Do not add `vercel-react-best-practices`. This app is vanilla TypeScript.
 - [x] 3. `src/look/`
 - [x] 4. Stylesheet split, same cascade
 - [x] 5. `stack.ts` — left in place (not a closed extract)
-- [ ] 6. `main.ts` extracts
-- [ ] 7. `window_ctl` leaves (preview stays; pin open, place, and organize moved)
+- [x] 6. `main.ts` — left in place (not a closed extract)
+- [ ] 7. `window_ctl` leaves (preview stays; pin and composer moved; drag, snap, and stack remain)
 - [x] 8. `Db` impl groups
 - [x] 9. Sync parsers
 - [x] 10. Media clipboard
