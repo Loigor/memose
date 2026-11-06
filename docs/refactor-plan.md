@@ -59,11 +59,21 @@ Moved, names unchanged: `src/look/look.ts`, `src/look/memo-chrome.ts`, `src/look
 
 Leave `shortcuts.ts`, `types.ts`, `platform.ts`, `dom.ts`, and `time.ts` at `src/` until a later reader actually gets lost. They are small and shared by every page.
 
-### 4. Stylesheet, same cascade
+### 4. Stylesheet, same cascade — done
 
-`src/styles.css` mixes stack, header, audience, and editor rules in one cascade. Pulling every `.stack-note` rule into one file would change which rule wins. Split only into contiguous slices, imported from `src/styles.css` in today's order. Do not retune a rule. Check: `npm run test:ts` (the selection check reads `src/styles.css` and the slices it imports, in that order) and a load of `index.html` in Vite.
+Done. Contiguous slices, imported from `src/styles.css` in the original order. Later `.stack-note` rules were not gathered into one file. The recent list stays in `styles.css`.
 
-Slices so far, imported in this order: `src/styles/shell.css` (tokens, page chrome, collapsed card, resize, stack, through `.lifting`), `src/styles/header.css` (the `header` rule through the hue controls), `src/styles/controls.css` (`.icon-button` through the block textarea sizes), `src/styles/field.css` (`.media-row` through the base `.md-hl` rule), `src/styles/highlight.css` (`html[data-mdhl]` through the coder wrap rules), then `src/styles/media.css` (`.media` through the media context menu). `styles.css` continues at `textarea::spelling-error`.
+Imported in this order:
+
+- `src/styles/shell.css` — tokens, page chrome, collapsed card, resize, stack, through `.lifting`
+- `src/styles/header.css` — the `header` rule through the hue controls
+- `src/styles/controls.css` — `.icon-button` through the block textarea sizes
+- `src/styles/field.css` — `.media-row` through the base `.md-hl` rule
+- `src/styles/highlight.css` — `html[data-mdhl]` through the coder wrap rules
+- `src/styles/media.css` — `.media` through the media context menu
+- `src/styles/preview.css` — spelling errors, the shared textarea and preview type, the drop outline, and the lightbox
+
+`styles.css` continues at `#memo-list`. The selection check reads `src/styles.css` and the slices it imports, in that order.
 
 ### 5. `stack.ts`, one piece at a time
 
@@ -142,7 +152,7 @@ Do not add `vercel-react-best-practices`. This app is vanilla TypeScript.
 - [x] 1. `src/editor/` and recursive IPC scan
 - [x] 2. `src/media/`
 - [x] 3. `src/look/`
-- [ ] 4. Stylesheet split, same cascade
+- [x] 4. Stylesheet split, same cascade
 - [ ] 5. `stack.ts` extracts
 - [ ] 6. `main.ts` extracts
 - [ ] 7. `window_ctl` leaves
