@@ -113,7 +113,7 @@ Done: `notes/sync/parse.rs` holds the memo and space parsers, time parsing, requ
 
 ### 10. `media.rs`
 
-Move the platform clipboard (`paste_clipboard_*`, TIFF conversion) into `media/clipboard.rs` with the existing `cfg` gates. Path checks (`valid_name`, `resolve`) and markdown token rewrite stay put until that file is the only large piece left.
+Done: `media/clipboard.rs` holds `paste_clipboard` and the macOS and Windows paste implementations, plus TIFF-to-PNG conversion. `paste_clipboard` is re-exported from `media`. Path checks (`valid_name`, `resolve`) and markdown token rewrite stay in `media.rs`.
 
 ## After this plan
 
@@ -146,4 +146,4 @@ Do not add `vercel-react-best-practices`. This app is vanilla TypeScript.
 - [ ] 7. `window_ctl` leaves
 - [x] 8. `Db` impl groups
 - [x] 9. Sync parsers
-- [ ] 10. Media clipboard
+- [x] 10. Media clipboard

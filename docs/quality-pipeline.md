@@ -94,7 +94,7 @@ Desktop WebView runtimes and window managers differ significantly across **macOS
 
 1. **Objective-C FFI Requires `NSAutoreleasePool` on Background Threads**:
    - Tauri IPC commands execute on worker threads that do not drain an AppKit run-loop autorelease pool automatically.
-   - Any Objective-C FFI call (`NSData`, `NSBitmapImageRep`, `NSPasteboard`, `NSString`, `NSURL` in `src-tauri/src/media.rs`) **must** be wrapped in an RAII `AutoreleasePool` (`objc_autoreleasePoolPush` / `objc_autoreleasePoolPop`) so temporary image buffers and pasteboard objects are freed immediately when the function returns.
+   - Any Objective-C FFI call (`NSData`, `NSBitmapImageRep`, `NSPasteboard`, `NSString`, `NSURL` in `src-tauri/src/media/clipboard.rs`) **must** be wrapped in an RAII `AutoreleasePool` (`objc_autoreleasePoolPush` / `objc_autoreleasePoolPop`) so temporary image buffers and pasteboard objects are freed immediately when the function returns.
 2. **Accessory Activation Policy & Focus Restoration**:
    - Memose runs with `ActivationPolicy::Accessory` (`LSUIElement` behavior) so it stays in the menu bar without cluttering the Dock.
    - When hiding all Memose windows (`hide_window` / `hide_all` in `window_ctl.rs`), macOS does not automatically return keyboard focus to the previously active app unless `[NSApp hide:nil]` is invoked after all app windows are hidden.
@@ -113,7 +113,7 @@ Desktop WebView runtimes and window managers differ significantly across **macOS
    - Always spawn `WebviewWindowBuilder::build()` onto a background thread (`std::thread::spawn`) on Windows.
 2. **System Clipboard Lock (`OpenClipboard` / `CloseClipboard`)**:
    - Win32 `OpenClipboard` locks the clipboard for the entire OS session until `CloseClipboard` is called.
-   - Always wrap `OpenClipboard` in an RAII guard (`ClipboardGuard` in `media.rs`) so `CloseClipboard()` is guaranteed to run on every exit path.
+   - Always wrap `OpenClipboard` in an RAII guard (`ClipboardGuard` in `media/clipboard.rs`) so `CloseClipboard()` is guaranteed to run on every exit path.
 3. **Frameless Transparent Windows & Mouse Button Swapping**:
    - Custom drag and resize loops polling `GetAsyncKeyState(VK_LBUTTON)` must check `GetSystemMetrics(SM_SWAPBUTTON)` so users with left-handed mouse configurations can drag and resize memos normally.
 4. **Per-Monitor DPI Scaling**:

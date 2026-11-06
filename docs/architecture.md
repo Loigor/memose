@@ -99,7 +99,7 @@ Engineering rules for this boundary (no blocking the async runtime, path validat
 | `tray.rs` | Tray icon + menu |
 | `shortcuts.rs` | Global hotkeys persisted in SQLite `meta` |
 | `mouse_hook.rs` | Mouse4/Mouse5 (macOS/Windows; no-op on Linux) |
-| `media.rs` | Save/paste/reveal attachments, sniff types, path safety |
+| `media.rs` | Save/reveal attachments, sniff types, path safety. Paste and TIFF conversion live in `media/clipboard.rs` |
 | `auth.rs` | One-time copy of an old keychain token into SQLite |
 | `state.rs` | Process-wide `AppState` |
 | `error.rs` | `AppError` for IPC |
