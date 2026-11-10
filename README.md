@@ -13,7 +13,7 @@ Capture, pin, and stack Markdown memos without leaving the desktop.
 
 <div align="center">
 
-![Memose demo](https://github.com/user-attachments/assets/df299fec-3ceb-4609-8589-49a9a5d58433)
+https://github.com/user-attachments/assets/df299fec-3ceb-4609-8589-49a9a5d58433
 
 </div>
 
