@@ -7,7 +7,7 @@ import { fileURLToPath } from "node:url";
 import { moveBlockMedia } from "../src/editor/editor-blocks.ts";
 import { highlightMarkdown } from "../src/editor/md-highlight.ts";
 import { uniqueFiles } from "../src/media/files.ts";
-import { BlockHistory, cloneBlocks } from "../src/editor/history.ts";
+import { BlockHistory, cloneBlocks, restorePlace } from "../src/editor/history.ts";
 import { defaultLook, lookFromNote, namedTheme } from "../src/look/look.ts";
 import {
   applyCode,
@@ -33,7 +33,7 @@ import {
   wrapText,
 } from "../src/editor/markdown-edit.ts";
 import { baseColors, huePopHtml, palette, paperAt, stackHeaderHtml, tabFill, themeGlyph } from "../src/look/memo-chrome.ts";
-import { pointIn, requireEl } from "../src/dom.ts";
+import { pointIn, pointOnScrollGutter, requireEl } from "../src/dom.ts";
 import {
   defaultBinds,
   domMouseButton,
@@ -137,13 +137,30 @@ test("taskListOnEnter continues lists, exits empty items, and renumbers ordered 
 
 test("tabOnMarkdown indents and outdents lists and plain text", () => {
   const indented = tabOnMarkdown("- [ ] item", 6, 6, false);
-  assert.equal(indented.value, "    - [ ] item");
+  assert.equal(indented.value, "\t- [ ] item");
 
   const outdented = tabOnMarkdown(indented.value, indented.start, indented.end, true);
   assert.equal(outdented.value, "- [ ] item");
 
   const strippedPrefix = tabOnMarkdown("- [ ] item", 6, 6, true);
   assert.equal(strippedPrefix.value, "item");
+
+  const plain = tabOnMarkdown("hello", 0, 0, false);
+  assert.equal(plain.value, "\thello");
+});
+
+test("parseBlocks lifts closed fences into code blocks", () => {
+  const source = "hello\n```js\nconst x = 1\n```\nworld";
+  const blocks = parseBlocks(source);
+  const code = blocks.find((block) => block.kind === "code");
+  assert.equal(code?.kind, "code");
+  if (code?.kind === "code") {
+    assert.equal(code.lang, "js");
+    assert.equal(code.text, "const x = 1");
+  }
+  assert.equal(serializeBlocks(blocks), source);
+  const open = parseBlocks("hello\n```\nstill open");
+  assert.equal(open.some((block) => block.kind === "code"), false);
 });
 
 test("media helpers parse, serialize, and extract titles accurately", () => {
@@ -352,6 +369,10 @@ test("look helpers normalize note color and theme", () => {
   assert.equal(look.theme, "dark");
 });
 
+test("restorePlace no-ops without a saved caret", () => {
+  assert.equal(restorePlace({ querySelector() { return null; } } as unknown as ParentNode, null), false);
+});
+
 test("BlockHistory clones blocks and undoes to the previous snapshot", () => {
   const history = new BlockHistory();
   const first = [{ kind: "text" as const, text: "one" }];
@@ -375,6 +396,23 @@ test("syncIcon and platform helpers cover common states", () => {
   const rect = { left: 10, right: 20, top: 5, bottom: 15 } as DOMRect;
   assert.equal(pointIn(rect, 10, 5), true);
   assert.equal(pointIn(rect, 9, 10), false);
+  const scroller = {
+    clientWidth: 190,
+    clientHeight: 200,
+    scrollWidth: 190,
+    scrollHeight: 400,
+    offsetWidth: 200,
+    offsetHeight: 200,
+    borderLeft: 0,
+    borderRight: 0,
+    borderTop: 0,
+    borderBottom: 0,
+    overflowX: "hidden",
+    overflowY: "auto",
+  };
+  const box = { left: 0, top: 0, right: 200, bottom: 200 };
+  assert.equal(pointOnScrollGutter(196, 80, box, scroller), true);
+  assert.equal(pointOnScrollGutter(100, 80, box, scroller), false);
 });
 
 function readCascade(file: string): string {
@@ -396,6 +434,13 @@ test("overlay editor keeps selected textarea glyphs invisible", () => {
   assert.doesNotMatch(css, /textarea::selection,[^}]*::-moz-selection/);
   assert.doesNotMatch(css, /\.md-field\.is-selecting/);
   assert.match(css, /-webkit-text-fill-color: transparent/);
+  assert.match(css, /#blocks \.md-field\[data-coder\] textarea/);
+  assert.match(css, /\.md-field\[data-coder\] \.md-hl \*/);
+  assert.doesNotMatch(css, /\.md-line-text\s*\{[^}]*white-space:\s*nowrap/);
+  assert.match(css, /--gutter-cols/);
+  assert.match(css, /\.md-overflow-shift/);
+  assert.match(css, /::-webkit-scrollbar/);
+  assert.match(css, /scrollbar-width: thin/);
 });
 
 test("highlightMarkdown colors markers without changing the source text", () => {
@@ -409,6 +454,7 @@ test("highlightMarkdown colors markers without changing the source text", () => 
   assert.match(html, /md-marker/);
   assert.match(html, /&lt;script&gt;/);
   assert.equal(html.includes("<script>"), false);
+  assert.match(highlightMarkdown("\tfoo"), /\tfoo/);
 });
 
 test("formatJsonDocument pretty-prints objects and json fences", () => {

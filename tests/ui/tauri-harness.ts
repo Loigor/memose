@@ -9,6 +9,8 @@ export type NoteSeed = {
   remoteName?: string | null;
   lastError?: string | null;
   pinned?: boolean;
+  winW?: number | null;
+  winH?: number | null;
   opacity?: number;
   hueLight?: number | null;
   hueDark?: number | null;
@@ -101,6 +103,8 @@ function installBrowserHarness(seed: BrowserSeed) {
       remoteName: partial.remoteName ?? null,
       lastError: partial.lastError ?? null,
       pinned: Boolean(partial.pinned),
+      winW: partial.winW ?? null,
+      winH: partial.winH ?? null,
       opacity: partial.opacity ?? 100,
       hueLight: partial.hueLight ?? null,
       hueDark: partial.hueDark ?? null,
@@ -602,6 +606,16 @@ function installBrowserHarness(seed: BrowserSeed) {
       case "stack_chain":
         return chainAfter(a.hostId);
       case "set_window_height":
+      case "apply_composer_size":
+        return null;
+      case "save_note_size": {
+        const note = noteById(a.id);
+        if (note) {
+          note.winW = Number(a.width);
+          note.winH = Number(a.height);
+        }
+        return null;
+      }
       case "begin_memo_drag":
       case "end_memo_drag":
       case "slide_into_view":

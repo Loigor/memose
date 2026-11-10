@@ -278,8 +278,8 @@ function listOnEnter(value: string, start: number, lineStart: number, lineEnd: n
 }
 
 export function tabOnMarkdown(value: string, start: number, end: number, shiftKey: boolean): Edit {
-  const textIndentUnit = "  ";
-  const listIndentUnit = "    ";
+  const textIndentUnit = "\t";
+  const listIndentUnit = "\t";
   if (start === end && !value.slice(start, end).includes("\n")) {
     const { lineStart, lineEnd } = lineBounds(value, start);
     const line = value.slice(lineStart, lineEnd);
@@ -379,8 +379,69 @@ export function tabOnMarkdown(value: string, start: number, end: number, shiftKe
 }
 
 export type TextBlock = { kind: "text"; text: string };
+export type CodeBlock = { kind: "code"; lang: string; text: string };
 export type MediaBlock = { kind: "media"; name: string; label?: string; width?: number; inline?: boolean };
-export type Block = TextBlock | MediaBlock;
+export type Block = TextBlock | CodeBlock | MediaBlock;
+
+export function isTypedBlock(block: Block): block is TextBlock | CodeBlock {
+  return block.kind === "text" || block.kind === "code";
+}
+
+export function closedFenceIn(value: string): boolean {
+  let ticks: string | null = null;
+  for (const line of value.split("\n")) {
+    if (ticks) {
+      const close = /^(```+)(\s*)$/.exec(line);
+      if (close && close[1].length >= ticks.length) {
+        return true;
+      }
+      continue;
+    }
+    const open = /^(```+)([^`]*)$/.exec(line);
+    if (open) {
+      ticks = open[1];
+    }
+  }
+  return false;
+}
+
+function splitFencedCode(text: string): Array<TextBlock | CodeBlock> {
+  const lines = text.split("\n");
+  const out: Array<TextBlock | CodeBlock> = [];
+  let textLines: string[] = [];
+  let open: { ticks: string; lang: string; body: string[] } | null = null;
+  const flushText = () => {
+    if (textLines.length === 0) {
+      return;
+    }
+    out.push({ kind: "text", text: textLines.join("\n") });
+    textLines = [];
+  };
+  for (const line of lines) {
+    if (!open) {
+      const match = /^(```+)([^`]*)$/.exec(line);
+      if (match) {
+        flushText();
+        open = { ticks: match[1] ?? "```", lang: (match[2] ?? "").trim(), body: [] };
+        continue;
+      }
+      textLines.push(line);
+      continue;
+    }
+    const close = /^(```+)(\s*)$/.exec(line);
+    if (close && close[1].length >= open.ticks.length) {
+      out.push({ kind: "code", lang: open.lang, text: open.body.join("\n") });
+      open = null;
+      continue;
+    }
+    open.body.push(line);
+  }
+  if (open) {
+    textLines.push(`${open.ticks}${open.lang}`, ...open.body);
+  }
+  flushText();
+  return out;
+}
 
 export const mediaPrefix = "memose-media/";
 export const mediaTokenRegex = /(!?)\[([^\]]*)\]\(memose-media\/([A-Za-z0-9._-]+\.[A-Za-z0-9]+)(?:#([^)]*))?\)/;
@@ -444,10 +505,14 @@ export function mediaMarkdown(name: string, label?: string, width?: number): str
   return `[${shown}](${mediaPrefix}${name}${frag})`;
 }
 
+function isAtom(block: Block): boolean {
+  return block.kind === "media" || block.kind === "code";
+}
+
 export function ensureTextSlots(items: Block[]): Block[] {
   const next: Block[] = [];
   for (const block of items) {
-    if (block.kind === "media" && (next.length === 0 || next[next.length - 1].kind === "media")) {
+    if (isAtom(block) && (next.length === 0 || isAtom(next[next.length - 1]!))) {
       next.push({ kind: "text", text: "" });
     }
     const previous = next[next.length - 1];
@@ -459,22 +524,24 @@ export function ensureTextSlots(items: Block[]): Block[] {
       }
       continue;
     }
-    next.push(
-      block.kind === "text"
-        ? { kind: "text", text: block.text }
-        : {
-            kind: "media",
-            name: block.name,
-            label: block.label,
-            width: block.width,
-            inline: block.inline,
-          },
-    );
+    if (block.kind === "text") {
+      next.push({ kind: "text", text: block.text });
+    } else if (block.kind === "code") {
+      next.push({ kind: "code", lang: block.lang, text: block.text });
+    } else {
+      next.push({
+        kind: "media",
+        name: block.name,
+        label: block.label,
+        width: block.width,
+        inline: block.inline,
+      });
+    }
   }
-  if (next.length === 0 || next[next.length - 1].kind === "media") {
+  if (next.length === 0 || isAtom(next[next.length - 1]!)) {
     next.push({ kind: "text", text: "" });
   }
-  if (next[0].kind === "media") {
+  if (next[0] && isAtom(next[0])) {
     next.unshift({ kind: "text", text: "" });
   }
   return next;
@@ -504,7 +571,7 @@ export function parseBlocks(content: string): Block[] {
         before = before.replace(/\r?\n$/, "");
       }
       if (before.length > 0) {
-        next.push({ kind: "text", text: before });
+        next.push(...splitFencedCode(before));
       }
     }
     next.push({
@@ -522,7 +589,7 @@ export function parseBlocks(content: string): Block[] {
       after = after.replace(/^\r?\n/, "");
     }
     if (after.length > 0) {
-      next.push({ kind: "text", text: after });
+      next.push(...splitFencedCode(after));
     }
   }
   return ensureTextSlots(next);
@@ -542,6 +609,11 @@ export function serializeBlocks(items: Block[]): string {
         out += "\n";
       }
       out += block.text;
+    } else if (block.kind === "code") {
+      if (out.length > 0 && !out.endsWith("\n")) {
+        out += "\n";
+      }
+      out += `\`\`\`${block.lang}\n${block.text}${block.text ? "\n" : ""}\`\`\``;
     } else {
       const md = mediaMarkdown(block.name, block.label, block.width);
       if (block.inline) {

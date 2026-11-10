@@ -7,6 +7,8 @@ export type Note = {
   remoteName: string | null;
   lastError: string | null;
   pinned: boolean;
+  winW?: number | null;
+  winH?: number | null;
   opacity: number;
   hueLight: number | null;
   hueDark: number | null;

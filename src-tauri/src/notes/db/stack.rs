@@ -111,6 +111,16 @@ impl Db {
         })
     }
 
+    pub fn save_size(&self, id: &str, w: i32, h: i32) -> Result<(), AppError> {
+        self.with(|conn| {
+            conn.execute(
+                "UPDATE notes SET win_w = ?1, win_h = ?2 WHERE id = ?3",
+                params![w.max(1), h.max(1), id],
+            )?;
+            Ok(())
+        })
+    }
+
     pub fn list_pinned(&self) -> Result<Vec<Note>, AppError> {
         self.with(|conn| {
             let mut stmt = conn.prepare(LIST_PINNED)?;

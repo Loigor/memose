@@ -256,6 +256,21 @@ pub fn set_window_height(app: AppHandle, label: String, height: i32) {
 }
 
 #[tauri::command]
+pub fn apply_composer_size(app: AppHandle, width: Option<i32>, height: Option<i32>) {
+    window_ctl::apply_composer_size(&app, width, height);
+}
+
+#[tauri::command]
+pub fn save_note_size(
+    state: State<AppState>,
+    id: String,
+    width: i32,
+    height: i32,
+) -> Result<(), AppError> {
+    state.db.save_size(&id, width, height)
+}
+
+#[tauri::command]
 pub fn begin_memo_drag(app: AppHandle, label: String) {
     window_ctl::begin_memo_drag(app, label);
 }

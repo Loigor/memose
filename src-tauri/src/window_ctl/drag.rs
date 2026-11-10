@@ -1465,6 +1465,16 @@ fn glide_window(
 }
 
 pub fn slide_into_view(app: &AppHandle, label: &str) {
+    let Some(window) = app.get_webview_window(label) else {
+        return;
+    };
+    let Ok(size) = window.outer_size() else {
+        return;
+    };
+    slide_into_view_sized(app, label, size.width as i32, size.height as i32);
+}
+
+pub(super) fn slide_into_view_sized(app: &AppHandle, label: &str, outer_w: i32, outer_h: i32) {
     if drag_active(label)
         || resize_active(label)
         || follow_active(label.strip_prefix("pin-").unwrap_or(""))
@@ -1480,9 +1490,6 @@ pub fn slide_into_view(app: &AppHandle, label: &str) {
     let Ok(position) = window.outer_position() else {
         return;
     };
-    let Ok(size) = window.outer_size() else {
-        return;
-    };
     let Ok(scale) = window.scale_factor() else {
         return;
     };
@@ -1490,8 +1497,7 @@ pub fn slide_into_view(app: &AppHandle, label: &str) {
         return;
     };
     let area = monitor.work_area();
-    if size.width as i32 >= area.size.width as i32 || size.height as i32 >= area.size.height as i32
-    {
+    if outer_w >= area.size.width as i32 || outer_h >= area.size.height as i32 {
         return;
     }
     let pad_x = (CARD_PAD_X * scale).round() as i32;
@@ -1499,8 +1505,8 @@ pub fn slide_into_view(app: &AppHandle, label: &str) {
     let pad_bottom = (CARD_PAD_BOTTOM * scale).round() as i32;
     let left = position.x + pad_x;
     let top = position.y + pad_top;
-    let width = (size.width as i32 - pad_x.saturating_mul(2)).max(1);
-    let height = (size.height as i32 - pad_top - pad_bottom).max(1);
+    let width = (outer_w - pad_x.saturating_mul(2)).max(1);
+    let height = (outer_h - pad_top - pad_bottom).max(1);
     let Some((next_left, next_top)) = slide_card_into_view(
         left,
         top,

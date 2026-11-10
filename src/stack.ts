@@ -14,7 +14,9 @@ import {
   applyJsonFormat,
   applyTask,
   applyTitle,
+  closedFenceIn,
   ensureTextSlots,
+  isTypedBlock,
   noteTitle,
   mediaTokenRegex,
   parseBlocks,
@@ -29,6 +31,7 @@ import {
 import { hydratePreviewContent, mediaPointer } from "./media/media-elements";
 import { createMedia, type MediaNoteMutator } from "./media/media-dnd";
 import { markdownToolbarHtml, paintSurface, paintThemeButton, paperAt, stackHeaderHtml, type ThemeName } from "./look/memo-chrome";
+import { pointOnScrollGutter, type ScrollBox } from "./dom";
 import { inTauri, isPreviewWindow } from "./platform";
 import { editorShell, resizeAllBlockTextareas, sizeBlockTextarea } from "./editor/textarea";
 import { exactStamp, relativeTime } from "./time";
@@ -626,15 +629,21 @@ function scheduleSectionSave(section: HTMLElement, state: StackState) {
 export function applySectionEdit(section: HTMLElement, state: StackState, area: HTMLTextAreaElement, edit: Edit) {
   const index = Number(area.dataset.index ?? 0);
   const block = state.blocks[index];
-  if (block?.kind !== "text") {
+  if (!block || !isTypedBlock(block)) {
     return;
   }
   pushSectionUndo(state, true);
   area.value = edit.value;
   block.text = edit.value;
   area.classList.toggle("empty-slot", edit.value.length === 0 && state.blocks.length > 1);
-  sizeBlockTextarea(area);
   state.content = serializeBlocks(state.blocks);
+  if (block.kind === "text" && (mediaTokenRegex.test(area.value) || closedFenceIn(area.value))) {
+    state.blocks = parseBlocks(state.content);
+    renderSectionBlocks(section, state);
+    scheduleSectionSave(section, state);
+    return;
+  }
+  sizeBlockTextarea(area);
   area.focus();
   const start = Math.min(edit.start, area.value.length);
   const end = Math.min(edit.end, area.value.length);
@@ -686,11 +695,12 @@ function renderSectionBlocks(section: HTMLElement, state: StackState, focusName?
   let currentRowSideArea: HTMLTextAreaElement | null = null;
 
   state.blocks.forEach((block, index) => {
-    if (block.kind === "text") {
+    if (isTypedBlock(block)) {
       const prevBlock = state.blocks[index - 1];
       const isAfterMedia = prevBlock?.kind === "media";
       const area = document.createElement("textarea");
       area.dataset.index = String(index);
+      area.dataset.kind = block.kind;
       area.value = block.text;
       area.rows = 1;
       area.spellcheck = false;
@@ -699,11 +709,12 @@ function renderSectionBlocks(section: HTMLElement, state: StackState, focusName?
       area.setAttribute("autocorrect", "off");
       area.setAttribute("autocapitalize", "off");
       const canSitOnMediaLine =
+        block.kind === "text" &&
         isAfterMedia &&
         currentRow !== null &&
         currentRowSideArea === null &&
         !block.text.includes("\n");
-      if (index === 0 && state.blocks.length === 1) {
+      if (index === 0 && state.blocks.length === 1 && block.kind === "text") {
         area.placeholder = "Write a memo...";
       } else if (canSitOnMediaLine) {
         area.classList.add("inline-line-slot");
@@ -820,6 +831,9 @@ function renderSectionBlocks(section: HTMLElement, state: StackState, focusName?
         if (event.key !== "Enter" || event.shiftKey || event.altKey || event.metaKey || event.ctrlKey || event.isComposing) {
           return;
         }
+        if (block.kind === "code") {
+          return;
+        }
         const edit = taskListOnEnter(area.value, area.selectionStart, area.selectionEnd);
         if (!edit) {
           return;
@@ -833,7 +847,7 @@ function renderSectionBlocks(section: HTMLElement, state: StackState, focusName?
       area.addEventListener("input", () => {
         block.text = area.value;
         syncInlineLineSlot(area, prevBlock, assignedRow, container, index === lastIndex);
-        if (mediaTokenRegex.test(area.value)) {
+        if (block.kind === "text" && (mediaTokenRegex.test(area.value) || closedFenceIn(area.value))) {
           state.content = serializeBlocks(state.blocks);
           state.blocks = parseBlocks(state.content);
           renderSectionBlocks(section, state);
@@ -1868,9 +1882,50 @@ export function dragBlocked(target: EventTarget | null): boolean {
   );
 }
 
+function scrollBoxFromElement(node: HTMLElement): {
+  rect: DOMRect;
+  box: ScrollBox;
+} {
+  const style = getComputedStyle(node);
+  return {
+    rect: node.getBoundingClientRect(),
+    box: {
+      clientWidth: node.clientWidth,
+      clientHeight: node.clientHeight,
+      scrollWidth: node.scrollWidth,
+      scrollHeight: node.scrollHeight,
+      offsetWidth: node.offsetWidth,
+      offsetHeight: node.offsetHeight,
+      borderLeft: Number.parseFloat(style.borderLeftWidth) || 0,
+      borderRight: Number.parseFloat(style.borderRightWidth) || 0,
+      borderTop: Number.parseFloat(style.borderTopWidth) || 0,
+      borderBottom: Number.parseFloat(style.borderBottomWidth) || 0,
+      overflowX: style.overflowX,
+      overflowY: style.overflowY,
+    },
+  };
+}
+
+export function pointerOnScrollbar(event: MouseEvent): boolean {
+  let node: Element | null = event.target instanceof Element ? event.target : null;
+  while (node) {
+    if (node instanceof HTMLElement) {
+      const { rect, box } = scrollBoxFromElement(node);
+      if (pointOnScrollGutter(event.clientX, event.clientY, rect, box)) {
+        return true;
+      }
+    }
+    node = node.parentElement;
+  }
+  return false;
+}
+
 type ResizeDir = "w" | "e" | "s" | "sw" | "se";
 
 function resizeZone(event: MouseEvent): ResizeDir | null {
+  if (pointerOnScrollbar(event)) {
+    return null;
+  }
   const target = event.target;
   if (target instanceof Element) {
     if (
@@ -1951,6 +2006,9 @@ function startResize(event: MouseEvent, requestedDir?: ResizeDir) {
 
 export function startWindowDrag(event: MouseEvent) {
   if (!inTauri() || isPreviewWindow() || sectionLift !== null) {
+    return;
+  }
+  if (pointerOnScrollbar(event)) {
     return;
   }
   const dir = resizeZone(event);
@@ -2303,6 +2361,22 @@ export function insertSectionMedia(section: HTMLElement, name: string, label?: s
       void openPreview(name);
     });
   }
+}
+
+export function resumeStackEditor(): boolean {
+  if (!lastActiveSection || lastActiveSection === "host") {
+    return false;
+  }
+  const section = stackEl?.querySelector<HTMLElement>(
+    `.stack-note[data-id="${CSS.escape(lastActiveSection)}"]`,
+  );
+  const state = stackState.get(lastActiveSection);
+  const container = section?.querySelector<HTMLElement>(".stack-blocks");
+  if (!section || !state?.caret || !container) {
+    return false;
+  }
+  restoreCaret(container, state.caret);
+  return true;
 }
 
 export function activeStackSection(): { section: HTMLElement; state: StackState } | null {

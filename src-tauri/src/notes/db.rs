@@ -981,6 +981,12 @@ mod tests {
         assert_eq!(pinned[0].win_y, Some(34));
         assert_eq!(pinned[0].win_w, Some(400));
         assert_eq!(pinned[0].win_h, Some(480));
+        db.save_size(&draft.id, 520, 700).unwrap();
+        let resized = db.get(&draft.id).unwrap().unwrap();
+        assert_eq!(resized.win_x, Some(12));
+        assert_eq!(resized.win_y, Some(34));
+        assert_eq!(resized.win_w, Some(520));
+        assert_eq!(resized.win_h, Some(700));
         db.set_pinned(&draft.id, false).unwrap();
         assert!(db.list_pinned().unwrap().is_empty());
     }

@@ -290,6 +290,44 @@ button:hover {
   gap: 6px;
 }
 
+#blocks,
+.stack-blocks,
+#notes,
+#note-pane {
+  scrollbar-width: thin;
+  scrollbar-color: color-mix(in srgb, var(--ink) 28%, transparent) transparent;
+}
+
+#blocks::-webkit-scrollbar,
+.stack-blocks::-webkit-scrollbar,
+#notes::-webkit-scrollbar,
+#note-pane::-webkit-scrollbar {
+  width: 5px;
+  height: 5px;
+}
+
+#blocks::-webkit-scrollbar-track,
+.stack-blocks::-webkit-scrollbar-track,
+#notes::-webkit-scrollbar-track,
+#note-pane::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+#blocks::-webkit-scrollbar-thumb,
+.stack-blocks::-webkit-scrollbar-thumb,
+#notes::-webkit-scrollbar-thumb,
+#note-pane::-webkit-scrollbar-thumb {
+  background: color-mix(in srgb, var(--ink) 28%, transparent);
+  border-radius: 999px;
+}
+
+#blocks::-webkit-scrollbar-thumb:hover,
+.stack-blocks::-webkit-scrollbar-thumb:hover,
+#notes::-webkit-scrollbar-thumb:hover,
+#note-pane::-webkit-scrollbar-thumb:hover {
+  background: color-mix(in srgb, var(--ink) 45%, transparent);
+}
+
 #blocks {
   flex: 1;
   min-height: 0;

@@ -7,7 +7,7 @@ import {
   openMarkdownMenu,
   revealEditorButton,
 } from "./helpers";
-import { emitEvent, sampleNotes } from "./tauri-harness";
+import { emitEvent, getInvocations, sampleNotes } from "./tauri-harness";
 
 test("empty composer shows a textarea after composer-focus", async ({ page }) => {
   await openComposer(page);
@@ -171,6 +171,25 @@ test("coder toggle shows a line gutter on that memo", async ({ page }) => {
   await area.fill("alpha\nbeta");
   await expect(page.locator(".md-gutter")).toBeVisible();
   await expect(page.locator(".md-gutter")).toHaveText("1\n2");
+  const overlay = page.locator(".md-field[data-coder] .md-hl").first();
+  const shared = ["padding-top", "padding-left", "line-height", "font-size", "white-space", "tab-size"] as const;
+  for (const prop of shared) {
+    const value = await overlay.evaluate(
+      (el, name) => getComputedStyle(el).getPropertyValue(name),
+      prop,
+    );
+    await expect(area).toHaveCSS(prop, value);
+  }
+  await area.fill("\thello\nhello");
+  await expect(page.locator(".md-line-text").first()).toHaveCSS("white-space", "pre");
+  const tabExtra = await page.locator(".md-field[data-coder]").first().evaluate((field) => {
+    const lines = [...field.querySelectorAll(".md-line-text")];
+    if (lines.length < 2) {
+      return 0;
+    }
+    return lines[0].getBoundingClientRect().width - lines[1].getBoundingClientRect().width;
+  });
+  expect(tabExtra).toBeGreaterThan(16);
   await area.press("ControlOrMeta+A");
   await expect(page.locator(".md-hl").first()).toHaveCSS("visibility", "visible");
   await expect(page.locator("#coder-toggle")).toHaveText("{ }");
@@ -207,4 +226,48 @@ test("composer-fresh clears the editor", async ({ page }) => {
   await area.fill("temporary");
   await emitEvent(page, "composer-fresh", 2);
   await expect(area).toHaveValue("");
+});
+
+test("fenced code in the markdown editor uses a coder field", async ({ page }) => {
+  await openComposer(page);
+  const area = await composerTextarea(page);
+  await area.fill("intro\n```\nconst x = 1\n```\n");
+  await expect(page.locator(".md-field[data-coder] textarea")).toHaveValue("const x = 1");
+  await expect(page.locator(".md-field[data-coder] .md-gutter")).toBeVisible();
+});
+
+test("cycling to the last memo restores the caret", async ({ page }) => {
+  const notes = sampleNotes(1);
+  notes[0] = { ...notes[0], content: "abcdefghij", winW: 640, winH: 800 };
+  await openComposer(page, { notes });
+  await emitEvent(page, "composer-cycle", 2);
+  const area = await composerTextarea(page);
+  await expect(area).toHaveValue("abcdefghij");
+  await expect.poll(async () => {
+    const calls = await getInvocations(page);
+    return [...calls].reverse().find((item) => item.cmd === "apply_composer_size")?.args;
+  }).toEqual({ width: 640, height: 800 });
+  await expect.poll(async () => {
+    const calls = await getInvocations(page);
+    const applyAt = calls.reduce(
+      (index, item, at) => (item.cmd === "apply_composer_size" ? at : index),
+      -1,
+    );
+    return calls.slice(applyAt).some((item) => item.cmd === "slide_into_view");
+  }).toBe(true);
+  await area.evaluate((el: HTMLTextAreaElement) => {
+    el.focus();
+    el.setSelectionRange(3, 3);
+    el.dispatchEvent(new Event("select"));
+  });
+  await emitEvent(page, "composer-cycle", 3);
+  await expect(page.locator("#blocks textarea").first()).toHaveValue("");
+  await expect.poll(async () => {
+    const calls = await getInvocations(page);
+    return [...calls].reverse().find((item) => item.cmd === "apply_composer_size")?.args;
+  }).toEqual({ width: null, height: null });
+  await emitEvent(page, "composer-cycle", 4);
+  const again = await composerTextarea(page);
+  await expect(again).toHaveValue("abcdefghij");
+  await expect.poll(async () => again.evaluate((el: HTMLTextAreaElement) => el.selectionStart)).toBe(3);
 });

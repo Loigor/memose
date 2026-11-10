@@ -4,8 +4,8 @@ mod geom;
 mod pin;
 
 pub use composer::{
-    attach, dismiss_composer, hide_composer, hide_memos, show_composer, show_fresh_memo,
-    show_from_tray, submit_flush, TrayAnchor,
+    apply_composer_size, attach, dismiss_composer, hide_composer, hide_memos, show_composer,
+    show_fresh_memo, show_from_tray, submit_flush, TrayAnchor,
 };
 pub use drag::{
     begin_corner_resize, begin_memo_drag, detach_guest, end_memo_drag, prepare_remove,

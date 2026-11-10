@@ -116,22 +116,21 @@ html[data-theme="dark"][data-mdhl-scheme="mono"] {
   --md-marker: #737373;
 }
 
-#card[data-coder] .md-field,
-.stack-note[data-coder] .md-field {
+.md-field[data-coder] {
   border: 1px solid color-mix(in srgb, var(--ink) 22%, transparent);
   border-radius: 2px;
   background: color-mix(
     in srgb,
-    color-mix(in srgb, var(--ink) 8%, var(--paper)) var(--paper-alpha),
+    color-mix(in srgb, black 14%, var(--paper)) var(--paper-alpha),
     transparent
   );
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   font-size: 13px;
   line-height: 1.45;
+  tab-size: 4;
 }
 
-#card[data-coder] .md-gutter,
-.stack-note[data-coder] .md-gutter {
+.md-field[data-coder] .md-gutter {
   display: block;
   padding-top: 6px;
   padding-bottom: 6px;
@@ -139,61 +138,60 @@ html[data-theme="dark"][data-mdhl-scheme="mono"] {
   line-height: inherit;
 }
 
-#card[data-coder] .md-field:has(textarea.inline-line-slot) .md-gutter,
-.stack-note[data-coder] .md-field:has(textarea.inline-line-slot) .md-gutter {
+.md-field[data-coder]:has(textarea.inline-line-slot) .md-gutter {
   display: none;
 }
 
-#card[data-coder] .md-hl,
-.stack-note[data-coder] .md-hl {
+.md-field[data-coder] .md-hl {
   display: block;
+  overflow-x: hidden;
+}
+
+.md-field[data-coder] textarea {
+  color: transparent;
+  -webkit-text-fill-color: transparent;
+  caret-color: var(--ink);
+}
+
+.md-field[data-coder] textarea::placeholder {
+  color: var(--muted);
+  -webkit-text-fill-color: var(--muted);
+}
+
+.md-field[data-coder] textarea::selection {
+  color: transparent;
+  -webkit-text-fill-color: transparent;
+  background: color-mix(in srgb, var(--ink) 28%, transparent);
+}
+
+.md-field[data-coder] textarea::-moz-selection {
+  color: transparent;
+  background: color-mix(in srgb, var(--ink) 28%, transparent);
+}
+
+/* Overlay and textarea must share these metrics; inner spans inherit. nowrap collapses tabs. */
+#blocks .md-field[data-coder] .md-hl,
+#blocks .md-field[data-coder] textarea,
+.stack-blocks .md-field[data-coder] .md-hl,
+.stack-blocks .md-field[data-coder] textarea {
+  padding: 6px 14px 6px 8px;
+  font: inherit;
+  font-size: inherit;
+  line-height: inherit;
+  letter-spacing: inherit;
+  tab-size: inherit;
   white-space: pre;
   word-wrap: normal;
   overflow-wrap: normal;
   overflow-x: hidden;
 }
 
-#card[data-coder] #blocks textarea,
-.stack-note[data-coder] textarea {
-  color: transparent;
-  -webkit-text-fill-color: transparent;
-  caret-color: var(--ink);
-}
-
-#card[data-coder] #blocks textarea::placeholder,
-.stack-note[data-coder] textarea::placeholder {
-  color: var(--muted);
-  -webkit-text-fill-color: var(--muted);
-}
-
-#card[data-coder] #blocks textarea::selection,
-.stack-note[data-coder] textarea::selection {
-  color: transparent;
-  -webkit-text-fill-color: transparent;
-  background: color-mix(in srgb, var(--ink) 28%, transparent);
-}
-
-#card[data-coder] #blocks textarea::-moz-selection,
-.stack-note[data-coder] textarea::-moz-selection {
-  color: transparent;
-  background: color-mix(in srgb, var(--ink) 28%, transparent);
-}
-
-#card[data-coder] .md-hl,
-#card[data-coder] #blocks textarea,
-.stack-note[data-coder] .md-hl,
-.stack-note[data-coder] textarea {
-  padding: 6px 14px 6px 8px;
+.md-field[data-coder] .md-hl * {
   font: inherit;
-  font-size: inherit;
   line-height: inherit;
-  white-space: pre;
-  overflow-x: hidden;
-}
-
-#card[data-coder] .md-line-text,
-.stack-note[data-coder] .md-line-text {
-  white-space: nowrap;
+  letter-spacing: inherit;
+  tab-size: inherit;
+  white-space: inherit;
 }
 
 .md-overflow {
@@ -202,6 +200,13 @@ html[data-theme="dark"][data-mdhl-scheme="mono"] {
   z-index: 2;
   overflow: hidden;
   pointer-events: none;
+}
+
+.md-overflow-shift {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 0;
 }
 
 .md-overflow-dot {
@@ -214,27 +219,20 @@ html[data-theme="dark"][data-mdhl-scheme="mono"] {
   transform: translateY(-50%);
   box-shadow: 0 0 0 2px color-mix(
     in srgb,
-    color-mix(in srgb, var(--ink) 8%, var(--paper)) var(--paper-alpha),
+    color-mix(in srgb, black 14%, var(--paper)) var(--paper-alpha),
     transparent
   );
 }
 
-#card[data-coder][data-wrap] .md-hl,
-#card[data-coder][data-wrap] #blocks textarea,
-.stack-note[data-coder][data-wrap] .md-hl,
-.stack-note[data-coder][data-wrap] textarea {
+#blocks .md-field[data-coder][data-wrap] .md-hl,
+#blocks .md-field[data-coder][data-wrap] textarea,
+.stack-blocks .md-field[data-coder][data-wrap] .md-hl,
+.stack-blocks .md-field[data-coder][data-wrap] textarea {
   white-space: pre-wrap;
   word-wrap: break-word;
   overflow-wrap: break-word;
 }
 
-#card[data-coder][data-wrap] .md-line-text,
-.stack-note[data-coder][data-wrap] .md-line-text {
-  display: inline;
-  white-space: inherit;
-}
-
-#card[data-coder][data-wrap] .md-overflow,
-.stack-note[data-coder][data-wrap] .md-overflow {
+.md-field[data-coder][data-wrap] .md-overflow {
   display: none;
 }

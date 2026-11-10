@@ -8,14 +8,24 @@ import { audienceChoice, revealPressedChoice } from "./look/audience-ui";
 import { applyMediaFigureSize, handleBlockAreaNavigation, handleBlockMediaDeletion, syncInlineLineSlot } from "./editor/editor-blocks";
 import { memoUsesCoder, refreshEditorFields, setEditorPrefs, wrapEditorField, type EditorPrefs } from "./editor/editor-field";
 import { filesFromTransfer, uniqueFiles } from "./media/files";
-import { BlockHistory, cloneBlocks, restoreCaret, type Caret } from "./editor/history";
+import {
+  BlockHistory,
+  cloneBlocks,
+  readPlace,
+  restoreCaret,
+  restorePlace,
+  type Caret,
+  type EditorPlace,
+} from "./editor/history";
 import { darkHue, defaultLook, lightHue, lookFromNote, tinted, type Look } from "./look/look";
 import {
   applyCode,
   applyJsonFormat,
   applyTask,
   applyTitle,
+  closedFenceIn,
   ensureTextSlots,
+  isTypedBlock,
   mediaTokenRegex,
   noteTitle,
   parseBlocks,
@@ -65,6 +75,7 @@ import {
   startWindowDrag,
   syncCollapsedPeek,
   toggleSectionPreview,
+  resumeStackEditor,
   undoSection,
   wireChrome,
 } from "./stack";
@@ -146,6 +157,89 @@ let loadedContent = "";
 let noteBlocks: Block[] = [{ kind: "text", text: "" }];
 let draftTimer: ReturnType<typeof setTimeout> | undefined;
 let caret: Caret | null = null;
+const editorPlaces = new Map<string, EditorPlace>();
+let applyingComposerSize = false;
+let sizeTimer: number | undefined;
+
+function placeKey(): string {
+  return pinnedNoteId || editingId || "new";
+}
+
+function rememberPlace() {
+  const place = readPlace(blocksEl, caret);
+  if (!place) {
+    return;
+  }
+  caret = { ...place.caret };
+  editorPlaces.set(placeKey(), place);
+}
+
+function resumePlace() {
+  if (pinnedNoteId && resumeStackEditor()) {
+    return;
+  }
+  if (restorePlace(blocksEl, editorPlaces.get(placeKey()) ?? null)) {
+    return;
+  }
+  focusNote();
+}
+
+function composerNoteId(): string | null {
+  return editingId ?? draftId;
+}
+
+async function rememberMemoSize() {
+  if (!inTauri() || pinnedNoteId || applyingComposerSize) {
+    return;
+  }
+  const id = composerNoteId();
+  if (!id) {
+    return;
+  }
+  const size = await getCurrentWindow().outerSize();
+  if (size.width < 80 || size.height < 80) {
+    return;
+  }
+  await invoke("save_note_size", {
+    id,
+    width: Math.round(size.width),
+    height: Math.round(size.height),
+  });
+}
+
+function scheduleMemoSize() {
+  if (pinnedNoteId) {
+    return;
+  }
+  clearTimeout(sizeTimer);
+  sizeTimer = window.setTimeout(() => {
+    void rememberMemoSize().catch((error: unknown) => {
+      console.error(error);
+    });
+  }, 200);
+}
+
+async function applyMemoSize(width?: number | null, height?: number | null) {
+  if (!inTauri() || pinnedNoteId) {
+    return;
+  }
+  applyingComposerSize = true;
+  try {
+    const nextWidth = width && width > 0 ? Math.round(width) : null;
+    const nextHeight = height && height > 0 ? Math.round(height) : null;
+    await invoke("apply_composer_size", {
+      width: nextWidth,
+      height: nextHeight,
+    });
+    if (nextWidth && nextHeight) {
+      await invoke("slide_into_view", { label: getCurrentWindow().label });
+    }
+  } finally {
+    window.setTimeout(() => {
+      applyingComposerSize = false;
+    }, 200);
+  }
+}
 
 const hostHistory = new BlockHistory();
 
@@ -348,7 +442,7 @@ function togglePreview() {
   showingPreview = !showingPreview;
   renderSurface();
   if (!showingPreview) {
-    focusNote();
+    resumePlace();
   }
 }
 
@@ -365,7 +459,7 @@ function renderBlocks(focusName?: string) {
   blocksEl.replaceChildren();
   let lastText = -1;
   noteBlocks.forEach((block, index) => {
-    if (block.kind === "text") {
+    if (isTypedBlock(block)) {
       lastText = index;
     }
   });
@@ -373,7 +467,7 @@ function renderBlocks(focusName?: string) {
   let currentRowSideArea: HTMLTextAreaElement | null = null;
 
   noteBlocks.forEach((block, index) => {
-    if (block.kind === "text") {
+    if (isTypedBlock(block)) {
       const prevBlock = noteBlocks[index - 1];
       const isAfterMedia = prevBlock?.kind === "media";
       const area = document.createElement("textarea");
@@ -384,13 +478,15 @@ function renderBlocks(focusName?: string) {
       area.setAttribute("autocorrect", "off");
       area.setAttribute("writingsuggestions", "false");
       area.dataset.index = String(index);
+      area.dataset.kind = block.kind;
       area.value = block.text;
       const canSitOnMediaLine =
+        block.kind === "text" &&
         isAfterMedia &&
         currentRow !== null &&
         currentRowSideArea === null &&
         !block.text.includes("\n");
-      if (noteBlocks.length === 1) {
+      if (noteBlocks.length === 1 && block.kind === "text") {
         area.placeholder = "Write a note…";
       } else if (canSitOnMediaLine) {
         area.classList.add("inline-line-slot");
@@ -401,6 +497,7 @@ function renderBlocks(focusName?: string) {
       const assignedRow = canSitOnMediaLine ? currentRow : null;
       const remember = () => {
         caret = { index, start: area.selectionStart, end: area.selectionEnd };
+        rememberPlace();
       };
       area.addEventListener("focus", () => {
         remember();
@@ -412,6 +509,7 @@ function renderBlocks(focusName?: string) {
       area.addEventListener("keyup", remember);
       area.addEventListener("mouseup", remember);
       area.addEventListener("select", remember);
+      area.addEventListener("scroll", rememberPlace);
       area.addEventListener("keydown", (event) => {
         if (
           handleBlockMediaDeletion(
@@ -512,6 +610,9 @@ function renderBlocks(focusName?: string) {
         if (event.key !== "Enter" || event.shiftKey || event.altKey || event.metaKey || event.ctrlKey || event.isComposing) {
           return;
         }
+        if (block.kind === "code") {
+          return;
+        }
         const edit = taskListOnEnter(area.value, area.selectionStart, area.selectionEnd);
         if (!edit) {
           return;
@@ -526,7 +627,7 @@ function renderBlocks(focusName?: string) {
         block.text = area.value;
         syncInlineLineSlot(area, prevBlock, assignedRow, blocksEl, index === lastText);
         noteContent = serializeBlocks(noteBlocks);
-        if (mediaTokenRegex.test(area.value)) {
+        if (block.kind === "text" && (mediaTokenRegex.test(area.value) || closedFenceIn(area.value))) {
           noteBlocks = parseBlocks(noteContent);
           renderBlocks();
           syncNoteTitle();
@@ -620,14 +721,14 @@ async function openPreview(name: string) {
 function applyEdit(area: HTMLTextAreaElement, edit: Edit) {
   const index = Number(area.dataset.index);
   const block = noteBlocks[index];
-  if (!block || block.kind !== "text") {
+  if (!block || !isTypedBlock(block)) {
     return;
   }
   pushHostUndo(true);
   area.value = edit.value;
   block.text = edit.value;
   noteContent = serializeBlocks(noteBlocks);
-  if (mediaTokenRegex.test(area.value)) {
+  if (block.kind === "text" && (mediaTokenRegex.test(area.value) || closedFenceIn(area.value))) {
     noteBlocks = parseBlocks(noteContent);
     renderBlocks();
     syncNoteTitle();
@@ -818,12 +919,17 @@ async function openRecent(item: Note) {
   if (pinnedNoteId) {
     dismissList();
     if (item.id === pinnedNoteId) {
-      focusNote();
+      resumePlace();
       return;
     }
     const stackedSection = stackEl?.querySelector<HTMLElement>(`.stack-note[data-id="${CSS.escape(item.id)}"]`);
     const stackedState = stackState.get(item.id);
     if (stackedSection && stackedState) {
+      const stackedBlocks = stackedSection.querySelector(".stack-blocks");
+      if (stackedBlocks && stackedState.caret) {
+        restoreCaret(stackedBlocks, stackedState.caret);
+        return;
+      }
       sectionTargetArea(stackedSection, stackedState)?.focus();
       return;
     }
@@ -833,9 +939,12 @@ async function openRecent(item: Note) {
     return;
   }
   if (editingId === item.id) {
+    rememberPlace();
     await returnToNewMemo(openGen);
     return;
   }
+  rememberPlace();
+  await rememberMemoSize();
   clearTimeout(draftTimer);
   const typed = noteContent;
   const savingNewMemo = editingId === null && typed.trim().length > 0;
@@ -869,7 +978,8 @@ async function openRecent(item: Note) {
   setEditedAt(opened.updatedAt);
   paintAudience(opened);
   markSelectedNote();
-  focusNote();
+  resumePlace();
+  await applyMemoSize(opened.winW, opened.winH);
   if (savingNewMemo || opened.syncState !== item.syncState) {
     await refreshRecent();
   }
@@ -1564,11 +1674,12 @@ async function focusComposer(generation: number) {
   await loadDraft();
   setPinPressed(false);
   await refreshRecent();
-  focusNote();
+  resumePlace();
 }
 
 async function cycleComposer(generation: number) {
   openGen = generation;
+  rememberPlace();
   if (editingId === null) {
     await openLastModified();
     return;
@@ -1591,12 +1702,13 @@ async function openLastModified() {
     }
     await attachPendingLook();
     await invoke("commit_note", { content: typed });
-    showStored("");
   }
   await openRecent(latest);
 }
 
 async function returnToNewMemo(generation: number) {
+  rememberPlace();
+  await rememberMemoSize();
   openGen = generation;
   setConflict(null);
   listHidden = false;
@@ -1615,10 +1727,13 @@ async function returnToNewMemo(generation: number) {
   setEditedAt(null);
   paintAudience(null);
   await refreshRecent();
-  focusNote();
+  resumePlace();
+  await applyMemoSize();
 }
 
 async function startFresh(generation: number) {
+  rememberPlace();
+  await rememberMemoSize();
   openGen = generation;
   setConflict(null);
   listHidden = false;
@@ -1647,7 +1762,8 @@ async function startFresh(generation: number) {
   setEditedAt(null);
   paintAudience(null);
   await refreshRecent();
-  focusNote();
+  resumePlace();
+  await applyMemoSize();
 }
 
 recentSearchEl.addEventListener("input", () => {
@@ -2638,6 +2754,7 @@ if (inTauri() && !isPreviewWindow()) {
   };
   window.addEventListener("resize", () => {
     refreshEditorFields();
+    scheduleMemoSize();
   });
   void invoke<EditorPrefs>("get_settings")
     .then(applyEditorPrefs)
@@ -2689,9 +2806,18 @@ if (isPreviewWindow()) {
     if (event.payload !== pinnedNoteId) {
       return;
     }
-    void loadPinned(pinnedNoteId).catch((error: unknown) => {
-      console.error(error);
-    });
+    void loadPinned(pinnedNoteId)
+      .then(() => resumePlace())
+      .catch((error: unknown) => {
+        console.error(error);
+      });
+  });
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState === "hidden") {
+      rememberPlace();
+    } else {
+      resumePlace();
+    }
   });
   void listen("notes-changed", () => {
     void loadPinned(pinnedNoteId).catch((error: unknown) => {
@@ -2741,23 +2867,35 @@ if (isPreviewWindow()) {
       console.error(error);
     });
   });
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState === "hidden") {
+      rememberPlace();
+    }
+  });
 
   void listen<number>("composer-flush", (event) => {
-    clearTimeout(draftTimer);
+    rememberPlace();
     const generation = event.payload;
     const content = noteContent;
     const noteId = editingId;
     recentExpanded = false;
     listHidden = false;
-    if (generation === openGen) {
-      showStored("");
-      editingId = null;
-      draftId = null;
-      setPinPressed(false);
-      setEditedAt(null);
-      paintAudience(null);
-    }
-    void invoke("finalize_composer", { generation, content, noteId })
+    void rememberMemoSize()
+      .catch((error: unknown) => {
+        console.error(error);
+      })
+      .then(() => {
+        clearTimeout(draftTimer);
+        if (generation === openGen) {
+          showStored("");
+          editingId = null;
+          draftId = null;
+          setPinPressed(false);
+          setEditedAt(null);
+          paintAudience(null);
+        }
+        return invoke("finalize_composer", { generation, content, noteId });
+      })
       .then(() => refreshRecent())
       .catch((error: unknown) => {
         console.error(error);
