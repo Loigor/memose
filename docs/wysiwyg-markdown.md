@@ -44,7 +44,7 @@ The current source ([benweet/stackedit](https://github.com/benweet/stackedit) v5
 - A second pane renders HTML with markdown-it. Section diffs use diff-match-patch so only changed sections refresh, and section heights drive scroll sync.
 - Dependencies include Vue 2, Vuex, markdown-it and a pile of plugins, Prism, KaTeX, Mermaid, and abcjs. `turndown` is present for HTML-to-markdown conversion, which is the lossy direction.
 
-That is a desktop writing app with two scrolling columns. Memose already has the cheap version of the preview half: one card, `marked`, and a shortcut. A scroll-synced second pane does not fit a post-it, and the Vue 2 stack is the wrong runtime to adopt. StackEdit confirms the toolbar idea (buttons that wrap the selection in `**` or insert `- [ ]`) and does not offer a lighter single-surface editor.
+That is a desktop writing app with two scrolling columns. Memose already has the cheap version of the preview half: one card, `marked`, and a shortcut. A scroll-synced second pane does not fit a note, and the Vue 2 stack is the wrong runtime to adopt. StackEdit confirms the toolbar idea (buttons that wrap the selection in `**` or insert `- [ ]`) and does not offer a lighter single-surface editor.
 
 ### Editors that own a rich-text document
 

@@ -17,7 +17,7 @@ https://github.com/user-attachments/assets/df299fec-3ceb-4609-8589-49a9a5d58433
 
 </div>
 
-Memose is a desktop post-it app: a global quick-capture composer, always-on-top pinned memos, and stacks you can fold away. Notes are Markdown, stored locally in SQLite, and can optionally sync with a self-hosted [useMemos](https://www.usememos.com/) server.
+Memose is a desktop note app: a global quick-capture composer, always-on-top pinned memos, and stacks you can fold away. Notes are Markdown, stored locally in SQLite, and can optionally sync with a self-hosted [useMemos](https://www.usememos.com/) server.
 
 ## Highlights
 
