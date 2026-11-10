@@ -15,6 +15,7 @@
     "test": "npm run test:ts && npm run test:rust",
     "test:ui": "playwright test --grep-invert @scale",
     "test:ui:headed": "playwright test --headed",
+    "demo:record": "playwright test -c playwright.demo.config.ts",
     "test:scale:ui": "playwright test --grep @scale",
     "test:scale:rust": "cargo test --manifest-path src-tauri/Cargo.toml scale_stress_ -- --include-ignored --nocapture",
     "test:scale": "npm run test:scale:ui && npm run test:scale:rust",
