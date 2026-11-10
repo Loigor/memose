@@ -30,7 +30,7 @@ export function readPlace(container: ParentNode, caret: Caret | null): EditorPla
       : caret
         ? container.querySelector<HTMLTextAreaElement>(`textarea[data-index="${caret.index}"]`)
         : null;
-  const paneScroll = container instanceof HTMLElement ? container.scrollTop : 0;
+  const paneScroll = "scrollTop" in container ? (container as HTMLElement).scrollTop : 0;
   if (!(live instanceof HTMLTextAreaElement)) {
     return caret ? { caret: { ...caret }, scrollTop: 0, scrollLeft: 0, paneScroll } : null;
   }
@@ -46,7 +46,11 @@ export function readPlace(container: ParentNode, caret: Caret | null): EditorPla
   };
 }
 
-export function restorePlace(container: ParentNode, place: EditorPlace | null): boolean {
+export function restorePlace(
+  container: ParentNode,
+  place: EditorPlace | null,
+  focus = true,
+): boolean {
   if (!place) {
     return false;
   }
@@ -56,11 +60,13 @@ export function restorePlace(container: ParentNode, place: EditorPlace | null): 
   if (!area) {
     return false;
   }
-  restoreCaret(container, place.caret);
+  if (focus) {
+    restoreCaret(container, place.caret);
+  }
   area.scrollTop = place.scrollTop;
   area.scrollLeft = place.scrollLeft;
-  if (container instanceof HTMLElement) {
-    container.scrollTop = place.paneScroll;
+  if ("scrollTop" in container) {
+    (container as HTMLElement).scrollTop = place.paneScroll;
   }
   return true;
 }

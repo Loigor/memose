@@ -5,7 +5,7 @@ import DOMPurify from "dompurify";
 import { marked } from "marked";
 
 import { audienceChoice, revealPressedChoice } from "./look/audience-ui";
-import { applyMediaFigureSize, handleBlockAreaNavigation, handleBlockMediaDeletion, syncInlineLineSlot } from "./editor/editor-blocks";
+import { applyMediaFigureSize, focusLiftedCode, handleBlockAreaNavigation, handleBlockMediaDeletion, syncInlineLineSlot } from "./editor/editor-blocks";
 import { memoUsesCoder, refreshEditorFields, setEditorPrefs, wrapEditorField, type EditorPrefs } from "./editor/editor-field";
 import { filesFromTransfer, uniqueFiles } from "./media/files";
 import {
@@ -24,6 +24,7 @@ import {
   applyTask,
   applyTitle,
   closedFenceIn,
+  completeOpenFence,
   ensureTextSlots,
   isTypedBlock,
   mediaTokenRegex,
@@ -186,10 +187,13 @@ function resumePlace() {
   if (pinnedNoteId && resumeStackEditor()) {
     return;
   }
-  if (restorePlace(blocksEl, editorPlaces.get(placeKey()) ?? null)) {
+  const focused = typeof document === "undefined" ? true : document.hasFocus();
+  if (restorePlace(blocksEl, editorPlaces.get(placeKey()) ?? null, focused)) {
     return;
   }
-  focusNote();
+  if (focused) {
+    focusNote();
+  }
 }
 
 function composerNoteId(): string | null {
@@ -289,6 +293,7 @@ marked.setOptions({ gfm: true, breaks: true });
 
 const cardEl = requireEl(card, "card");
 const blocksEl = requireEl(blocks, "blocks");
+blocksEl.addEventListener("scroll", rememberPlace);
 const previewEl = requireEl(preview, "preview");
 const notePaneEl = requireEl(notePane, "note pane");
 const lightboxEl = requireEl(lightbox, "lightbox");
@@ -635,9 +640,22 @@ function renderBlocks(focusName?: string) {
         block.text = area.value;
         syncInlineLineSlot(area, prevBlock, assignedRow, blocksEl, index === lastText);
         noteContent = serializeBlocks(noteBlocks);
+        if (block.kind === "text") {
+          const closed = completeOpenFence(area.value, area.selectionStart);
+          if (closed) {
+            area.value = closed.value;
+            block.text = closed.value;
+            noteContent = serializeBlocks(noteBlocks);
+          }
+        }
         if (block.kind === "text" && (mediaTokenRegex.test(area.value) || closedFenceIn(area.value))) {
+          const fromIndex = index;
           noteBlocks = parseBlocks(noteContent);
           renderBlocks();
+          focusLiftedCode(blocksEl, noteBlocks, fromIndex, (next) => {
+            caret = next;
+            rememberPlace();
+          });
           syncNoteTitle();
           scheduleDraft();
           return;
@@ -737,8 +755,13 @@ function applyEdit(area: HTMLTextAreaElement, edit: Edit) {
   block.text = edit.value;
   noteContent = serializeBlocks(noteBlocks);
   if (block.kind === "text" && (mediaTokenRegex.test(area.value) || closedFenceIn(area.value))) {
+    const fromIndex = index;
     noteBlocks = parseBlocks(noteContent);
     renderBlocks();
+    focusLiftedCode(blocksEl, noteBlocks, fromIndex, (next) => {
+      caret = next;
+      rememberPlace();
+    });
     syncNoteTitle();
     scheduleDraft();
     return;
@@ -2810,6 +2833,7 @@ function applyPinned(note: Note) {
     editingId = note.id;
     showStored(note.content);
     loadedContent = note.content;
+    resumePlace();
   }
   setConflict(note.syncState === "conflict" ? note.id : null);
   setPinPressed(note.pinned);
@@ -2955,9 +2979,12 @@ if (isPreviewWindow()) {
     }
   });
   void listen("notes-changed", () => {
-    void loadPinned(pinnedNoteId).catch((error: unknown) => {
-      console.error(error);
-    });
+    rememberPlace();
+    void loadPinned(pinnedNoteId)
+      .then(() => resumePlace())
+      .catch((error: unknown) => {
+        console.error(error);
+      });
   });
   void listen("stack-changed", () => {
     void loadStack().catch((error: unknown) => {

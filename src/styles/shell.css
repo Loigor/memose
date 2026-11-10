@@ -287,6 +287,7 @@ html.collapsed:not(.hover-open) #frame:not(.has-stack) #notes {
   display: flex;
   flex-direction: column;
   overflow: auto;
+  overflow-anchor: auto;
   padding: 0 18px 16px;
 }
 

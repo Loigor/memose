@@ -1,5 +1,25 @@
-import { ensureTextSlots, type Block } from "./markdown-edit.ts";
+import { ensureTextSlots, liftedCodeIndex, type Block } from "./markdown-edit.ts";
 import { editorShell, estimateCharOffsetInLine, measureTextareaLines } from "./textarea.ts";
+
+export function focusLiftedCode(
+  container: ParentNode,
+  blocks: Block[],
+  fromIndex: number,
+  setCaret: (caret: { index: number; start: number; end: number }) => void,
+): boolean {
+  const index = liftedCodeIndex(blocks, fromIndex);
+  if (index < 0) {
+    return false;
+  }
+  const field = container.querySelector<HTMLTextAreaElement>(`textarea[data-index="${index}"]`);
+  if (!field) {
+    return false;
+  }
+  field.focus();
+  field.setSelectionRange(0, 0);
+  setCaret({ index, start: 0, end: 0 });
+  return true;
+}
 
 export function handleBlockMediaDeletion(
   container: HTMLElement,

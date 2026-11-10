@@ -22,12 +22,16 @@ const PIN_CASCADE: i32 = 36;
 pub fn toggle_pinned(app: &tauri::AppHandle) {
     let state = app.state::<AppState>();
     if state.pinned_mode.load(Ordering::SeqCst) {
+        if super::show_in_switcher(app) {
+            open_pinned_windows(app);
+            dismiss_composer(app);
+            return;
+        }
         state.pinned_mode.store(false, Ordering::SeqCst);
         hide_pinned(app);
         hide_pin_tabs(app);
         if !composer_open(app) {
-            #[cfg(target_os = "macos")]
-            let _ = app.set_activation_policy(tauri::ActivationPolicy::Accessory);
+            super::apply_switcher_policy(app);
         }
         return;
     }
@@ -57,8 +61,7 @@ pub(super) fn open_pinned_windows(app: &tauri::AppHandle) {
     };
     let active = active_pin_note_ids(app);
     let mut keep = HashSet::new();
-    #[cfg(target_os = "macos")]
-    let _ = app.set_activation_policy(tauri::ActivationPolicy::Regular);
+    super::apply_switcher_policy(app);
     for note in notes {
         if note.stack_host.is_some() || !active.contains(&note.id) {
             continue;
@@ -252,8 +255,7 @@ fn occupied_rects(app: &tauri::AppHandle, except: &str) -> Vec<(i32, i32, i32, i
 }
 
 pub fn open_pinned(app: &tauri::AppHandle, id: &str) {
-    #[cfg(target_os = "macos")]
-    let _ = app.set_activation_policy(tauri::ActivationPolicy::Regular);
+    super::apply_switcher_policy(app);
     open_pin(app, id);
 }
 
@@ -300,7 +302,7 @@ fn open_pin_window(app: &tauri::AppHandle, id: &str) {
             place_pin(app, id, &window);
         }
         let _ = window.show();
-        let _ = window.set_always_on_top(true);
+        super::style_desktop_window(app, &window, true);
         let _ = window.emit_to(&label, "show-pin", id);
         raise_pin_tabs(app);
         return;
@@ -335,8 +337,8 @@ fn open_pin_window(app: &tauri::AppHandle, id: &str) {
             .position(-10000.0, -10000.0)
             .decorations(false)
             .transparent(true)
-            .always_on_top(true)
-            .skip_taskbar(true)
+            .always_on_top(super::pinned_always_on_top(app))
+            .skip_taskbar(!super::show_in_switcher(app))
             .resizable(true)
             .shadow(false)
             .visible(false)
@@ -356,7 +358,7 @@ fn open_pin_window(app: &tauri::AppHandle, id: &str) {
     };
     place_pin(app, id, &window);
     let _ = window.show();
-    let _ = window.set_always_on_top(true);
+    super::style_desktop_window(app, &window, true);
     let _ = window.emit_to(&label, "show-pin", id);
     raise_pin_tabs(app);
     let note_id = id.to_string();

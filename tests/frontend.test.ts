@@ -9,11 +9,14 @@ import { highlightMarkdown } from "../src/editor/md-highlight.ts";
 import { tagAtOffset } from "../src/editor/md-tags.ts";
 import { uniqueFiles } from "../src/media/files.ts";
 import { BlockHistory, cloneBlocks, restorePlace } from "../src/editor/history.ts";
+import { withKeptScroll } from "../src/editor/textarea.ts";
 import { defaultLook, lookFromNote, namedTheme } from "../src/look/look.ts";
 import {
   applyCode,
   applyTask,
   applyTitle,
+  completeOpenFence,
+  liftedCodeIndex,
   displayFileName,
   ensureTextSlots,
   formatDocument,
@@ -82,16 +85,36 @@ test("wrapText wraps selection and places cursor inside empty markers", () => {
   assert.equal(empty.end, 6);
 });
 
-test("applyCode wraps inline code and multiline fenced code blocks", () => {
-  const inline = applyCode("const x = 1;", 6, 7);
-  assert.equal(inline.value, "const `x` = 1;");
-  assert.equal(inline.start, 7);
-  assert.equal(inline.end, 8);
+test("applyCode inserts a fenced code block and places the caret inside", () => {
+  const empty = applyCode("", 0, 0);
+  assert.equal(empty.value, "```\n\n```");
+  assert.equal(empty.start, 4);
+  assert.equal(empty.end, 4);
+
+  const afterText = applyCode("hello", 5, 5);
+  assert.equal(afterText.value, "hello\n```\n\n```");
+  assert.equal(afterText.start, 10);
+
+  const wrapped = applyCode("const x = 1;", 6, 7);
+  assert.equal(wrapped.value, "const \n```\nx\n``` = 1;");
+  assert.equal(wrapped.start, 11);
+  assert.equal(wrapped.end, 12);
 
   const multi = applyCode("line 1\nline 2", 0, 13);
   assert.equal(multi.value, "```\nline 1\nline 2\n```");
   assert.equal(multi.start, 4);
   assert.equal(multi.end, 17);
+});
+
+test("completeOpenFence closes a ticks-only fence and liftedCodeIndex finds the new block", () => {
+  const closed = completeOpenFence("```", 3);
+  assert.equal(closed?.value, "```\n```");
+  assert.equal(closed?.start, 4);
+  assert.equal(completeOpenFence("```js", 5), null);
+  assert.equal(completeOpenFence("```\n```", 3), null);
+  const blocks = parseBlocks("hello\n```\n```");
+  assert.equal(liftedCodeIndex(blocks, 0), 1);
+  assert.equal(blocks[1]?.kind, "code");
 });
 
 test("applyTitle prefixes a line with heading and leaves existing headings intact", () => {
@@ -307,6 +330,8 @@ test("settings window html has Visibility, Shortcuts, and Sync (useMemos) tabs w
   assert.match(html, /Default memo visibility/);
   assert.match(html, /Window snap/);
   assert.match(html, /id="snap-memos"/);
+  assert.match(html, /id="show-in-switcher"/);
+  assert.match(html, /id="pinned-always-on-top"/);
   assert.match(html, /id="coder-editor"/);
   assert.match(html, /id="markdown-highlight"/);
   assert.match(html, /id="markdown-schemes"/);
@@ -373,6 +398,49 @@ test("look helpers normalize note color and theme", () => {
 
 test("restorePlace no-ops without a saved caret", () => {
   assert.equal(restorePlace({ querySelector() { return null; } } as unknown as ParentNode, null), false);
+});
+
+test("withKeptScroll restores scroller position after a collapse", () => {
+  const scroller = { scrollTop: 180 };
+  withKeptScroll([scroller as HTMLElement], () => {
+    scroller.scrollTop = 0;
+  });
+  assert.equal(scroller.scrollTop, 180);
+});
+
+test("restorePlace can restore pane scroll without focusing", () => {
+  const area = {
+    value: "hello",
+    dataset: { index: "0" },
+    scrollTop: 0,
+    scrollLeft: 0,
+    focus() {
+      this.focused = true;
+    },
+    setSelectionRange() {
+      this.selected = true;
+    },
+    focused: false,
+    selected: false,
+  };
+  const container = {
+    scrollTop: 0,
+    querySelector() {
+      return area;
+    },
+  };
+  assert.equal(
+    restorePlace(
+      container as unknown as ParentNode,
+      { caret: { index: 0, start: 1, end: 1 }, scrollTop: 4, scrollLeft: 0, paneScroll: 90 },
+      false,
+    ),
+    true,
+  );
+  assert.equal(area.focused, false);
+  assert.equal(area.selected, false);
+  assert.equal(area.scrollTop, 4);
+  assert.equal(container.scrollTop, 90);
 });
 
 test("BlockHistory clones blocks and undoes to the previous snapshot", () => {

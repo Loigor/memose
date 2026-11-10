@@ -14,8 +14,8 @@ pub use drag::{
 pub use pin::{close_pinned, open_pinned, organize_pinned, place_for_pin, toggle_pinned};
 
 pub use geom::{
-    clamp_position, resize_frame, slide_card_into_view, snap_memo_edges,
-    snap_screen_edges, tray_card_origin, ResizeEdge,
+    clamp_position, resize_frame, slide_card_into_view, snap_memo_edges, snap_screen_edges,
+    tray_card_origin, ResizeEdge,
 };
 
 use std::collections::HashMap;
@@ -24,8 +24,7 @@ use std::sync::{LazyLock, Mutex};
 use std::time::{Duration, Instant};
 
 use tauri::{
-    AppHandle, Emitter, Manager, PhysicalPosition, PhysicalSize, WebviewWindow,
-    WindowEvent,
+    AppHandle, Emitter, Manager, PhysicalPosition, PhysicalSize, WebviewWindow, WindowEvent,
 };
 
 use crate::error::AppError;
@@ -75,11 +74,12 @@ pub fn show_settings(app: &AppHandle) {
     {
         Ok(window) => {
             let handle = app.clone();
-            window.on_window_event(move |event| {
-                if let WindowEvent::Focused(false) = event {
-                    schedule_resign(&handle);
-                }
+            window.on_window_event(move |event| match event {
+                WindowEvent::Focused(false) => schedule_resign(&handle),
+                WindowEvent::Destroyed => apply_switcher_policy(&handle),
+                _ => {}
             });
+            apply_app_icon(app, &window);
             let _ = window.set_focus();
         }
         Err(err) => eprintln!("memose: settings window failed: {err}"),
@@ -116,7 +116,7 @@ fn raise_pin_tabs(app: &AppHandle) {
         return;
     }
     if let Some(window) = app.get_webview_window(PIN_TABS) {
-        let _ = window.set_always_on_top(true);
+        style_desktop_window(app, &window, true);
     }
 }
 
@@ -125,7 +125,7 @@ fn show_pin_tabs_window(app: &AppHandle) {
         let hidden = !window.is_visible().unwrap_or(false);
         place_pin_tabs(app, &window, hidden);
         let _ = window.show();
-        let _ = window.set_always_on_top(true);
+        style_desktop_window(app, &window, true);
         return;
     }
     let script =
@@ -135,12 +135,12 @@ fn show_pin_tabs_window(app: &AppHandle) {
         PIN_TABS,
         tauri::WebviewUrl::App("pin-tabs.html".into()),
     )
-    .title("Pinned tabs")
+    .title("Memose")
     .inner_size(800.0, STRIP_H)
     .decorations(false)
     .transparent(true)
-    .always_on_top(true)
-    .skip_taskbar(true)
+    .always_on_top(pinned_always_on_top(app))
+    .skip_taskbar(!show_in_switcher(app))
     .resizable(false)
     .shadow(false)
     .focused(false)
@@ -159,7 +159,7 @@ fn show_pin_tabs_window(app: &AppHandle) {
     };
     place_pin_tabs(app, &window, true);
     let _ = window.show();
-    let _ = window.set_always_on_top(true);
+    style_desktop_window(app, &window, true);
 }
 
 fn place_pin_tabs(app: &AppHandle, window: &WebviewWindow, reset_height: bool) {
@@ -220,8 +220,7 @@ fn hide_on_resign(app: &AppHandle) {
     if shown || visible {
         composer::hide_and_save(app, true);
     } else {
-        #[cfg(target_os = "macos")]
-        let _ = app.set_activation_policy(tauri::ActivationPolicy::Accessory);
+        apply_switcher_policy(app);
     }
 }
 
@@ -331,6 +330,92 @@ fn snap_enabled(app: &AppHandle) -> bool {
         == Some("1")
 }
 
+pub(super) fn effective_show_in_switcher(requested: bool, always_on_top: bool) -> bool {
+    requested || !always_on_top
+}
+
+pub(crate) fn pinned_always_on_top(app: &AppHandle) -> bool {
+    app.state::<AppState>()
+        .db
+        .get_meta(crate::notes::PINNED_ALWAYS_ON_TOP)
+        .ok()
+        .flatten()
+        .as_deref()
+        != Some("0")
+}
+
+pub(crate) fn show_in_switcher(app: &AppHandle) -> bool {
+    let requested = app
+        .state::<AppState>()
+        .db
+        .get_meta(crate::notes::SHOW_IN_SWITCHER)
+        .ok()
+        .flatten()
+        .as_deref()
+        == Some("1");
+    effective_show_in_switcher(requested, pinned_always_on_top(app))
+}
+
+fn apply_app_icon(app: &AppHandle, window: &WebviewWindow) {
+    if let Some(icon) = app.default_window_icon() {
+        let _ = window.set_icon(icon.clone());
+    }
+}
+
+pub(super) fn style_desktop_window(app: &AppHandle, window: &WebviewWindow, pin_like: bool) {
+    let skip = !show_in_switcher(app);
+    let _ = window.set_skip_taskbar(skip);
+    if pin_like {
+        let _ = window.set_always_on_top(pinned_always_on_top(app));
+    }
+    apply_app_icon(app, window);
+}
+
+pub fn apply_desktop_prefs(app: &AppHandle) {
+    let switcher = show_in_switcher(app);
+    for (label, window) in app.webview_windows() {
+        // Composer stays off the switcher; alt-tab should land on pinned memos.
+        if label == PREVIEW || label == SETTINGS || label == WINDOW {
+            continue;
+        }
+        let pin_like = label.starts_with("pin-") || label == PIN_TABS;
+        style_desktop_window(app, &window, pin_like);
+    }
+    apply_switcher_policy(app);
+    if switcher {
+        let state = app.state::<AppState>();
+        if !state.pinned_mode.swap(true, Ordering::SeqCst) {
+            pin::open_pinned_windows(app);
+        }
+    }
+}
+
+pub(super) fn apply_switcher_policy(app: &AppHandle) {
+    #[cfg(target_os = "macos")]
+    {
+        if show_in_switcher(app) {
+            let _ = app.set_activation_policy(tauri::ActivationPolicy::Regular);
+            return;
+        }
+        let composer = app
+            .get_webview_window(WINDOW)
+            .and_then(|window| window.is_visible().ok())
+            .unwrap_or(false);
+        let settings = app
+            .get_webview_window(SETTINGS)
+            .and_then(|window| window.is_visible().ok())
+            .unwrap_or(false);
+        let policy = if composer || settings {
+            tauri::ActivationPolicy::Regular
+        } else {
+            tauri::ActivationPolicy::Accessory
+        };
+        let _ = app.set_activation_policy(policy);
+    }
+    #[cfg(not(target_os = "macos"))]
+    let _ = app;
+}
+
 fn monitor_for_placement(app: &AppHandle) -> Option<tauri::Monitor> {
     let point = app
         .get_webview_window(WINDOW)
@@ -347,13 +432,6 @@ fn monitor_for_placement(app: &AppHandle) -> Option<tauri::Monitor> {
                 .cloned()
         })
         .or_else(|| app.primary_monitor().ok().flatten())
-}
-
-#[cfg(target_os = "macos")]
-fn pin_windows_visible(app: &AppHandle) -> bool {
-    app.webview_windows()
-        .into_iter()
-        .any(|(label, window)| label.starts_with("pin-") && window.is_visible().unwrap_or(false))
 }
 
 type FrameRect = (i32, i32, i32, i32);
@@ -380,3 +458,15 @@ fn save_pin_frame(app: &AppHandle, id: &str, window: &WebviewWindow) {
     );
 }
 
+#[cfg(test)]
+mod desktop_prefs_tests {
+    use super::effective_show_in_switcher;
+
+    #[test]
+    fn switcher_turns_on_when_pins_are_not_always_on_top() {
+        assert!(effective_show_in_switcher(false, false));
+        assert!(!effective_show_in_switcher(false, true));
+        assert!(effective_show_in_switcher(true, true));
+        assert!(effective_show_in_switcher(true, false));
+    }
+}

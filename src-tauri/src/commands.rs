@@ -23,6 +23,8 @@ pub(crate) struct SettingsView {
     coder_editor: bool,
     markdown_highlight: bool,
     markdown_scheme: String,
+    show_in_switcher: bool,
+    pinned_always_on_top: bool,
 }
 
 #[tauri::command]
@@ -156,6 +158,8 @@ pub fn get_settings(app: AppHandle, state: State<AppState>) -> Result<SettingsVi
         coder_editor: state.db.get_meta(notes::CODER_EDITOR)?.as_deref() == Some("1"),
         markdown_highlight: state.db.get_meta(notes::MARKDOWN_HIGHLIGHT)?.as_deref() != Some("0"),
         markdown_scheme: markdown_scheme(state.db.get_meta(notes::MARKDOWN_SCHEME)?.as_deref()),
+        show_in_switcher: window_ctl::show_in_switcher(&app),
+        pinned_always_on_top: window_ctl::pinned_always_on_top(&app),
     })
 }
 
@@ -180,10 +184,7 @@ fn emit_editor_prefs(app: &AppHandle, state: &State<AppState>) -> Result<(), App
         "editor-prefs-changed",
         EditorPrefsView {
             coder_editor: state.db.get_meta(notes::CODER_EDITOR)?.as_deref() == Some("1"),
-            markdown_highlight: state
-                .db
-                .get_meta(notes::MARKDOWN_HIGHLIGHT)?
-                .as_deref()
+            markdown_highlight: state.db.get_meta(notes::MARKDOWN_HIGHLIGHT)?.as_deref()
                 != Some("0"),
             markdown_scheme: markdown_scheme(state.db.get_meta(notes::MARKDOWN_SCHEME)?.as_deref()),
         },
@@ -201,6 +202,32 @@ pub fn set_snap_memos(
         .db
         .set_meta(notes::SNAP_MEMOS, if enabled { "1" } else { "0" })?;
     let _ = app.emit("snap-changed", enabled);
+    Ok(())
+}
+
+#[tauri::command]
+pub fn set_show_in_switcher(
+    app: AppHandle,
+    state: State<AppState>,
+    enabled: bool,
+) -> Result<(), AppError> {
+    state
+        .db
+        .set_meta(notes::SHOW_IN_SWITCHER, if enabled { "1" } else { "0" })?;
+    window_ctl::apply_desktop_prefs(&app);
+    Ok(())
+}
+
+#[tauri::command]
+pub fn set_pinned_always_on_top(
+    app: AppHandle,
+    state: State<AppState>,
+    enabled: bool,
+) -> Result<(), AppError> {
+    state
+        .db
+        .set_meta(notes::PINNED_ALWAYS_ON_TOP, if enabled { "1" } else { "0" })?;
+    window_ctl::apply_desktop_prefs(&app);
     Ok(())
 }
 

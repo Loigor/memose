@@ -4,7 +4,7 @@ import DOMPurify from "dompurify";
 import { marked } from "marked";
 
 import { audienceChoice, revealPressedChoice } from "./look/audience-ui";
-import { applyMediaFigureSize, handleBlockAreaNavigation, handleBlockMediaDeletion, syncInlineLineSlot } from "./editor/editor-blocks";
+import { applyMediaFigureSize, focusLiftedCode, handleBlockAreaNavigation, handleBlockMediaDeletion, syncInlineLineSlot } from "./editor/editor-blocks";
 import { memoUsesCoder, refreshEditorFields, wrapEditorField } from "./editor/editor-field";
 import { filesFromTransfer } from "./media/files";
 import { BlockHistory, cloneBlocks, restoreCaret, type Caret } from "./editor/history";
@@ -15,6 +15,7 @@ import {
   applyTask,
   applyTitle,
   closedFenceIn,
+  completeOpenFence,
   ensureTextSlots,
   isTypedBlock,
   noteTitle,
@@ -271,6 +272,14 @@ function hostBarOnly(): boolean {
 
 function sectionBarOnly(id: string | undefined, state: StackState): boolean {
   return state.collapsed && !state.hover && editingHoldSection !== id;
+}
+
+function holdCollapsed(id: string): boolean {
+  if (editingHoldSection === id) {
+    return false;
+  }
+  editingHoldSection = id;
+  return true;
 }
 
 export function hasStack(): boolean {
@@ -639,8 +648,15 @@ export function applySectionEdit(section: HTMLElement, state: StackState, area: 
   area.classList.toggle("empty-slot", edit.value.length === 0 && state.blocks.length > 1);
   state.content = serializeBlocks(state.blocks);
   if (block.kind === "text" && (mediaTokenRegex.test(area.value) || closedFenceIn(area.value))) {
+    const fromIndex = index;
     state.blocks = parseBlocks(state.content);
     renderSectionBlocks(section, state);
+    const container = section.querySelector<HTMLElement>(".stack-blocks");
+    if (container) {
+      focusLiftedCode(container, state.blocks, fromIndex, (next) => {
+        state.caret = next;
+      });
+    }
     scheduleSectionSave(section, state);
     return;
   }
@@ -848,10 +864,21 @@ function renderSectionBlocks(section: HTMLElement, state: StackState, focusName?
       area.addEventListener("input", () => {
         block.text = area.value;
         syncInlineLineSlot(area, prevBlock, assignedRow, container, index === lastIndex);
+        if (block.kind === "text") {
+          const closed = completeOpenFence(area.value, area.selectionStart);
+          if (closed) {
+            area.value = closed.value;
+            block.text = closed.value;
+          }
+        }
         if (block.kind === "text" && (mediaTokenRegex.test(area.value) || closedFenceIn(area.value))) {
+          const fromIndex = index;
           state.content = serializeBlocks(state.blocks);
           state.blocks = parseBlocks(state.content);
           renderSectionBlocks(section, state);
+          focusLiftedCode(container, state.blocks, fromIndex, (next) => {
+            state.caret = next;
+          });
           scheduleSectionSave(section, state);
           return;
         }
@@ -1181,25 +1208,15 @@ function buildSection(note: Note): HTMLElement {
   });
   section.addEventListener("click", (event) => {
     const state = stackState.get(note.id);
-    if (!state || !sectionBarOnly(note.id, state) || pressTravel > 8 || header.dataset.moved === "1") {
+    if (!state || !state.collapsed || pressTravel > 8 || header.dataset.moved === "1") {
       return;
     }
     if (event.target instanceof Element && event.target.closest("textarea, button, input, .color-pop, .audience-pop, .format-pop, .md-toolbar, .editor-tools")) {
       return;
     }
-    state.collapsed = false;
-    state.hover = false;
-    state.suppressHover = false;
-    if (editingHoldSection === note.id) {
-      editingHoldSection = null;
+    if (holdCollapsed(note.id)) {
+      paintChrome();
     }
-    section.classList.remove("is-bar", "hover-open");
-    paintSectionColor(section, state);
-    paintChrome();
-    resizeAllBlockTextareas(section);
-    void invoke("set_collapsed", { id: note.id, collapsed: false }).catch((error: unknown) => {
-      console.error(error);
-    });
   });
   section.addEventListener("pointerdown", (event) => {
     if (autoOpenNewSection === note.id) {
@@ -1843,6 +1860,9 @@ export function syncCollapsedPeek() {
       dismissAutoOpenNewSection();
       changed = true;
     }
+    if (next && holdCollapsed("host")) {
+      changed = true;
+    }
     if (next !== hostHover) {
       hostHover = next;
       changed = true;
@@ -1868,6 +1888,9 @@ export function syncCollapsedPeek() {
     const next = over && !state.suppressHover;
     if (next && autoOpenNewSection !== null && autoOpenNewSection !== id) {
       dismissAutoOpenNewSection();
+      changed = true;
+    }
+    if (next && id && holdCollapsed(id)) {
       changed = true;
     }
     if (next === state.hover) {
@@ -2147,7 +2170,7 @@ export function wireChrome() {
   });
 
   cardEl.addEventListener("click", (event) => {
-    if (!hostBarOnly() || pressTravel > 8) {
+    if (!hostCollapsed || pressTravel > 8) {
       return;
     }
     if (
@@ -2156,7 +2179,9 @@ export function wireChrome() {
     ) {
       return;
     }
-    void setHostCollapsed(false);
+    if (holdCollapsed("host")) {
+      paintChrome();
+    }
   });
   cardEl.addEventListener("mouseenter", (event) => {
     cursorPoint = { x: event.clientX, y: event.clientY };
@@ -2240,6 +2265,12 @@ export function wireChrome() {
         lastActiveSection = section.dataset.id;
       } else if (cardEl.contains(target)) {
         lastActiveSection = "host";
+      }
+      const folding = Boolean(target.closest("#fold-toggle, .fold-toggle"));
+      const nextHold = section?.dataset.id ?? (cardEl.contains(target) ? "host" : null);
+      if (!folding && nextHold && holdCollapsed(nextHold)) {
+        syncCollapsedPeek();
+        paintChrome();
       }
       syncActiveNoteHeader();
     }

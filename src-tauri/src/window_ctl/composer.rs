@@ -61,11 +61,13 @@ pub fn hide_composer(app: &tauri::AppHandle) {
 }
 
 pub fn hide_memos(app: &tauri::AppHandle) {
-    app.state::<AppState>()
-        .pinned_mode
-        .store(false, Ordering::SeqCst);
-    hide_pinned(app);
-    hide_pin_tabs(app);
+    if !super::show_in_switcher(app) {
+        app.state::<AppState>()
+            .pinned_mode
+            .store(false, Ordering::SeqCst);
+        hide_pinned(app);
+        hide_pin_tabs(app);
+    }
     let shown = app.state::<AppState>().shown.load(Ordering::SeqCst);
     let visible = app
         .get_webview_window(WINDOW)
@@ -74,8 +76,7 @@ pub fn hide_memos(app: &tauri::AppHandle) {
     if shown || visible {
         hide_and_save(app, false);
     } else {
-        #[cfg(target_os = "macos")]
-        let _ = app.set_activation_policy(tauri::ActivationPolicy::Accessory);
+        super::apply_switcher_policy(app);
     }
 }
 
@@ -189,10 +190,7 @@ fn hide_window(app: &tauri::AppHandle) {
     if let Some(window) = app.get_webview_window(WINDOW) {
         let _ = window.hide();
     }
-    #[cfg(target_os = "macos")]
-    if !super::pin_windows_visible(app) {
-        let _ = app.set_activation_policy(tauri::ActivationPolicy::Accessory);
-    }
+    super::apply_switcher_policy(app);
     state.shown.store(false, Ordering::SeqCst);
     state.hiding.store(false, Ordering::SeqCst);
 }

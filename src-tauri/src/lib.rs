@@ -58,6 +58,7 @@ pub fn run() {
             auth::import_legacy_token(&db)?;
             app.manage(state::AppState::new(db, media_dir)?);
             window_ctl::attach(app.handle());
+            window_ctl::apply_desktop_prefs(app.handle());
             tray::attach(app)?;
             let binds = shortcuts::load(&app.state::<state::AppState>().db);
             *app.state::<state::AppState>()
@@ -120,6 +121,8 @@ pub fn run() {
             commands::hide_composer,
             commands::set_autostart,
             commands::set_snap_memos,
+            commands::set_show_in_switcher,
+            commands::set_pinned_always_on_top,
             commands::set_coder_editor,
             commands::set_markdown_highlight,
             commands::set_markdown_scheme,
