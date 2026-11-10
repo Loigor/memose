@@ -4,7 +4,7 @@ import DOMPurify from "dompurify";
 import { marked } from "marked";
 
 import { audienceChoice, revealPressedChoice } from "./look/audience-ui";
-import { applyMediaFigureSize, handleBlockAreaNavigation, handleBlockMediaDeletion, syncInlineLineSlot } from "./editor/editor-blocks";
+import { applyMediaFigureSize, focusLiftedCode, handleBlockAreaNavigation, handleBlockMediaDeletion, syncInlineLineSlot } from "./editor/editor-blocks";
 import { memoUsesCoder, refreshEditorFields, wrapEditorField } from "./editor/editor-field";
 import { filesFromTransfer } from "./media/files";
 import { BlockHistory, cloneBlocks, restoreCaret, type Caret } from "./editor/history";
@@ -15,6 +15,7 @@ import {
   applyTask,
   applyTitle,
   closedFenceIn,
+  completeOpenFence,
   ensureTextSlots,
   isTypedBlock,
   noteTitle,
@@ -639,8 +640,15 @@ export function applySectionEdit(section: HTMLElement, state: StackState, area: 
   area.classList.toggle("empty-slot", edit.value.length === 0 && state.blocks.length > 1);
   state.content = serializeBlocks(state.blocks);
   if (block.kind === "text" && (mediaTokenRegex.test(area.value) || closedFenceIn(area.value))) {
+    const fromIndex = index;
     state.blocks = parseBlocks(state.content);
     renderSectionBlocks(section, state);
+    const container = section.querySelector<HTMLElement>(".stack-blocks");
+    if (container) {
+      focusLiftedCode(container, state.blocks, fromIndex, (next) => {
+        state.caret = next;
+      });
+    }
     scheduleSectionSave(section, state);
     return;
   }
@@ -848,10 +856,21 @@ function renderSectionBlocks(section: HTMLElement, state: StackState, focusName?
       area.addEventListener("input", () => {
         block.text = area.value;
         syncInlineLineSlot(area, prevBlock, assignedRow, container, index === lastIndex);
+        if (block.kind === "text") {
+          const closed = completeOpenFence(area.value, area.selectionStart);
+          if (closed) {
+            area.value = closed.value;
+            block.text = closed.value;
+          }
+        }
         if (block.kind === "text" && (mediaTokenRegex.test(area.value) || closedFenceIn(area.value))) {
+          const fromIndex = index;
           state.content = serializeBlocks(state.blocks);
           state.blocks = parseBlocks(state.content);
           renderSectionBlocks(section, state);
+          focusLiftedCode(container, state.blocks, fromIndex, (next) => {
+            state.caret = next;
+          });
           scheduleSectionSave(section, state);
           return;
         }

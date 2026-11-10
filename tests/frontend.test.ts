@@ -15,6 +15,8 @@ import {
   applyCode,
   applyTask,
   applyTitle,
+  completeOpenFence,
+  liftedCodeIndex,
   displayFileName,
   ensureTextSlots,
   formatDocument,
@@ -83,16 +85,36 @@ test("wrapText wraps selection and places cursor inside empty markers", () => {
   assert.equal(empty.end, 6);
 });
 
-test("applyCode wraps inline code and multiline fenced code blocks", () => {
-  const inline = applyCode("const x = 1;", 6, 7);
-  assert.equal(inline.value, "const `x` = 1;");
-  assert.equal(inline.start, 7);
-  assert.equal(inline.end, 8);
+test("applyCode inserts a fenced code block and places the caret inside", () => {
+  const empty = applyCode("", 0, 0);
+  assert.equal(empty.value, "```\n\n```");
+  assert.equal(empty.start, 4);
+  assert.equal(empty.end, 4);
+
+  const afterText = applyCode("hello", 5, 5);
+  assert.equal(afterText.value, "hello\n```\n\n```");
+  assert.equal(afterText.start, 10);
+
+  const wrapped = applyCode("const x = 1;", 6, 7);
+  assert.equal(wrapped.value, "const \n```\nx\n``` = 1;");
+  assert.equal(wrapped.start, 11);
+  assert.equal(wrapped.end, 12);
 
   const multi = applyCode("line 1\nline 2", 0, 13);
   assert.equal(multi.value, "```\nline 1\nline 2\n```");
   assert.equal(multi.start, 4);
   assert.equal(multi.end, 17);
+});
+
+test("completeOpenFence closes a ticks-only fence and liftedCodeIndex finds the new block", () => {
+  const closed = completeOpenFence("```", 3);
+  assert.equal(closed?.value, "```\n```");
+  assert.equal(closed?.start, 4);
+  assert.equal(completeOpenFence("```js", 5), null);
+  assert.equal(completeOpenFence("```\n```", 3), null);
+  const blocks = parseBlocks("hello\n```\n```");
+  assert.equal(liftedCodeIndex(blocks, 0), 1);
+  assert.equal(blocks[1]?.kind, "code");
 });
 
 test("applyTitle prefixes a line with heading and leaves existing headings intact", () => {

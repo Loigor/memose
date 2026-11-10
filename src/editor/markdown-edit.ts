@@ -26,11 +26,33 @@ export function wrapText(value: string, start: number, end: number, before: stri
 }
 
 export function applyCode(value: string, start: number, end: number): Edit {
-  const selected = value.slice(start, end);
-  if (selected.includes("\n")) {
-    return wrapText(value, start, end, "```\n", "\n```");
+  const atLineStart = start === 0 || value[start - 1] === "\n";
+  const before = atLineStart ? "```\n" : "\n```\n";
+  return wrapText(value, start, end, before, "\n```");
+}
+
+export function completeOpenFence(value: string, caret: number): Edit | null {
+  if (closedFenceIn(value)) {
+    return null;
   }
-  return wrapText(value, start, end, "`", "`");
+  const { lineStart, lineEnd } = lineBounds(value, caret);
+  const line = value.slice(lineStart, lineEnd);
+  const open = /^(```+)\s*$/.exec(line);
+  if (!open || caret < lineStart + open[1].length) {
+    return null;
+  }
+  const ticks = open[1];
+  const next = `${value.slice(0, lineEnd)}\n${ticks}${value.slice(lineEnd)}`;
+  return { value: next, start: lineEnd + 1, end: lineEnd + 1 };
+}
+
+export function liftedCodeIndex(blocks: Block[], fromIndex: number): number {
+  for (let i = Math.max(0, fromIndex); i < blocks.length; i += 1) {
+    if (blocks[i]?.kind === "code") {
+      return i;
+    }
+  }
+  return -1;
 }
 
 export function applyTitle(value: string, start: number, end: number): Edit {
