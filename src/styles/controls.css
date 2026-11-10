@@ -26,8 +26,8 @@
   width: 14px;
   height: 14px;
   background: currentColor;
-  -webkit-mask: url("./assets/codicon-fold.png") center / contain no-repeat;
-  mask: url("./assets/codicon-fold.png") center / contain no-repeat;
+  -webkit-mask: url("../assets/codicon-fold.png") center / contain no-repeat;
+  mask: url("../assets/codicon-fold.png") center / contain no-repeat;
   mask-mode: alpha;
   filter: drop-shadow(0 0 0.45px currentColor);
 }
@@ -53,15 +53,15 @@ html.collapsed.hover-open #card > header .fold-toggle:hover,
 html.collapsed:not(.hover-open) #card > header .collapsed-chevron,
 #frame.has-stack #card.is-bar > header .collapsed-chevron,
 .stack-note.is-bar > header .collapsed-chevron {
-  -webkit-mask: url("./assets/codicon-chevron-left.png") center / contain no-repeat;
-  mask: url("./assets/codicon-chevron-left.png") center / contain no-repeat;
+  -webkit-mask: url("../assets/codicon-chevron-left.png") center / contain no-repeat;
+  mask: url("../assets/codicon-chevron-left.png") center / contain no-repeat;
   filter: none;
 }
 
 html.collapsed.hover-open #card > header .collapsed-chevron,
 .stack-note.hover-open > header .collapsed-chevron {
-  -webkit-mask: url("./assets/codicon-chevron-down.png") center / contain no-repeat;
-  mask: url("./assets/codicon-chevron-down.png") center / contain no-repeat;
+  -webkit-mask: url("../assets/codicon-chevron-down.png") center / contain no-repeat;
+  mask: url("../assets/codicon-chevron-down.png") center / contain no-repeat;
   filter: none;
 }
 
@@ -85,35 +85,35 @@ html.collapsed.hover-open #card > header .collapsed-chevron,
 }
 
 .menu-glyph {
-  -webkit-mask: url("./assets/codicon-menu.png") center / contain no-repeat;
-  mask: url("./assets/codicon-menu.png") center / contain no-repeat;
+  -webkit-mask: url("../assets/codicon-menu.png") center / contain no-repeat;
+  mask: url("../assets/codicon-menu.png") center / contain no-repeat;
 }
 
 .theme-toggle.color-mode .theme-icon {
-  -webkit-mask: url("./assets/codicon-color-mode.png") center / contain no-repeat;
-  mask: url("./assets/codicon-color-mode.png") center / contain no-repeat;
+  -webkit-mask: url("../assets/codicon-color-mode.png") center / contain no-repeat;
+  mask: url("../assets/codicon-color-mode.png") center / contain no-repeat;
 }
 
 .pin-glyph {
-  -webkit-mask: url("./assets/codicon-pin.png") center / contain no-repeat;
-  mask: url("./assets/codicon-pin.png") center / contain no-repeat;
+  -webkit-mask: url("../assets/codicon-pin.png") center / contain no-repeat;
+  mask: url("../assets/codicon-pin.png") center / contain no-repeat;
 }
 
 #pin-toggle[aria-pressed="true"] .pin-glyph,
 .pin-toggle[aria-pressed="true"] .pin-glyph,
 #recent .pin[aria-pressed="true"] .pin-glyph {
-  -webkit-mask: url("./assets/codicon-pinned.png") center / contain no-repeat;
-  mask: url("./assets/codicon-pinned.png") center / contain no-repeat;
+  -webkit-mask: url("../assets/codicon-pinned.png") center / contain no-repeat;
+  mask: url("../assets/codicon-pinned.png") center / contain no-repeat;
 }
 
 .preview-glyph {
-  -webkit-mask: url("./assets/codicon-open-preview.png") center / contain no-repeat;
-  mask: url("./assets/codicon-open-preview.png") center / contain no-repeat;
+  -webkit-mask: url("../assets/codicon-open-preview.png") center / contain no-repeat;
+  mask: url("../assets/codicon-open-preview.png") center / contain no-repeat;
 }
 
 .markdown-glyph {
-  -webkit-mask: url("./assets/codicon-markdown.png") center / contain no-repeat;
-  mask: url("./assets/codicon-markdown.png") center / contain no-repeat;
+  -webkit-mask: url("../assets/codicon-markdown.png") center / contain no-repeat;
+  mask: url("../assets/codicon-markdown.png") center / contain no-repeat;
 }
 
 #mode-toggle[aria-pressed="true"],
