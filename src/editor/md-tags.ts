@@ -21,7 +21,7 @@ function tagPattern(): RegExp {
 export function wrapTagsHtml(escaped: string): string {
   const skip = new Set(["md-code", "md-fence", "md-link", "md-image"]);
   const stack: string[] = [];
-  return escaped.replace(/(<[^>]+>)|([^<]+)/g, (chunk, tag: string | undefined, text: string | undefined) => {
+  return escaped.replace(/(<[^>]+>)|([^<]+)/g, (html, tag: string | undefined, text: string | undefined) => {
     if (tag) {
       const open = /^<span class="([^"]+)"/.exec(tag);
       if (open?.[1]) {
@@ -29,7 +29,7 @@ export function wrapTagsHtml(escaped: string): string {
       } else if (tag.startsWith("</span") && stack.length > 0) {
         stack.pop();
       }
-      return tag;
+      return html;
     }
     if (stack.some((cls) => skip.has(cls))) {
       return text ?? "";

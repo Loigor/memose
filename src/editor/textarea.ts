@@ -126,7 +126,8 @@ export function scrollTextOffsetIntoView(area: HTMLTextAreaElement, offset: numb
   const pin = () => {
     const lines = measureTextareaLines(area);
     const line =
-      lines.find((item) => offset >= item.startOffset && offset <= item.endOffset) ?? lines.at(-1);
+      lines.find((item) => offset >= item.startOffset && offset <= item.endOffset) ??
+      lines[lines.length - 1];
     if (!line) {
       return;
     }

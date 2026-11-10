@@ -1931,7 +1931,7 @@ notePaneEl.addEventListener("mousedown", () => {
   dismissList();
 });
 
-const notesRoot = document.querySelector("#notes") ?? cardEl;
+const notesRoot = document.querySelector<HTMLElement>("#notes") ?? cardEl;
 let tagCursorFrame = 0;
 notesRoot.addEventListener("click", (event) => {
   const tag = tagFromEvent(event);
