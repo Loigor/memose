@@ -75,3 +75,19 @@
   background: transparent;
   pointer-events: none;
 }
+
+/* Overlay glyphs must sit on the same grid as the caret. */
+#blocks .md-field:not([data-coder]) textarea,
+.stack-blocks .md-field:not([data-coder]) textarea,
+#blocks .md-field:not([data-coder]) .md-hl,
+.stack-blocks .md-field:not([data-coder]) .md-hl {
+  padding: 0;
+  font: inherit;
+  font-size: 16px;
+  line-height: 1.4;
+  letter-spacing: inherit;
+  tab-size: 4;
+  white-space: pre-wrap;
+  word-wrap: break-word;
+  overflow-wrap: break-word;
+}

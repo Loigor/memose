@@ -4,22 +4,37 @@ export function editorShell(area: HTMLTextAreaElement): HTMLElement {
   return area.closest(".md-field") ?? area;
 }
 
-export function sizeBlockTextarea(area: HTMLTextAreaElement) {
-  area.rows = 1;
-  const isGrow = area.classList.contains("grow");
-  const isInline = area.classList.contains("inline-line-slot");
-  const isEmpty = area.value.length === 0;
-  area.classList.toggle("empty-slot", isEmpty && !isGrow && !isInline);
-  if (isEmpty && !isGrow && !isInline) {
-    area.style.height = "";
-    paintEditorField(area);
-    return;
+export function withKeptScroll(roots: Array<HTMLElement | null | undefined>, run: () => void) {
+  const saved = roots
+    .filter((el): el is HTMLElement => el != null)
+    .map((el) => ({ el, top: el.scrollTop }));
+  run();
+  for (const item of saved) {
+    item.el.scrollTop = item.top;
   }
-  area.style.height = "0px";
-  const minH = isGrow ? 64 : 22;
-  const needed = Math.max(minH, area.scrollHeight);
-  area.style.height = `${needed}px`;
-  paintEditorField(area);
+}
+
+export function sizeBlockTextarea(area: HTMLTextAreaElement) {
+  // height:0 measurement would clamp parent overflow to the top.
+  const blocks = area.closest<HTMLElement>("#blocks, .stack-blocks");
+  const pane = area.closest<HTMLElement>("#note-pane");
+  withKeptScroll([blocks, pane === blocks ? null : pane], () => {
+    area.rows = 1;
+    const isGrow = area.classList.contains("grow");
+    const isInline = area.classList.contains("inline-line-slot");
+    const isEmpty = area.value.length === 0;
+    area.classList.toggle("empty-slot", isEmpty && !isGrow && !isInline);
+    if (isEmpty && !isGrow && !isInline) {
+      area.style.height = "";
+      paintEditorField(area);
+      return;
+    }
+    area.style.height = "0px";
+    const minH = isGrow ? 64 : 22;
+    const needed = Math.max(minH, area.scrollHeight);
+    area.style.height = `${needed}px`;
+    paintEditorField(area);
+  });
 }
 
 export function resizeAllBlockTextareas(root: ParentNode = document) {

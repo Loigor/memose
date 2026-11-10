@@ -9,6 +9,7 @@ import { highlightMarkdown } from "../src/editor/md-highlight.ts";
 import { tagAtOffset } from "../src/editor/md-tags.ts";
 import { uniqueFiles } from "../src/media/files.ts";
 import { BlockHistory, cloneBlocks, restorePlace } from "../src/editor/history.ts";
+import { withKeptScroll } from "../src/editor/textarea.ts";
 import { defaultLook, lookFromNote, namedTheme } from "../src/look/look.ts";
 import {
   applyCode,
@@ -375,6 +376,49 @@ test("look helpers normalize note color and theme", () => {
 
 test("restorePlace no-ops without a saved caret", () => {
   assert.equal(restorePlace({ querySelector() { return null; } } as unknown as ParentNode, null), false);
+});
+
+test("withKeptScroll restores scroller position after a collapse", () => {
+  const scroller = { scrollTop: 180 };
+  withKeptScroll([scroller as HTMLElement], () => {
+    scroller.scrollTop = 0;
+  });
+  assert.equal(scroller.scrollTop, 180);
+});
+
+test("restorePlace can restore pane scroll without focusing", () => {
+  const area = {
+    value: "hello",
+    dataset: { index: "0" },
+    scrollTop: 0,
+    scrollLeft: 0,
+    focus() {
+      this.focused = true;
+    },
+    setSelectionRange() {
+      this.selected = true;
+    },
+    focused: false,
+    selected: false,
+  };
+  const container = {
+    scrollTop: 0,
+    querySelector() {
+      return area;
+    },
+  };
+  assert.equal(
+    restorePlace(
+      container as unknown as ParentNode,
+      { caret: { index: 0, start: 1, end: 1 }, scrollTop: 4, scrollLeft: 0, paneScroll: 90 },
+      false,
+    ),
+    true,
+  );
+  assert.equal(area.focused, false);
+  assert.equal(area.selected, false);
+  assert.equal(area.scrollTop, 4);
+  assert.equal(container.scrollTop, 90);
 });
 
 test("BlockHistory clones blocks and undoes to the previous snapshot", () => {

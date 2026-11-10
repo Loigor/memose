@@ -186,10 +186,13 @@ function resumePlace() {
   if (pinnedNoteId && resumeStackEditor()) {
     return;
   }
-  if (restorePlace(blocksEl, editorPlaces.get(placeKey()) ?? null)) {
+  const focused = typeof document === "undefined" ? true : document.hasFocus();
+  if (restorePlace(blocksEl, editorPlaces.get(placeKey()) ?? null, focused)) {
     return;
   }
-  focusNote();
+  if (focused) {
+    focusNote();
+  }
 }
 
 function composerNoteId(): string | null {
@@ -289,6 +292,7 @@ marked.setOptions({ gfm: true, breaks: true });
 
 const cardEl = requireEl(card, "card");
 const blocksEl = requireEl(blocks, "blocks");
+blocksEl.addEventListener("scroll", rememberPlace);
 const previewEl = requireEl(preview, "preview");
 const notePaneEl = requireEl(notePane, "note pane");
 const lightboxEl = requireEl(lightbox, "lightbox");
@@ -2810,6 +2814,7 @@ function applyPinned(note: Note) {
     editingId = note.id;
     showStored(note.content);
     loadedContent = note.content;
+    resumePlace();
   }
   setConflict(note.syncState === "conflict" ? note.id : null);
   setPinPressed(note.pinned);
@@ -2955,9 +2960,12 @@ if (isPreviewWindow()) {
     }
   });
   void listen("notes-changed", () => {
-    void loadPinned(pinnedNoteId).catch((error: unknown) => {
-      console.error(error);
-    });
+    rememberPlace();
+    void loadPinned(pinnedNoteId)
+      .then(() => resumePlace())
+      .catch((error: unknown) => {
+        console.error(error);
+      });
   });
   void listen("stack-changed", () => {
     void loadStack().catch((error: unknown) => {
