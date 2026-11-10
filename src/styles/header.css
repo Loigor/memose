@@ -530,7 +530,9 @@ header.compact-meta #edited-sep {
   display: flex;
   align-items: center;
   gap: 4px;
-  background: var(--paper);
+  padding: 3px;
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--ink) 14%, transparent);
 }
 
 .hue-slot,

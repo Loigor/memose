@@ -1,9 +1,11 @@
 use std::sync::atomic::Ordering;
 use std::time::{Duration, Instant};
 
-use tauri::{Emitter, LogicalSize, Manager, PhysicalPosition, WebviewWindow, WindowEvent};
+use tauri::{
+    Emitter, LogicalSize, Manager, PhysicalPosition, PhysicalSize, WebviewWindow, WindowEvent,
+};
 
-use super::drag::{schedule_settle, slide_back};
+use super::drag::{schedule_settle, slide_back, slide_into_view_sized};
 use super::pin::{hide_pinned, open_pinned_windows};
 use super::{
     clamp_position, contains, hide_pin_tabs, schedule_resign, snap_enabled, snap_screen_edges,
@@ -193,6 +195,21 @@ fn hide_window(app: &tauri::AppHandle) {
     }
     state.shown.store(false, Ordering::SeqCst);
     state.hiding.store(false, Ordering::SeqCst);
+}
+
+pub fn apply_composer_size(app: &tauri::AppHandle, width: Option<i32>, height: Option<i32>) {
+    let Some(window) = app.get_webview_window(WINDOW) else {
+        return;
+    };
+    match (width, height) {
+        (Some(width), Some(height)) if width > 0 && height > 0 => {
+            let _ = window.set_size(PhysicalSize::new(width as u32, height as u32));
+            slide_into_view_sized(app, WINDOW, width, height);
+        }
+        _ => {
+            let _ = window.set_size(LogicalSize::new(CARD_WIDTH, CARD_HEIGHT));
+        }
+    }
 }
 
 fn cycle_composer(app: &tauri::AppHandle) {

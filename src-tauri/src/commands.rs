@@ -256,6 +256,21 @@ pub fn set_window_height(app: AppHandle, label: String, height: i32) {
 }
 
 #[tauri::command]
+pub fn apply_composer_size(app: AppHandle, width: Option<i32>, height: Option<i32>) {
+    window_ctl::apply_composer_size(&app, width, height);
+}
+
+#[tauri::command]
+pub fn save_note_size(
+    state: State<AppState>,
+    id: String,
+    width: i32,
+    height: i32,
+) -> Result<(), AppError> {
+    state.db.save_size(&id, width, height)
+}
+
+#[tauri::command]
 pub fn begin_memo_drag(app: AppHandle, label: String) {
     window_ctl::begin_memo_drag(app, label);
 }
@@ -281,7 +296,10 @@ pub async fn begin_corner_resize(app: AppHandle, label: String, edge: Option<Str
     let resize_edge = match edge.as_deref() {
         Some("w") => window_ctl::ResizeEdge::West,
         Some("e") => window_ctl::ResizeEdge::East,
+        Some("n") => window_ctl::ResizeEdge::North,
         Some("s") => window_ctl::ResizeEdge::South,
+        Some("nw") => window_ctl::ResizeEdge::NorthWest,
+        Some("ne") => window_ctl::ResizeEdge::NorthEast,
         Some("sw") => window_ctl::ResizeEdge::SouthWest,
         _ => window_ctl::ResizeEdge::SouthEast,
     };
@@ -572,6 +590,22 @@ pub async fn test_memos(app: AppHandle, state: State<'_, AppState>) -> Result<St
     db.set_meta(notes::API_FLAVOR, flavor.as_str())?;
     let _ = app.emit("settings-changed", ());
     Ok(flavor.as_str().to_string())
+}
+
+#[tauri::command]
+pub fn list_hue_swatches(state: State<AppState>) -> Result<Vec<u16>, AppError> {
+    state.db.hue_swatches()
+}
+
+#[tauri::command]
+pub fn save_hue_swatches(
+    app: AppHandle,
+    state: State<AppState>,
+    swatches: Vec<u16>,
+) -> Result<Vec<u16>, AppError> {
+    let next = state.db.set_hue_swatches(&swatches)?;
+    let _ = app.emit("hue-swatches-changed", &next);
+    Ok(next)
 }
 
 #[tauri::command]

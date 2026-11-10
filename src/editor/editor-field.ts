@@ -51,9 +51,15 @@ export function wrapEditorField(area: HTMLTextAreaElement): HTMLElement {
   surface.append(highlight, area, overflowLayer(surface));
   field.append(gutter, surface);
   area.addEventListener("scroll", () => syncEditorScroll(area));
+  let resizeFrame = 0;
   new ResizeObserver(() => {
-    const coder = Boolean(area.closest("#card, .stack-note")?.hasAttribute("data-coder"));
-    markLongLines(highlight, coder);
+    if (resizeFrame) {
+      return;
+    }
+    resizeFrame = requestAnimationFrame(() => {
+      resizeFrame = 0;
+      markLongLines(highlight, fieldUsesCoder(area));
+    });
   }).observe(surface);
   paintEditorField(area);
   return field;
@@ -69,19 +75,24 @@ export function paintEditorField(area: HTMLTextAreaElement) {
   if (!highlight || !gutter) {
     return;
   }
-  const coder = Boolean(area.closest("#card, .stack-note")?.hasAttribute("data-coder"));
+  const coder = fieldUsesCoder(area);
+  field.toggleAttribute("data-coder", coder);
+  const wrap = Boolean(area.closest("#card, .stack-note")?.hasAttribute("data-wrap"));
+  field.toggleAttribute("data-wrap", coder && wrap);
   if (prefs.markdownHighlight || coder) {
-    highlight.innerHTML = highlightMarkdown(area.value);
+    highlight.innerHTML = highlightMarkdown(area.value, { tags: !coder });
   } else {
     highlight.replaceChildren();
   }
   if (coder) {
-    const count = area.value.split("\n").length;
-    gutter.textContent = Array.from({ length: count }, (_, index) => String(index + 1)).join("\n");
+    paintGutter(gutter, area.value.split("\n").length);
   } else {
     gutter.textContent = "";
+    gutter.style.removeProperty("--gutter-cols");
+    delete gutter.dataset.lines;
   }
   syncEditorScroll(area);
+  markLongLines(highlight, coder);
 }
 
 export function refreshEditorFields(root: ParentNode = document) {
@@ -110,6 +121,23 @@ function applyEditorDataset() {
   document.documentElement.dataset.mdhlScheme = prefs.markdownScheme;
 }
 
+function fieldUsesCoder(area: HTMLTextAreaElement): boolean {
+  if (area.dataset.kind === "code") {
+    return true;
+  }
+  return Boolean(area.closest("#card, .stack-note")?.hasAttribute("data-coder"));
+}
+
+function paintGutter(gutter: HTMLElement, count: number) {
+  const digits = String(Math.max(1, count)).length;
+  gutter.style.setProperty("--gutter-cols", String(Math.max(2, digits)));
+  if (gutter.dataset.lines === String(count)) {
+    return;
+  }
+  gutter.dataset.lines = String(count);
+  gutter.textContent = Array.from({ length: count }, (_, index) => String(index + 1)).join("\n");
+}
+
 function overflowLayer(surface: HTMLElement): HTMLElement {
   const existing = surface.querySelector<HTMLElement>(".md-overflow");
   if (existing) {
@@ -118,8 +146,55 @@ function overflowLayer(surface: HTMLElement): HTMLElement {
   const marks = document.createElement("div");
   marks.className = "md-overflow";
   marks.setAttribute("aria-hidden", "true");
+  const shift = document.createElement("div");
+  shift.className = "md-overflow-shift";
+  marks.append(shift);
   surface.append(marks);
   return marks;
+}
+
+function overflowShift(surface: HTMLElement): HTMLElement {
+  const marks = overflowLayer(surface);
+  const existing = marks.querySelector<HTMLElement>(".md-overflow-shift");
+  if (existing) {
+    return existing;
+  }
+  const shift = document.createElement("div");
+  shift.className = "md-overflow-shift";
+  marks.append(shift);
+  return shift;
+}
+
+let measureCtx: CanvasRenderingContext2D | null = null;
+
+function lineMeasure(font: string): CanvasRenderingContext2D | null {
+  if (typeof document === "undefined") {
+    return null;
+  }
+  if (!measureCtx) {
+    const canvas = document.createElement("canvas");
+    measureCtx = canvas.getContext("2d");
+  }
+  if (measureCtx) {
+    measureCtx.font = font;
+  }
+  return measureCtx;
+}
+
+function expandTabs(line: string, tab = 4): string {
+  let out = "";
+  let col = 0;
+  for (const char of line) {
+    if (char === "\t") {
+      const n = tab - (col % tab);
+      out += " ".repeat(n);
+      col += n;
+    } else {
+      out += char;
+      col += 1;
+    }
+  }
+  return out;
 }
 
 function markLongLines(highlight: HTMLElement, coder: boolean) {
@@ -127,26 +202,38 @@ function markLongLines(highlight: HTMLElement, coder: boolean) {
   if (!(surface instanceof HTMLElement)) {
     return;
   }
-  const marks = overflowLayer(surface);
-  const surfaceRect = surface.getBoundingClientRect();
-  marks.replaceChildren();
-  const padLeft = Number.parseFloat(getComputedStyle(highlight).paddingLeft) || 0;
-  const padRight = Number.parseFloat(getComputedStyle(highlight).paddingRight) || 0;
+  const shift = overflowShift(surface);
+  const wrap = Boolean(highlight.closest(".md-field")?.hasAttribute("data-wrap"));
+  const area = surface.querySelector("textarea");
+  if (!coder || wrap || !(area instanceof HTMLTextAreaElement)) {
+    shift.replaceChildren();
+    shift.style.transform = "";
+    return;
+  }
+  const style = getComputedStyle(highlight);
+  const padLeft = Number.parseFloat(style.paddingLeft) || 0;
+  const padRight = Number.parseFloat(style.paddingRight) || 0;
+  const padTop = Number.parseFloat(style.paddingTop) || 0;
+  const fontSize = Number.parseFloat(style.fontSize) || 13;
+  const lineHeight = Number.parseFloat(style.lineHeight) || fontSize * 1.45;
   const inner = highlight.clientWidth - padLeft - padRight;
-  const wrap = Boolean(highlight.closest("#card, .stack-note")?.hasAttribute("data-wrap"));
-  for (const text of highlight.querySelectorAll<HTMLElement>(".md-line-text")) {
-    const wide = text.getBoundingClientRect().width;
-    const long = coder && !wrap && wide > inner + 1;
-    text.classList.toggle("is-long", long);
+  const ctx = lineMeasure(style.font);
+  const lines = area.value.split("\n");
+  const texts = highlight.querySelectorAll<HTMLElement>(".md-line-text");
+  shift.replaceChildren();
+  for (let index = 0; index < lines.length; index += 1) {
+    const wide = ctx ? ctx.measureText(expandTabs(lines[index] ?? "")).width : 0;
+    const long = wide > inner + 1;
+    texts[index]?.classList.toggle("is-long", long);
     if (!long) {
       continue;
     }
-    const lineRect = text.getBoundingClientRect();
     const dot = document.createElement("span");
     dot.className = "md-overflow-dot";
-    dot.style.top = `${lineRect.top - surfaceRect.top + lineRect.height / 2}px`;
-    marks.append(dot);
+    dot.style.top = `${padTop + (index + 0.5) * lineHeight}px`;
+    shift.append(dot);
   }
+  shift.style.transform = `translateY(${-highlight.scrollTop}px)`;
 }
 
 applyEditorDataset();
@@ -158,11 +245,13 @@ function syncEditorScroll(area: HTMLTextAreaElement) {
   }
   const highlight = field.querySelector<HTMLElement>(".md-hl");
   const gutter = field.querySelector<HTMLElement>(".md-gutter");
+  const shift = field.querySelector<HTMLElement>(".md-overflow-shift");
   if (highlight) {
     highlight.scrollTop = area.scrollTop;
     highlight.scrollLeft = area.scrollLeft;
-    const coder = Boolean(area.closest("#card, .stack-note")?.hasAttribute("data-coder"));
-    markLongLines(highlight, coder);
+  }
+  if (shift) {
+    shift.style.transform = `translateY(${-area.scrollTop}px)`;
   }
   if (gutter) {
     gutter.scrollTop = area.scrollTop;

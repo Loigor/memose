@@ -453,6 +453,21 @@ impl Db {
         })
     }
 
+    pub fn hue_swatches(&self) -> Result<Vec<u16>, AppError> {
+        Ok(parse_swatches(self.get_meta(HUE_SWATCHES)?))
+    }
+
+    pub fn set_hue_swatches(&self, swatches: &[u16]) -> Result<Vec<u16>, AppError> {
+        let stored = encode_swatches(swatches);
+        let hues = parse_swatches(stored.clone());
+        if let Some(raw) = stored {
+            self.set_meta(HUE_SWATCHES, &raw)?;
+        } else {
+            self.clear_meta(HUE_SWATCHES)?;
+        }
+        Ok(hues)
+    }
+
     pub fn media_upload_for_local(
         &self,
         local_name: &str,
@@ -553,6 +568,7 @@ pub const SNAP_MEMOS: &str = "snap_memos";
 pub const CODER_EDITOR: &str = "coder_editor";
 pub const MARKDOWN_HIGHLIGHT: &str = "markdown_highlight";
 pub const MARKDOWN_SCHEME: &str = "markdown_scheme";
+pub const HUE_SWATCHES: &str = "hue_swatches";
 
 pub fn canonical_visibility(value: &str) -> String {
     match value.trim().to_ascii_uppercase().as_str() {
@@ -936,6 +952,16 @@ mod tests {
     }
 
     #[test]
+    fn hue_swatches_are_global() {
+        let db = db();
+        assert!(db.hue_swatches().unwrap().is_empty());
+        assert_eq!(db.set_hue_swatches(&[48, 210, 400]).unwrap(), vec![48, 210]);
+        assert_eq!(db.hue_swatches().unwrap(), vec![48, 210]);
+        assert!(db.set_hue_swatches(&[]).unwrap().is_empty());
+        assert!(db.hue_swatches().unwrap().is_empty());
+    }
+
+    #[test]
     fn an_empty_memo_can_be_published() {
         let db = db();
         let note = db.publish_note(None, "  ").unwrap();
@@ -981,6 +1007,12 @@ mod tests {
         assert_eq!(pinned[0].win_y, Some(34));
         assert_eq!(pinned[0].win_w, Some(400));
         assert_eq!(pinned[0].win_h, Some(480));
+        db.save_size(&draft.id, 520, 700).unwrap();
+        let resized = db.get(&draft.id).unwrap().unwrap();
+        assert_eq!(resized.win_x, Some(12));
+        assert_eq!(resized.win_y, Some(34));
+        assert_eq!(resized.win_w, Some(520));
+        assert_eq!(resized.win_h, Some(700));
         db.set_pinned(&draft.id, false).unwrap();
         assert!(db.list_pinned().unwrap().is_empty());
     }

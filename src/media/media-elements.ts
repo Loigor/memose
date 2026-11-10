@@ -10,6 +10,7 @@ import {
   mediaPrefix,
   parseMediaMeta,
 } from "../editor/markdown-edit";
+import { linkTagsIn } from "../editor/md-tags";
 import { inTauri } from "../platform";
 
 export const mediaPointer = {
@@ -317,7 +318,7 @@ export function previewBodyTarget(target: EventTarget | null): target is Element
   return (
     target instanceof Element &&
     Boolean(target.closest("#note-pane")) &&
-    !target.closest("a, input, img, video, audio, .media-audio, .file-attachment, button")
+    !target.closest("a, input, img, video, audio, .media-audio, .file-attachment, button, .md-tag")
   );
 }
 
@@ -326,6 +327,7 @@ export async function hydratePreviewContent(
   isCurrent: () => boolean = () => true,
   onPreview?: (name: string) => void,
 ) {
+  linkTagsIn(container);
   for (const box of container.querySelectorAll("input[type='checkbox']")) {
     if (box instanceof HTMLInputElement) {
       box.disabled = false;

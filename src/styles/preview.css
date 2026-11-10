@@ -16,6 +16,7 @@ textarea,
   font: inherit;
   font-size: 16px;
   line-height: 1.4;
+  tab-size: 4;
   resize: none;
   outline: none;
 }
@@ -28,6 +29,14 @@ textarea,
 
 #preview :first-child {
   margin-top: 0;
+}
+
+#preview .md-tag,
+.stack-preview .md-tag {
+  color: var(--md-link);
+  cursor: pointer;
+  text-decoration: underline;
+  text-underline-offset: 2px;
 }
 
 #preview pre,

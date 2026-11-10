@@ -61,6 +61,9 @@ test("theme and hue controls persist look on a pinned stack", async ({ page }) =
   await expect(page.locator("#color-pop")).toBeVisible();
   await page.locator("#hue-slider").fill("200");
   await expect.poll(async () => invokedCmds(page)).toContain("save_look");
+  await page.locator("#hue-add").click();
+  await expect.poll(async () => invokedCmds(page)).toContain("save_hue_swatches");
+  await expect(page.locator("#hue-slots .hue-slot").first()).not.toHaveCSS("background-color", "rgba(0, 0, 0, 0)");
 });
 
 test("deleting a stacked guest removes it from the chain", async ({ page }) => {

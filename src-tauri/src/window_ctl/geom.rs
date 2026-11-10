@@ -321,8 +321,11 @@ pub(super) fn closer_snap_x(current: i32, screen: i32, memo: i32) -> i32 {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ResizeEdge {
     East,
+    North,
     South,
     West,
+    NorthEast,
+    NorthWest,
     SouthEast,
     SouthWest,
 }
@@ -340,23 +343,36 @@ pub fn resize_frame(
     edge: ResizeEdge,
 ) -> (i32, i32, i32, i32) {
     let width = match edge {
-        ResizeEdge::East | ResizeEdge::SouthEast => start_w.saturating_add(dx).max(min_w),
-        ResizeEdge::West | ResizeEdge::SouthWest => start_w.saturating_sub(dx).max(min_w),
-        ResizeEdge::South => start_w,
+        ResizeEdge::East | ResizeEdge::SouthEast | ResizeEdge::NorthEast => {
+            start_w.saturating_add(dx).max(min_w)
+        }
+        ResizeEdge::West | ResizeEdge::SouthWest | ResizeEdge::NorthWest => {
+            start_w.saturating_sub(dx).max(min_w)
+        }
+        ResizeEdge::South | ResizeEdge::North => start_w,
     };
     let height = match edge {
         ResizeEdge::South | ResizeEdge::SouthEast | ResizeEdge::SouthWest => {
             start_h.saturating_add(dy).max(min_h)
         }
+        ResizeEdge::North | ResizeEdge::NorthEast | ResizeEdge::NorthWest => {
+            start_h.saturating_sub(dy).max(min_h)
+        }
         ResizeEdge::East | ResizeEdge::West => start_h,
     };
     let x = match edge {
-        ResizeEdge::West | ResizeEdge::SouthWest => {
+        ResizeEdge::West | ResizeEdge::SouthWest | ResizeEdge::NorthWest => {
             start_x.saturating_add(start_w.saturating_sub(width))
         }
-        ResizeEdge::East | ResizeEdge::South | ResizeEdge::SouthEast => start_x,
+        _ => start_x,
     };
-    (x, start_y, width, height)
+    let y = match edge {
+        ResizeEdge::North | ResizeEdge::NorthEast | ResizeEdge::NorthWest => {
+            start_y.saturating_add(start_h.saturating_sub(height))
+        }
+        _ => start_y,
+    };
+    (x, y, width, height)
 }
 
 pub(super) fn overlap_span(start: i32, length: i32, area_start: i32, area_end: i32) -> i32 {
@@ -518,6 +534,22 @@ mod tests {
         assert_eq!(
             resize_frame(100, 50, 400, 500, 50, 40, 220, 140, ResizeEdge::South),
             (100, 50, 400, 540)
+        );
+        assert_eq!(
+            resize_frame(100, 50, 400, 500, 50, -40, 220, 140, ResizeEdge::North),
+            (100, 10, 400, 540)
+        );
+        assert_eq!(
+            resize_frame(100, 50, 400, 500, 50, 400, 220, 140, ResizeEdge::North),
+            (100, 410, 400, 140)
+        );
+        assert_eq!(
+            resize_frame(100, 50, 400, 500, 50, -40, 220, 140, ResizeEdge::NorthEast),
+            (100, 10, 450, 540)
+        );
+        assert_eq!(
+            resize_frame(100, 50, 400, 500, -40, -40, 220, 140, ResizeEdge::NorthWest),
+            (60, 10, 440, 540)
         );
     }
 

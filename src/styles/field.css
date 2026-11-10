@@ -38,12 +38,13 @@
   display: none;
   flex: none;
   box-sizing: border-box;
-  width: 2.2em;
+  width: calc(var(--gutter-cols, 2) * 1ch + 10px);
   margin: 0;
   padding: 0 6px 0 4px;
   overflow: hidden;
   text-align: right;
   white-space: pre;
+  font-variant-numeric: tabular-nums;
   color: color-mix(in srgb, var(--ink) 42%, transparent);
   pointer-events: none;
   user-select: none;
@@ -66,6 +67,7 @@
   font-size: 16px;
   line-height: 1.4;
   letter-spacing: inherit;
+  tab-size: 4;
   white-space: pre-wrap;
   word-wrap: break-word;
   overflow-wrap: break-word;

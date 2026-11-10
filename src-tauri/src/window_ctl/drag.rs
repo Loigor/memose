@@ -221,17 +221,21 @@ fn snap_resized_edges(app: &AppHandle, window: &WebviewWindow) {
     };
     let area = monitor.work_area();
     let pad_x = (CARD_PAD_X * scale).round() as i32;
+    let pad_top = (CARD_PAD_TOP * scale).round() as i32;
     let pad_bottom = (CARD_PAD_BOTTOM * scale).round() as i32;
     let threshold = (f64::from(EDGE_CATCH) * scale).round() as i32;
     let min_w = (220.0 * scale).round() as i32;
     let min_h = (140.0 * scale).round() as i32;
     let left = position.x + pad_x;
     let right = position.x + size.width as i32 - pad_x;
+    let top = position.y + pad_top;
     let bottom = position.y + size.height as i32 - pad_bottom;
     let area_left = area.position.x;
     let area_right = area.position.x + area.size.width as i32;
+    let area_top = area.position.y;
     let area_bottom = area.position.y + area.size.height as i32;
     let mut x = position.x;
+    let mut y = position.y;
     let mut width = size.width as i32;
     let mut height = size.height as i32;
     if (left - area_left).abs() <= threshold {
@@ -250,17 +254,31 @@ fn snap_resized_edges(app: &AppHandle, window: &WebviewWindow) {
             width = next;
         }
     }
+    if (top - area_top).abs() <= threshold {
+        let target_y = area_top - pad_top;
+        if target_y != position.y {
+            let next = height + (position.y - target_y);
+            if next >= min_h {
+                y = target_y;
+                height = next;
+            }
+        }
+    }
     if (bottom - area_bottom).abs() <= threshold {
-        let next = area_bottom + pad_bottom - position.y;
+        let next = area_bottom + pad_bottom - y;
         if next >= min_h {
             height = next;
         }
     }
-    if x == position.x && width == size.width as i32 && height == size.height as i32 {
+    if x == position.x
+        && y == position.y
+        && width == size.width as i32
+        && height == size.height as i32
+    {
         return;
     }
-    if x != position.x {
-        let _ = window.set_position(PhysicalPosition::new(x, position.y));
+    if x != position.x || y != position.y {
+        let _ = window.set_position(PhysicalPosition::new(x, y));
     }
     let _ = window.set_size(PhysicalSize::new(width.max(1) as u32, height.max(1) as u32));
 }
@@ -344,8 +362,11 @@ fn start_native_resize(window: &WebviewWindow, edge: ResizeEdge) {
     };
     let name = match edge {
         ResizeEdge::East => "East",
+        ResizeEdge::North => "North",
         ResizeEdge::South => "South",
         ResizeEdge::West => "West",
+        ResizeEdge::NorthEast => "NorthEast",
+        ResizeEdge::NorthWest => "NorthWest",
         ResizeEdge::SouthEast => "SouthEast",
         ResizeEdge::SouthWest => "SouthWest",
     };
@@ -1465,6 +1486,16 @@ fn glide_window(
 }
 
 pub fn slide_into_view(app: &AppHandle, label: &str) {
+    let Some(window) = app.get_webview_window(label) else {
+        return;
+    };
+    let Ok(size) = window.outer_size() else {
+        return;
+    };
+    slide_into_view_sized(app, label, size.width as i32, size.height as i32);
+}
+
+pub(super) fn slide_into_view_sized(app: &AppHandle, label: &str, outer_w: i32, outer_h: i32) {
     if drag_active(label)
         || resize_active(label)
         || follow_active(label.strip_prefix("pin-").unwrap_or(""))
@@ -1480,9 +1511,6 @@ pub fn slide_into_view(app: &AppHandle, label: &str) {
     let Ok(position) = window.outer_position() else {
         return;
     };
-    let Ok(size) = window.outer_size() else {
-        return;
-    };
     let Ok(scale) = window.scale_factor() else {
         return;
     };
@@ -1490,8 +1518,7 @@ pub fn slide_into_view(app: &AppHandle, label: &str) {
         return;
     };
     let area = monitor.work_area();
-    if size.width as i32 >= area.size.width as i32 || size.height as i32 >= area.size.height as i32
-    {
+    if outer_w >= area.size.width as i32 || outer_h >= area.size.height as i32 {
         return;
     }
     let pad_x = (CARD_PAD_X * scale).round() as i32;
@@ -1499,8 +1526,8 @@ pub fn slide_into_view(app: &AppHandle, label: &str) {
     let pad_bottom = (CARD_PAD_BOTTOM * scale).round() as i32;
     let left = position.x + pad_x;
     let top = position.y + pad_top;
-    let width = (size.width as i32 - pad_x.saturating_mul(2)).max(1);
-    let height = (size.height as i32 - pad_top - pad_bottom).max(1);
+    let width = (outer_w - pad_x.saturating_mul(2)).max(1);
+    let height = (outer_h - pad_top - pad_bottom).max(1);
     let Some((next_left, next_top)) = slide_card_into_view(
         left,
         top,

@@ -54,12 +54,6 @@
               <span class="menu-glyph" aria-hidden="true"></span>
             </button>
             <div id="editor-tools" class="editor-tools">
-              <button id="markdown-toggle" class="markdown-toggle icon-button" type="button" aria-label="Markdown toolbar" aria-pressed="false" title="Markdown toolbar">
-                <span class="markdown-glyph" aria-hidden="true"></span>
-              </button>
-              <button id="coder-toggle" class="coder-toggle coder-tool icon-button" type="button" aria-label="Coder editor" aria-pressed="false" title="Coder editor">
-                { }
-              </button>
               <div class="format-anchor">
                 <button id="format-toggle" class="format-toggle coder-tool icon-button" type="button" aria-label="Format" aria-expanded="false" title="Format">Format</button>
                 <div id="format-pop" class="format-pop" hidden>
@@ -67,6 +61,12 @@
                   <button type="button" data-format="wrap" aria-pressed="false">Line wrap</button>
                 </div>
               </div>
+              <button id="markdown-toggle" class="markdown-toggle icon-button" type="button" aria-label="Markdown toolbar" aria-pressed="false" title="Markdown toolbar">
+                <span class="markdown-glyph" aria-hidden="true"></span>
+              </button>
+              <button id="coder-toggle" class="coder-toggle coder-tool icon-button" type="button" aria-label="Coder editor" aria-pressed="false" title="Coder editor">
+                { }
+              </button>
               <button id="mode-toggle" class="mode-toggle icon-button" type="button" aria-label="Preview" aria-pressed="false" title="Preview">
                 <span class="preview-glyph" aria-hidden="true"></span>
               </button>
@@ -129,6 +129,9 @@
     <div id="stack"></div>
     </div>
     </div>
+    <div id="resize-n" class="resize-handle" data-resize="n" aria-hidden="true"></div>
+    <div id="resize-nw" class="resize-handle" data-resize="nw" aria-hidden="true"></div>
+    <div id="resize-ne" class="resize-handle" data-resize="ne" aria-hidden="true"></div>
     <div id="resize-w" class="resize-handle" data-resize="w" aria-hidden="true"></div>
     <div id="resize-e" class="resize-handle" data-resize="e" aria-hidden="true"></div>
     <div id="resize-s" class="resize-handle" data-resize="s" aria-hidden="true"></div>

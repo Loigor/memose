@@ -2,6 +2,13 @@ import { serializeBlocks, type Block } from "./markdown-edit.ts";
 
 export type Caret = { index: number; start: number; end: number };
 
+export type EditorPlace = {
+  caret: Caret;
+  scrollTop: number;
+  scrollLeft: number;
+  paneScroll: number;
+};
+
 export function restoreCaret(container: ParentNode, next: Caret | null) {
   if (!next) {
     return;
@@ -15,6 +22,49 @@ export function restoreCaret(container: ParentNode, next: Caret | null) {
   }
 }
 
+export function readPlace(container: ParentNode, caret: Caret | null): EditorPlace | null {
+  const active = typeof document !== "undefined" ? document.activeElement : null;
+  const live =
+    active instanceof HTMLTextAreaElement && container.contains(active)
+      ? active
+      : caret
+        ? container.querySelector<HTMLTextAreaElement>(`textarea[data-index="${caret.index}"]`)
+        : null;
+  const paneScroll = container instanceof HTMLElement ? container.scrollTop : 0;
+  if (!(live instanceof HTMLTextAreaElement)) {
+    return caret ? { caret: { ...caret }, scrollTop: 0, scrollLeft: 0, paneScroll } : null;
+  }
+  return {
+    caret: {
+      index: Number(live.dataset.index ?? caret?.index ?? 0),
+      start: live.selectionStart,
+      end: live.selectionEnd,
+    },
+    scrollTop: live.scrollTop,
+    scrollLeft: live.scrollLeft,
+    paneScroll,
+  };
+}
+
+export function restorePlace(container: ParentNode, place: EditorPlace | null): boolean {
+  if (!place) {
+    return false;
+  }
+  const area = container.querySelector<HTMLTextAreaElement>(
+    `textarea[data-index="${place.caret.index}"]`,
+  );
+  if (!area) {
+    return false;
+  }
+  restoreCaret(container, place.caret);
+  area.scrollTop = place.scrollTop;
+  area.scrollLeft = place.scrollLeft;
+  if (container instanceof HTMLElement) {
+    container.scrollTop = place.paneScroll;
+  }
+  return true;
+}
+
 export type NoteHistoryEntry = {
   blocks: Block[];
   caret: Caret | null;
@@ -24,13 +74,15 @@ export function cloneBlocks(items: Block[]): Block[] {
   return items.map((b) =>
     b.kind === "text"
       ? { kind: "text", text: b.text }
-      : {
-          kind: "media",
-          name: b.name,
-          label: b.label,
-          width: b.width,
-          inline: b.inline,
-        },
+      : b.kind === "code"
+        ? { kind: "code", lang: b.lang, text: b.text }
+        : {
+            kind: "media",
+            name: b.name,
+            label: b.label,
+            width: b.width,
+            inline: b.inline,
+          },
   );
 }
 

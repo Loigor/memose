@@ -14,7 +14,9 @@ import {
   applyJsonFormat,
   applyTask,
   applyTitle,
+  closedFenceIn,
   ensureTextSlots,
+  isTypedBlock,
   noteTitle,
   mediaTokenRegex,
   parseBlocks,
@@ -29,6 +31,8 @@ import {
 import { hydratePreviewContent, mediaPointer } from "./media/media-elements";
 import { createMedia, type MediaNoteMutator } from "./media/media-dnd";
 import { markdownToolbarHtml, paintSurface, paintThemeButton, paperAt, stackHeaderHtml, type ThemeName } from "./look/memo-chrome";
+import { hueSwatches, onHueSwatches, saveHueSwatches } from "./look/swatches";
+import { pointOnScrollGutter, type ScrollBox } from "./dom";
 import { inTauri, isPreviewWindow } from "./platform";
 import { editorShell, resizeAllBlockTextareas, sizeBlockTextarea } from "./editor/textarea";
 import { exactStamp, relativeTime } from "./time";
@@ -626,15 +630,21 @@ function scheduleSectionSave(section: HTMLElement, state: StackState) {
 export function applySectionEdit(section: HTMLElement, state: StackState, area: HTMLTextAreaElement, edit: Edit) {
   const index = Number(area.dataset.index ?? 0);
   const block = state.blocks[index];
-  if (block?.kind !== "text") {
+  if (!block || !isTypedBlock(block)) {
     return;
   }
   pushSectionUndo(state, true);
   area.value = edit.value;
   block.text = edit.value;
   area.classList.toggle("empty-slot", edit.value.length === 0 && state.blocks.length > 1);
-  sizeBlockTextarea(area);
   state.content = serializeBlocks(state.blocks);
+  if (block.kind === "text" && (mediaTokenRegex.test(area.value) || closedFenceIn(area.value))) {
+    state.blocks = parseBlocks(state.content);
+    renderSectionBlocks(section, state);
+    scheduleSectionSave(section, state);
+    return;
+  }
+  sizeBlockTextarea(area);
   area.focus();
   const start = Math.min(edit.start, area.value.length);
   const end = Math.min(edit.end, area.value.length);
@@ -686,11 +696,12 @@ function renderSectionBlocks(section: HTMLElement, state: StackState, focusName?
   let currentRowSideArea: HTMLTextAreaElement | null = null;
 
   state.blocks.forEach((block, index) => {
-    if (block.kind === "text") {
+    if (isTypedBlock(block)) {
       const prevBlock = state.blocks[index - 1];
       const isAfterMedia = prevBlock?.kind === "media";
       const area = document.createElement("textarea");
       area.dataset.index = String(index);
+      area.dataset.kind = block.kind;
       area.value = block.text;
       area.rows = 1;
       area.spellcheck = false;
@@ -699,11 +710,12 @@ function renderSectionBlocks(section: HTMLElement, state: StackState, focusName?
       area.setAttribute("autocorrect", "off");
       area.setAttribute("autocapitalize", "off");
       const canSitOnMediaLine =
+        block.kind === "text" &&
         isAfterMedia &&
         currentRow !== null &&
         currentRowSideArea === null &&
         !block.text.includes("\n");
-      if (index === 0 && state.blocks.length === 1) {
+      if (index === 0 && state.blocks.length === 1 && block.kind === "text") {
         area.placeholder = "Write a memo...";
       } else if (canSitOnMediaLine) {
         area.classList.add("inline-line-slot");
@@ -820,6 +832,9 @@ function renderSectionBlocks(section: HTMLElement, state: StackState, focusName?
         if (event.key !== "Enter" || event.shiftKey || event.altKey || event.metaKey || event.ctrlKey || event.isComposing) {
           return;
         }
+        if (block.kind === "code") {
+          return;
+        }
         const edit = taskListOnEnter(area.value, area.selectionStart, area.selectionEnd);
         if (!edit) {
           return;
@@ -833,7 +848,7 @@ function renderSectionBlocks(section: HTMLElement, state: StackState, focusName?
       area.addEventListener("input", () => {
         block.text = area.value;
         syncInlineLineSlot(area, prevBlock, assignedRow, container, index === lastIndex);
-        if (mediaTokenRegex.test(area.value)) {
+        if (block.kind === "text" && (mediaTokenRegex.test(area.value) || closedFenceIn(area.value))) {
           state.content = serializeBlocks(state.blocks);
           state.blocks = parseBlocks(state.content);
           renderSectionBlocks(section, state);
@@ -1042,9 +1057,10 @@ export function setSectionHue(section: HTMLElement, state: StackState, hue: numb
 function paintSectionSlots(section: HTMLElement, state: StackState) {
   const theme = sectionTheme(state);
   const current = sectionHue(state);
+  const swatches = hueSwatches();
   const slots = [...section.querySelectorAll<HTMLButtonElement>(".hue-slot")];
   slots.forEach((slot, index) => {
-    const hue = state.swatches[index];
+    const hue = swatches[index];
     if (hue == null) {
       slot.style.background = "";
       delete slot.dataset.hue;
@@ -1059,10 +1075,20 @@ function paintSectionSlots(section: HTMLElement, state: StackState) {
   const slider = section.querySelector<HTMLInputElement>(".hue-slider");
   if (add && slider) {
     const hue = Number(slider.value);
-    add.disabled = state.swatches.length >= 6 || state.swatches.includes(hue);
+    add.disabled = swatches.length >= 6 || swatches.includes(hue);
     slider.style.setProperty("--thumb", paperAt(theme, current ?? hue));
   }
 }
+
+onHueSwatches(() => {
+  stackEl?.querySelectorAll<HTMLElement>(".stack-note").forEach((section) => {
+    const id = section.dataset.id;
+    const state = id ? stackState.get(id) : undefined;
+    if (state) {
+      paintSectionSlots(section, state);
+    }
+  });
+});
 
 async function flushSectionSaves(ids?: Iterable<string>) {
   const targets = ids ? [...ids] : [...saveTimers.keys()];
@@ -1244,15 +1270,17 @@ function buildSection(note: Note): HTMLElement {
   });
   section.querySelector<HTMLButtonElement>(".hue-add")?.addEventListener("click", () => {
     const state = stackState.get(note.id);
-    if (!state || !hue || state.swatches.length >= 6) {
+    if (!state || !hue) {
       return;
     }
     const value = Number(hue.value);
-    if (state.swatches.includes(value)) {
+    const swatches = hueSwatches();
+    if (swatches.includes(value) || swatches.length >= 6) {
       return;
     }
-    state.swatches.push(value);
-    setSectionHue(section, state, value);
+    void saveHueSwatches([...swatches, value]).then(() => {
+      setSectionHue(section, state, value);
+    });
   });
   const editorMenuToggle = section.querySelector<HTMLButtonElement>(".editor-menu-toggle");
   const editorTools = section.querySelector<HTMLElement>(".editor-tools");
@@ -1862,15 +1890,72 @@ export function dragBlocked(target: EventTarget | null): boolean {
     target instanceof Element &&
     Boolean(
       target.closest(
-        "button, a, input, textarea, select, audio, video, .media, .media-audio, .file-attachment, #media-context-menu, #resize-grip, .resize-handle, #color-pop, #audience-pop, #format-pop, #md-toolbar, #editor-tools, .color-pop, .audience-pop, .format-pop, .md-toolbar, .editor-tools",
+        "button, a, input, textarea, select, audio, video, .media, .media-audio, .file-attachment, #media-context-menu, #resize-grip, .resize-handle, #color-pop, #audience-pop, #format-pop, #md-toolbar, #editor-tools, .color-pop, .audience-pop, .format-pop, .md-toolbar, .editor-tools, .md-tag",
       ),
     )
   );
 }
 
-type ResizeDir = "w" | "e" | "s" | "sw" | "se";
+function scrollBoxFromElement(node: HTMLElement): {
+  rect: DOMRect;
+  box: ScrollBox;
+} {
+  const style = getComputedStyle(node);
+  return {
+    rect: node.getBoundingClientRect(),
+    box: {
+      clientWidth: node.clientWidth,
+      clientHeight: node.clientHeight,
+      scrollWidth: node.scrollWidth,
+      scrollHeight: node.scrollHeight,
+      offsetWidth: node.offsetWidth,
+      offsetHeight: node.offsetHeight,
+      borderLeft: Number.parseFloat(style.borderLeftWidth) || 0,
+      borderRight: Number.parseFloat(style.borderRightWidth) || 0,
+      borderTop: Number.parseFloat(style.borderTopWidth) || 0,
+      borderBottom: Number.parseFloat(style.borderBottomWidth) || 0,
+      overflowX: style.overflowX,
+      overflowY: style.overflowY,
+    },
+  };
+}
+
+export function pointerOnScrollbar(event: MouseEvent): boolean {
+  let node: Element | null = event.target instanceof Element ? event.target : null;
+  while (node) {
+    if (node instanceof HTMLElement) {
+      const { rect, box } = scrollBoxFromElement(node);
+      if (pointOnScrollGutter(event.clientX, event.clientY, rect, box)) {
+        return true;
+      }
+    }
+    node = node.parentElement;
+  }
+  return false;
+}
+
+type ResizeDir = "w" | "e" | "n" | "s" | "nw" | "ne" | "sw" | "se";
+
+function asResizeDir(value: string | undefined): ResizeDir | null {
+  if (
+    value === "w" ||
+    value === "e" ||
+    value === "n" ||
+    value === "s" ||
+    value === "nw" ||
+    value === "ne" ||
+    value === "sw" ||
+    value === "se"
+  ) {
+    return value;
+  }
+  return null;
+}
 
 function resizeZone(event: MouseEvent): ResizeDir | null {
+  if (pointerOnScrollbar(event)) {
+    return null;
+  }
   const target = event.target;
   if (target instanceof Element) {
     if (
@@ -1881,8 +1966,8 @@ function resizeZone(event: MouseEvent): ResizeDir | null {
       return null;
     }
     const handle = target.closest<HTMLElement>("[data-resize]");
-    const dir = handle?.dataset.resize;
-    if (dir === "w" || dir === "e" || dir === "s" || dir === "sw" || dir === "se") {
+    const dir = asResizeDir(handle?.dataset.resize);
+    if (dir) {
       return dir;
     }
   }
@@ -1890,7 +1975,17 @@ function resizeZone(event: MouseEvent): ResizeDir | null {
   const h = window.innerHeight;
   const x = event.clientX;
   const y = event.clientY;
+  const nearTop = y <= 24;
   const nearBottom = h - y <= 48;
+  if (nearTop && w - x <= 44) {
+    return "ne";
+  }
+  if (nearTop && x <= 44) {
+    return "nw";
+  }
+  if (y <= 24 && x > 44 && w - x > 44) {
+    return "n";
+  }
   if (nearBottom && w - x <= 44) {
     return "se";
   }
@@ -1921,12 +2016,12 @@ function startResize(event: MouseEvent, requestedDir?: ResizeDir) {
     return;
   }
   if (stackCounts().opens <= 0) {
-    if (dir === "s") {
+    if (dir === "s" || dir === "n") {
       return;
     }
-    if (dir === "se") {
+    if (dir === "se" || dir === "ne") {
       dir = "e";
-    } else if (dir === "sw") {
+    } else if (dir === "sw" || dir === "nw") {
       dir = "w";
     }
   }
@@ -1934,7 +2029,8 @@ function startResize(event: MouseEvent, requestedDir?: ResizeDir) {
   event.stopPropagation();
   cancelHeightTween();
   resizing = true;
-  resizingVertical = dir === "s" || dir === "se" || dir === "sw";
+  resizingVertical =
+    dir === "s" || dir === "se" || dir === "sw" || dir === "n" || dir === "ne" || dir === "nw";
   void invoke("begin_corner_resize", { label: getCurrentWindow().label, edge: dir })
     .catch((error: unknown) => {
       console.error(error);
@@ -1951,6 +2047,9 @@ function startResize(event: MouseEvent, requestedDir?: ResizeDir) {
 
 export function startWindowDrag(event: MouseEvent) {
   if (!inTauri() || isPreviewWindow() || sectionLift !== null) {
+    return;
+  }
+  if (pointerOnScrollbar(event)) {
     return;
   }
   const dir = resizeZone(event);
@@ -2303,6 +2402,22 @@ export function insertSectionMedia(section: HTMLElement, name: string, label?: s
       void openPreview(name);
     });
   }
+}
+
+export function resumeStackEditor(): boolean {
+  if (!lastActiveSection || lastActiveSection === "host") {
+    return false;
+  }
+  const section = stackEl?.querySelector<HTMLElement>(
+    `.stack-note[data-id="${CSS.escape(lastActiveSection)}"]`,
+  );
+  const state = stackState.get(lastActiveSection);
+  const container = section?.querySelector<HTMLElement>(".stack-blocks");
+  if (!section || !state?.caret || !container) {
+    return false;
+  }
+  restoreCaret(container, state.caret);
+  return true;
 }
 
 export function activeStackSection(): { section: HTMLElement; state: StackState } | null {

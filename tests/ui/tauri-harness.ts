@@ -9,6 +9,8 @@ export type NoteSeed = {
   remoteName?: string | null;
   lastError?: string | null;
   pinned?: boolean;
+  winW?: number | null;
+  winH?: number | null;
   opacity?: number;
   hueLight?: number | null;
   hueDark?: number | null;
@@ -61,6 +63,7 @@ export type HarnessSeed = {
   theme?: string;
   previewName?: string | null;
   pinTabs?: PinTabsSeed;
+  hueSwatches?: number[];
 };
 
 export type Invocation = { cmd: string; args: unknown };
@@ -101,6 +104,8 @@ function installBrowserHarness(seed: BrowserSeed) {
       remoteName: partial.remoteName ?? null,
       lastError: partial.lastError ?? null,
       pinned: Boolean(partial.pinned),
+      winW: partial.winW ?? null,
+      winH: partial.winH ?? null,
       opacity: partial.opacity ?? 100,
       hueLight: partial.hueLight ?? null,
       hueDark: partial.hueDark ?? null,
@@ -196,6 +201,7 @@ function installBrowserHarness(seed: BrowserSeed) {
           activeId: "tab-1",
           tabs: [makePinTab({ id: "tab-1", name: "Desk", hue: 48 })],
         },
+    hueSwatches: Array.isArray(seed.hueSwatches) ? seed.hueSwatches.slice() : [],
   };
 
   const callbacks = new Map();
@@ -449,6 +455,19 @@ function installBrowserHarness(seed: BrowserSeed) {
       }
       case "get_theme":
         return state.theme;
+      case "list_hue_swatches":
+        return state.hueSwatches.slice();
+      case "save_hue_swatches": {
+        const next = Array.isArray(a.swatches)
+          ? a.swatches
+              .map((hue: unknown) => Number(hue))
+              .filter((hue: number) => hue >= 0 && hue <= 359)
+              .slice(0, 6)
+          : [];
+        state.hueSwatches = next;
+        emit("hue-swatches-changed", next.slice());
+        return next.slice();
+      }
       case "save_look": {
         const note = noteById(a.id);
         if (note) {
@@ -602,6 +621,16 @@ function installBrowserHarness(seed: BrowserSeed) {
       case "stack_chain":
         return chainAfter(a.hostId);
       case "set_window_height":
+      case "apply_composer_size":
+        return null;
+      case "save_note_size": {
+        const note = noteById(a.id);
+        if (note) {
+          note.winW = Number(a.width);
+          note.winH = Number(a.height);
+        }
+        return null;
+      }
       case "begin_memo_drag":
       case "end_memo_drag":
       case "slide_into_view":

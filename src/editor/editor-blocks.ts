@@ -296,6 +296,8 @@ export function moveBlockMedia(items: Block[], fromIndex: number, target: MediaD
       if (block.text.length > 0) {
         next.push({ kind: "text", text: block.text });
       }
+    } else if (block.kind === "code") {
+      next.push({ kind: "code", lang: block.lang, text: block.text });
     } else {
       next.push({
         kind: "media",
