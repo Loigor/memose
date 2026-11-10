@@ -36,6 +36,16 @@ html[data-mdhl] .stack-blocks textarea::-moz-selection {
   color: var(--md-heading);
 }
 
+.md-tag {
+  color: var(--md-link);
+  cursor: pointer;
+}
+
+.md-field[data-coder] .md-tag {
+  color: inherit;
+  cursor: inherit;
+}
+
 .md-strong {
   color: var(--md-strong);
 }

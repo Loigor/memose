@@ -62,6 +62,16 @@ test("double-click opens rename and hue picker", async ({ page }) => {
   await expect.poll(async () => invokedCmds(page)).toContain("update_pin_tab");
 });
 
+test("saved tab hue uses the tab fill in presets", async ({ page }) => {
+  await openPinTabs(page, { pinTabs: tabs });
+  const tab = page.locator(".pin-tab", { hasText: "Work" });
+  await tab.dblclick();
+  await page.locator(".hue-add").click();
+  await expect.poll(async () => invokedCmds(page)).toContain("save_hue_swatches");
+  const fill = await tab.evaluate((el) => getComputedStyle(el).backgroundColor);
+  await expect(page.locator(".hue-slot").first()).toHaveCSS("background-color", fill);
+});
+
 test("unnamed tabs show Tab #N", async ({ page }) => {
   await openPinTabs(page, {
     pinTabs: {

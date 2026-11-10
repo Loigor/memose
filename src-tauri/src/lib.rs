@@ -103,6 +103,8 @@ pub fn run() {
             commands::clear_memos,
             commands::test_memos,
             commands::get_theme,
+            commands::list_hue_swatches,
+            commands::save_hue_swatches,
             commands::save_look,
             commands::set_pinned_opacity,
             commands::publish_note,

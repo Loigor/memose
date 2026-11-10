@@ -5,6 +5,7 @@ import { listen } from "@tauri-apps/api/event";
 import { requireEl } from "./dom.ts";
 import { bindHuePop } from "./look/hue-pop.ts";
 import { paintSurface, tabFill, type ThemeName } from "./look/memo-chrome.ts";
+import { loadHueSwatches, watchHueSwatches } from "./look/swatches.ts";
 import { inTauri } from "./platform.ts";
 import type { PinTab, PinTabHit, PinTabs } from "./types.ts";
 
@@ -55,6 +56,8 @@ async function load() {
   document.documentElement.dataset.theme = theme;
   paintSurface(document.documentElement, theme, null, 100);
   persist(await invoke<PinTabs>("list_pin_tabs"));
+  await loadHueSwatches();
+  paintHue();
 }
 
 function paint() {
@@ -271,7 +274,7 @@ document.addEventListener("mousedown", (event) => {
 paintHue = bindHuePop(menuEl, {
   theme: () => theme,
   hue: () => currentTab()?.hue ?? 48,
-  swatches: () => currentTab()?.swatches ?? [],
+  chip: tabFill,
   setHue(hue) {
     const tab = currentTab();
     if (!tab) {
@@ -281,18 +284,11 @@ paintHue = bindHuePop(menuEl, {
     paint();
     void invoke<PinTabs>("update_pin_tab", { id: tab.id, hue }).then(persist);
   },
-  setSwatches(swatches) {
-    const tab = currentTab();
-    if (!tab) {
-      return;
-    }
-    tab.swatches = swatches;
-    void invoke<PinTabs>("update_pin_tab", { id: tab.id, swatches }).then(persist);
-  },
 });
 
 void load();
 if (inTauri()) {
+  watchHueSwatches();
   void listen("pin-tabs-changed", () => {
     void load();
   });

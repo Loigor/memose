@@ -1,3 +1,5 @@
+import { wrapTagsHtml } from "./md-tags.ts";
+
 function escapeHtml(text: string): string {
   return text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 }
@@ -6,20 +8,22 @@ function wrap(cls: string, html: string): string {
   return `<span class="${cls}">${html}</span>`;
 }
 
-function highlightInline(escaped: string): string {
-  return escaped
+function highlightInline(escaped: string, tags: boolean): string {
+  const html = escaped
     .replace(/`[^`\n]+`/g, (chunk) => wrap("md-code", chunk))
     .replace(/!\[[^\]]*\]\([^)]*\)/g, (chunk) => wrap("md-image", chunk))
     .replace(/\[[^\]]+\]\([^)]*\)/g, (chunk) => wrap("md-link", chunk))
     .replace(/\*\*[^*]+\*\*/g, (chunk) => wrap("md-strong", chunk))
     .replace(/(?<!\*)\*[^*\n]+\*(?!\*)/g, (chunk) => wrap("md-em", chunk));
+  return tags ? wrapTagsHtml(html) : html;
 }
 
 function lineHtml(inner: string): string {
   return `<span class="md-line"><span class="md-line-text">${inner}</span></span>`;
 }
 
-export function highlightMarkdown(text: string): string {
+export function highlightMarkdown(text: string, options?: { tags?: boolean }): string {
+  const tags = options?.tags !== false;
   const out: string[] = [];
   let fence = false;
   for (const line of text.split("\n")) {
@@ -34,11 +38,11 @@ export function highlightMarkdown(text: string): string {
       continue;
     }
     if (/^#{1,6} /.test(escaped)) {
-      out.push(lineHtml(wrap("md-heading", highlightInline(escaped))));
+      out.push(lineHtml(wrap("md-heading", highlightInline(escaped, false))));
       continue;
     }
     if (escaped.startsWith("&gt;")) {
-      out.push(lineHtml(wrap("md-quote", highlightInline(escaped))));
+      out.push(lineHtml(wrap("md-quote", highlightInline(escaped, tags))));
       continue;
     }
     if (/^\s*([-*_]\s*){3,}$/.test(line)) {
@@ -47,10 +51,10 @@ export function highlightMarkdown(text: string): string {
     }
     const list = escaped.match(/^(\s*(?:[-*+]|\d+\.)(?: \[[ xX]\])? )(.*)$/);
     if (list) {
-      out.push(lineHtml(`${wrap("md-marker", list[1])}${highlightInline(list[2])}`));
+      out.push(lineHtml(`${wrap("md-marker", list[1])}${highlightInline(list[2], tags)}`));
       continue;
     }
-    out.push(lineHtml(highlightInline(escaped)));
+    out.push(lineHtml(highlightInline(escaped, tags)));
   }
   return out.join("\n");
 }

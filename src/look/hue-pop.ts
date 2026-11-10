@@ -1,11 +1,11 @@
 import { paperAt, type ThemeName } from "./memo-chrome.ts";
+import { hueSwatches, onHueSwatches, saveHueSwatches } from "./swatches.ts";
 
 export type HuePopSource = {
   theme: () => ThemeName;
   hue: () => number;
-  swatches: () => number[];
   setHue: (hue: number) => void;
-  setSwatches: (swatches: number[]) => void;
+  chip?: (theme: ThemeName, hue: number) => string;
 };
 
 export function bindHuePop(root: HTMLElement, source: HuePopSource): () => void {
@@ -15,13 +15,14 @@ export function bindHuePop(root: HTMLElement, source: HuePopSource): () => void 
   if (!slider || !add) {
     return () => {};
   }
+  const chip = source.chip ?? paperAt;
 
   const paint = () => {
     const theme = source.theme();
     const hue = source.hue();
-    const swatches = source.swatches();
+    const swatches = hueSwatches();
     slider.value = String(hue);
-    slider.style.setProperty("--thumb", paperAt(theme, hue));
+    slider.style.setProperty("--thumb", chip(theme, hue));
     slots.forEach((slot, index) => {
       const saved = swatches[index];
       if (saved == null) {
@@ -31,7 +32,7 @@ export function bindHuePop(root: HTMLElement, source: HuePopSource): () => void 
         return;
       }
       slot.dataset.hue = String(saved);
-      slot.style.background = paperAt(theme, saved);
+      slot.style.background = chip(theme, saved);
       slot.setAttribute("aria-pressed", String(saved === hue));
     });
     add.disabled = swatches.length >= 6 || swatches.includes(hue);
@@ -43,12 +44,11 @@ export function bindHuePop(root: HTMLElement, source: HuePopSource): () => void 
   });
   add.addEventListener("click", () => {
     const hue = Number(slider.value);
-    const swatches = source.swatches();
+    const swatches = hueSwatches();
     if (swatches.includes(hue) || swatches.length >= 6) {
       return;
     }
-    source.setSwatches([...swatches, hue]);
-    paint();
+    void saveHueSwatches([...swatches, hue]);
   });
   for (const slot of slots) {
     slot.addEventListener("click", () => {
@@ -60,6 +60,7 @@ export function bindHuePop(root: HTMLElement, source: HuePopSource): () => void 
       paint();
     });
   }
+  onHueSwatches(paint);
   paint();
   return paint;
 }

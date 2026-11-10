@@ -221,17 +221,21 @@ fn snap_resized_edges(app: &AppHandle, window: &WebviewWindow) {
     };
     let area = monitor.work_area();
     let pad_x = (CARD_PAD_X * scale).round() as i32;
+    let pad_top = (CARD_PAD_TOP * scale).round() as i32;
     let pad_bottom = (CARD_PAD_BOTTOM * scale).round() as i32;
     let threshold = (f64::from(EDGE_CATCH) * scale).round() as i32;
     let min_w = (220.0 * scale).round() as i32;
     let min_h = (140.0 * scale).round() as i32;
     let left = position.x + pad_x;
     let right = position.x + size.width as i32 - pad_x;
+    let top = position.y + pad_top;
     let bottom = position.y + size.height as i32 - pad_bottom;
     let area_left = area.position.x;
     let area_right = area.position.x + area.size.width as i32;
+    let area_top = area.position.y;
     let area_bottom = area.position.y + area.size.height as i32;
     let mut x = position.x;
+    let mut y = position.y;
     let mut width = size.width as i32;
     let mut height = size.height as i32;
     if (left - area_left).abs() <= threshold {
@@ -250,17 +254,31 @@ fn snap_resized_edges(app: &AppHandle, window: &WebviewWindow) {
             width = next;
         }
     }
+    if (top - area_top).abs() <= threshold {
+        let target_y = area_top - pad_top;
+        if target_y != position.y {
+            let next = height + (position.y - target_y);
+            if next >= min_h {
+                y = target_y;
+                height = next;
+            }
+        }
+    }
     if (bottom - area_bottom).abs() <= threshold {
-        let next = area_bottom + pad_bottom - position.y;
+        let next = area_bottom + pad_bottom - y;
         if next >= min_h {
             height = next;
         }
     }
-    if x == position.x && width == size.width as i32 && height == size.height as i32 {
+    if x == position.x
+        && y == position.y
+        && width == size.width as i32
+        && height == size.height as i32
+    {
         return;
     }
-    if x != position.x {
-        let _ = window.set_position(PhysicalPosition::new(x, position.y));
+    if x != position.x || y != position.y {
+        let _ = window.set_position(PhysicalPosition::new(x, y));
     }
     let _ = window.set_size(PhysicalSize::new(width.max(1) as u32, height.max(1) as u32));
 }
@@ -344,8 +362,11 @@ fn start_native_resize(window: &WebviewWindow, edge: ResizeEdge) {
     };
     let name = match edge {
         ResizeEdge::East => "East",
+        ResizeEdge::North => "North",
         ResizeEdge::South => "South",
         ResizeEdge::West => "West",
+        ResizeEdge::NorthEast => "NorthEast",
+        ResizeEdge::NorthWest => "NorthWest",
         ResizeEdge::SouthEast => "SouthEast",
         ResizeEdge::SouthWest => "SouthWest",
     };

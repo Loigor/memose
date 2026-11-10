@@ -105,6 +105,42 @@ export function measureTextareaLines(area: HTMLTextAreaElement): TextLineMetric[
   return metrics;
 }
 
+export function charOffsetAtPoint(
+  area: HTMLTextAreaElement,
+  clientX: number,
+  clientY: number,
+): number | null {
+  const lines = measureTextareaLines(area);
+  const line = lines.find((item) => clientY >= item.top && clientY <= item.bottom);
+  if (!line || clientX < line.left - 1 || clientX > line.right + 2) {
+    return null;
+  }
+  return estimateCharOffsetInLine(area, line, clientX);
+}
+
+export function scrollTextOffsetIntoView(area: HTMLTextAreaElement, offset: number) {
+  const container = area.closest<HTMLElement>("#blocks, .stack-blocks");
+  if (!container) {
+    return;
+  }
+  const pin = () => {
+    const lines = measureTextareaLines(area);
+    const line =
+      lines.find((item) => offset >= item.startOffset && offset <= item.endOffset) ?? lines.at(-1);
+    if (!line) {
+      return;
+    }
+    const box = container.getBoundingClientRect();
+    if (line.bottom > box.bottom) {
+      container.scrollTop += line.bottom - box.bottom + 8;
+    } else if (line.top < box.top) {
+      container.scrollTop -= box.top - line.top + 8;
+    }
+  };
+  pin();
+  requestAnimationFrame(pin);
+}
+
 export function estimateCharOffsetInLine(area: HTMLTextAreaElement, line: TextLineMetric, clientX: number): number {
   if (line.text.length === 0 || clientX <= line.left) {
     return line.startOffset;

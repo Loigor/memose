@@ -46,6 +46,8 @@ import {
   previewBodyTarget,
 } from "./media/media-elements";
 import { paintSurface, paintThemeButton, palette, paperAt, type ThemeName } from "./look/memo-chrome";
+import { hueSwatches, loadHueSwatches, onHueSwatches, saveHueSwatches, watchHueSwatches } from "./look/swatches";
+import { tagAtOffset } from "./editor/md-tags";
 import { pointIn, requireEl } from "./dom";
 import { inTauri, isPreviewWindow } from "./platform";
 import { defaultBinds, domMouseButton, formatBind, isModifierKey, matchBind, matchMouse, modifierDown, type ShortcutBinds } from "./shortcuts";
@@ -80,7 +82,13 @@ import {
   wireChrome,
 } from "./stack";
 import { syncIcon } from "./look/sync-status";
-import { editorShell, resizeAllBlockTextareas, sizeBlockTextarea } from "./editor/textarea";
+import {
+  charOffsetAtPoint,
+  editorShell,
+  resizeAllBlockTextareas,
+  scrollTextOffsetIntoView,
+  sizeBlockTextarea,
+} from "./editor/textarea";
 import { exactStamp, relativeTime } from "./time";
 import type { MemoSpace, Note } from "./types";
 import { isOfflinePrivate, visibilityOptions, visibilityShort } from "./look/visibility";
@@ -1488,8 +1496,9 @@ function paintCoder() {
 function paintSlots() {
   const theme = currentTheme();
   const current = themeHue();
+  const swatches = hueSwatches();
   hueSlots.forEach((slot, index) => {
-    const hue = look.swatches[index];
+    const hue = swatches[index];
     if (hue == null) {
       slot.style.background = "";
       delete slot.dataset.hue;
@@ -1501,7 +1510,7 @@ function paintSlots() {
     slot.setAttribute("aria-pressed", String(hue === current));
   });
   const hue = Number(hueSliderEl.value);
-  hueAddEl.disabled = look.swatches.length >= 6 || look.swatches.includes(hue);
+  hueAddEl.disabled = swatches.length >= 6 || swatches.includes(hue);
 }
 
 function syncSlider() {
@@ -1784,6 +1793,88 @@ recentMoreEl.addEventListener("click", () => {
   });
 });
 
+function openTagSearch(raw: string, keep?: HTMLElement | null) {
+  const query = raw.startsWith("#") ? raw : `#${raw}`;
+  listHidden = false;
+  recentExpanded = true;
+  if (pinnedNoteId) {
+    document.documentElement.classList.add("pin-search-open");
+  }
+  showMemoSearch(true);
+  recentSearchEl.value = query;
+  memoQuery = query.trim().toLowerCase();
+  memoListEl.hidden = false;
+  recentEl.hidden = false;
+  void refreshRecent()
+    .then(() => {
+      if (keep instanceof HTMLTextAreaElement) {
+        scrollTextOffsetIntoView(keep, keep.selectionStart);
+      } else {
+        keep?.scrollIntoView({ block: "nearest", inline: "nearest" });
+      }
+      recentSearchEl.focus();
+      recentSearchEl.select();
+    })
+    .catch((error: unknown) => {
+      console.error(error);
+    });
+}
+
+function editorTagArea(target: EventTarget | null): HTMLTextAreaElement | null {
+  if (!(target instanceof HTMLTextAreaElement)) {
+    return null;
+  }
+  if (target.closest(".md-field[data-coder]") || target.dataset.kind === "code") {
+    return null;
+  }
+  return target;
+}
+
+function tagFromEvent(event: MouseEvent): string | null {
+  const area = editorTagArea(event.target);
+  if (area) {
+    if (area.selectionStart !== area.selectionEnd) {
+      return null;
+    }
+    const atPoint = charOffsetAtPoint(area, event.clientX, event.clientY);
+    if (atPoint != null) {
+      return tagAtOffset(area.value, atPoint);
+    }
+    const rect = area.getBoundingClientRect();
+    if (
+      event.clientX >= rect.left &&
+      event.clientX <= rect.right &&
+      event.clientY >= rect.top &&
+      event.clientY <= rect.bottom
+    ) {
+      return null;
+    }
+    return tagAtOffset(area.value, area.selectionStart);
+  }
+  if (!(event.target instanceof Element) || event.target.closest(".md-field[data-coder], pre, code")) {
+    return null;
+  }
+  const tag = event.target.closest(".md-tag");
+  if (!(tag instanceof HTMLElement)) {
+    return null;
+  }
+  const value = tag.dataset.tag || tag.textContent || "";
+  return value.startsWith("#") ? value : null;
+}
+
+function paintTagCursor(area: HTMLTextAreaElement, x: number, y: number) {
+  if (!editorTagArea(area)) {
+    area.style.removeProperty("cursor");
+    return;
+  }
+  const offset = charOffsetAtPoint(area, x, y);
+  if (offset != null && tagAtOffset(area.value, offset)) {
+    area.style.cursor = "pointer";
+    return;
+  }
+  area.style.removeProperty("cursor");
+}
+
 function toggleMemoSearchByTab() {
   if (pinnedNoteId) {
     const isOpen = document.documentElement.classList.contains("pin-search-open");
@@ -1838,6 +1929,45 @@ function toggleMemoSearchByTab() {
 
 notePaneEl.addEventListener("mousedown", () => {
   dismissList();
+});
+
+const notesRoot = document.querySelector("#notes") ?? cardEl;
+let tagCursorFrame = 0;
+notesRoot.addEventListener("click", (event) => {
+  const tag = tagFromEvent(event);
+  if (!tag) {
+    return;
+  }
+  event.preventDefault();
+  event.stopPropagation();
+  const area = editorTagArea(event.target);
+  const keep =
+    area ?? (event.target instanceof Element ? event.target.closest<HTMLElement>(".md-tag") : null);
+  openTagSearch(tag, keep);
+});
+notesRoot.addEventListener("mousemove", (event) => {
+  const area = event.target;
+  if (!(area instanceof HTMLTextAreaElement)) {
+    return;
+  }
+  const x = event.clientX;
+  const y = event.clientY;
+  if (tagCursorFrame) {
+    cancelAnimationFrame(tagCursorFrame);
+  }
+  tagCursorFrame = requestAnimationFrame(() => {
+    tagCursorFrame = 0;
+    paintTagCursor(area, x, y);
+  });
+});
+notesRoot.addEventListener("mouseout", (event) => {
+  if (tagCursorFrame) {
+    cancelAnimationFrame(tagCursorFrame);
+    tagCursorFrame = 0;
+  }
+  if (event.target instanceof HTMLTextAreaElement) {
+    event.target.style.removeProperty("cursor");
+  }
 });
 
 cardEl.addEventListener("mousedown", (event) => {
@@ -2220,11 +2350,13 @@ hueSliderEl.addEventListener("input", () => {
 
 function saveHue() {
   const hue = Number(hueSliderEl.value);
-  if (look.swatches.includes(hue) || look.swatches.length >= 6) {
+  const swatches = hueSwatches();
+  if (swatches.includes(hue) || swatches.length >= 6) {
     return;
   }
-  look.swatches.push(hue);
-  setThemeHue(hue);
+  void saveHueSwatches([...swatches, hue]).then(() => {
+    setThemeHue(hue);
+  });
 }
 
 for (const slot of hueSlots) {
@@ -2767,6 +2899,9 @@ if (inTauri() && !isPreviewWindow()) {
 }
 
 if (inTauri() && !isPreviewWindow()) {
+  watchHueSwatches();
+  onHueSwatches(paintSlots);
+  void loadHueSwatches();
   void listen<number>("pinned-opacity", (event) => {
     if (pinnedOpacityTimer !== undefined || !showingPinned()) {
       return;

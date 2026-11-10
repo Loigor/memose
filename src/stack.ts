@@ -31,6 +31,7 @@ import {
 import { hydratePreviewContent, mediaPointer } from "./media/media-elements";
 import { createMedia, type MediaNoteMutator } from "./media/media-dnd";
 import { markdownToolbarHtml, paintSurface, paintThemeButton, paperAt, stackHeaderHtml, type ThemeName } from "./look/memo-chrome";
+import { hueSwatches, onHueSwatches, saveHueSwatches } from "./look/swatches";
 import { pointOnScrollGutter, type ScrollBox } from "./dom";
 import { inTauri, isPreviewWindow } from "./platform";
 import { editorShell, resizeAllBlockTextareas, sizeBlockTextarea } from "./editor/textarea";
@@ -1056,9 +1057,10 @@ export function setSectionHue(section: HTMLElement, state: StackState, hue: numb
 function paintSectionSlots(section: HTMLElement, state: StackState) {
   const theme = sectionTheme(state);
   const current = sectionHue(state);
+  const swatches = hueSwatches();
   const slots = [...section.querySelectorAll<HTMLButtonElement>(".hue-slot")];
   slots.forEach((slot, index) => {
-    const hue = state.swatches[index];
+    const hue = swatches[index];
     if (hue == null) {
       slot.style.background = "";
       delete slot.dataset.hue;
@@ -1073,10 +1075,20 @@ function paintSectionSlots(section: HTMLElement, state: StackState) {
   const slider = section.querySelector<HTMLInputElement>(".hue-slider");
   if (add && slider) {
     const hue = Number(slider.value);
-    add.disabled = state.swatches.length >= 6 || state.swatches.includes(hue);
+    add.disabled = swatches.length >= 6 || swatches.includes(hue);
     slider.style.setProperty("--thumb", paperAt(theme, current ?? hue));
   }
 }
+
+onHueSwatches(() => {
+  stackEl?.querySelectorAll<HTMLElement>(".stack-note").forEach((section) => {
+    const id = section.dataset.id;
+    const state = id ? stackState.get(id) : undefined;
+    if (state) {
+      paintSectionSlots(section, state);
+    }
+  });
+});
 
 async function flushSectionSaves(ids?: Iterable<string>) {
   const targets = ids ? [...ids] : [...saveTimers.keys()];
@@ -1258,15 +1270,17 @@ function buildSection(note: Note): HTMLElement {
   });
   section.querySelector<HTMLButtonElement>(".hue-add")?.addEventListener("click", () => {
     const state = stackState.get(note.id);
-    if (!state || !hue || state.swatches.length >= 6) {
+    if (!state || !hue) {
       return;
     }
     const value = Number(hue.value);
-    if (state.swatches.includes(value)) {
+    const swatches = hueSwatches();
+    if (swatches.includes(value) || swatches.length >= 6) {
       return;
     }
-    state.swatches.push(value);
-    setSectionHue(section, state, value);
+    void saveHueSwatches([...swatches, value]).then(() => {
+      setSectionHue(section, state, value);
+    });
   });
   const editorMenuToggle = section.querySelector<HTMLButtonElement>(".editor-menu-toggle");
   const editorTools = section.querySelector<HTMLElement>(".editor-tools");
@@ -1876,7 +1890,7 @@ export function dragBlocked(target: EventTarget | null): boolean {
     target instanceof Element &&
     Boolean(
       target.closest(
-        "button, a, input, textarea, select, audio, video, .media, .media-audio, .file-attachment, #media-context-menu, #resize-grip, .resize-handle, #color-pop, #audience-pop, #format-pop, #md-toolbar, #editor-tools, .color-pop, .audience-pop, .format-pop, .md-toolbar, .editor-tools",
+        "button, a, input, textarea, select, audio, video, .media, .media-audio, .file-attachment, #media-context-menu, #resize-grip, .resize-handle, #color-pop, #audience-pop, #format-pop, #md-toolbar, #editor-tools, .color-pop, .audience-pop, .format-pop, .md-toolbar, .editor-tools, .md-tag",
       ),
     )
   );
@@ -1920,7 +1934,23 @@ export function pointerOnScrollbar(event: MouseEvent): boolean {
   return false;
 }
 
-type ResizeDir = "w" | "e" | "s" | "sw" | "se";
+type ResizeDir = "w" | "e" | "n" | "s" | "nw" | "ne" | "sw" | "se";
+
+function asResizeDir(value: string | undefined): ResizeDir | null {
+  if (
+    value === "w" ||
+    value === "e" ||
+    value === "n" ||
+    value === "s" ||
+    value === "nw" ||
+    value === "ne" ||
+    value === "sw" ||
+    value === "se"
+  ) {
+    return value;
+  }
+  return null;
+}
 
 function resizeZone(event: MouseEvent): ResizeDir | null {
   if (pointerOnScrollbar(event)) {
@@ -1936,8 +1966,8 @@ function resizeZone(event: MouseEvent): ResizeDir | null {
       return null;
     }
     const handle = target.closest<HTMLElement>("[data-resize]");
-    const dir = handle?.dataset.resize;
-    if (dir === "w" || dir === "e" || dir === "s" || dir === "sw" || dir === "se") {
+    const dir = asResizeDir(handle?.dataset.resize);
+    if (dir) {
       return dir;
     }
   }
@@ -1945,7 +1975,17 @@ function resizeZone(event: MouseEvent): ResizeDir | null {
   const h = window.innerHeight;
   const x = event.clientX;
   const y = event.clientY;
+  const nearTop = y <= 24;
   const nearBottom = h - y <= 48;
+  if (nearTop && w - x <= 44) {
+    return "ne";
+  }
+  if (nearTop && x <= 44) {
+    return "nw";
+  }
+  if (y <= 24 && x > 44 && w - x > 44) {
+    return "n";
+  }
   if (nearBottom && w - x <= 44) {
     return "se";
   }
@@ -1976,12 +2016,12 @@ function startResize(event: MouseEvent, requestedDir?: ResizeDir) {
     return;
   }
   if (stackCounts().opens <= 0) {
-    if (dir === "s") {
+    if (dir === "s" || dir === "n") {
       return;
     }
-    if (dir === "se") {
+    if (dir === "se" || dir === "ne") {
       dir = "e";
-    } else if (dir === "sw") {
+    } else if (dir === "sw" || dir === "nw") {
       dir = "w";
     }
   }
@@ -1989,7 +2029,8 @@ function startResize(event: MouseEvent, requestedDir?: ResizeDir) {
   event.stopPropagation();
   cancelHeightTween();
   resizing = true;
-  resizingVertical = dir === "s" || dir === "se" || dir === "sw";
+  resizingVertical =
+    dir === "s" || dir === "se" || dir === "sw" || dir === "n" || dir === "ne" || dir === "nw";
   void invoke("begin_corner_resize", { label: getCurrentWindow().label, edge: dir })
     .catch((error: unknown) => {
       console.error(error);

@@ -63,6 +63,7 @@ export type HarnessSeed = {
   theme?: string;
   previewName?: string | null;
   pinTabs?: PinTabsSeed;
+  hueSwatches?: number[];
 };
 
 export type Invocation = { cmd: string; args: unknown };
@@ -200,6 +201,7 @@ function installBrowserHarness(seed: BrowserSeed) {
           activeId: "tab-1",
           tabs: [makePinTab({ id: "tab-1", name: "Desk", hue: 48 })],
         },
+    hueSwatches: Array.isArray(seed.hueSwatches) ? seed.hueSwatches.slice() : [],
   };
 
   const callbacks = new Map();
@@ -453,6 +455,19 @@ function installBrowserHarness(seed: BrowserSeed) {
       }
       case "get_theme":
         return state.theme;
+      case "list_hue_swatches":
+        return state.hueSwatches.slice();
+      case "save_hue_swatches": {
+        const next = Array.isArray(a.swatches)
+          ? a.swatches
+              .map((hue: unknown) => Number(hue))
+              .filter((hue: number) => hue >= 0 && hue <= 359)
+              .slice(0, 6)
+          : [];
+        state.hueSwatches = next;
+        emit("hue-swatches-changed", next.slice());
+        return next.slice();
+      }
       case "save_look": {
         const note = noteById(a.id);
         if (note) {

@@ -80,7 +80,7 @@ export function paintEditorField(area: HTMLTextAreaElement) {
   const wrap = Boolean(area.closest("#card, .stack-note")?.hasAttribute("data-wrap"));
   field.toggleAttribute("data-wrap", coder && wrap);
   if (prefs.markdownHighlight || coder) {
-    highlight.innerHTML = highlightMarkdown(area.value);
+    highlight.innerHTML = highlightMarkdown(area.value, { tags: !coder });
   } else {
     highlight.replaceChildren();
   }

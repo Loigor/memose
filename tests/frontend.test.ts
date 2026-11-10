@@ -6,6 +6,7 @@ import { fileURLToPath } from "node:url";
 
 import { moveBlockMedia } from "../src/editor/editor-blocks.ts";
 import { highlightMarkdown } from "../src/editor/md-highlight.ts";
+import { tagAtOffset } from "../src/editor/md-tags.ts";
 import { uniqueFiles } from "../src/media/files.ts";
 import { BlockHistory, cloneBlocks, restorePlace } from "../src/editor/history.ts";
 import { defaultLook, lookFromNote, namedTheme } from "../src/look/look.ts";
@@ -33,6 +34,7 @@ import {
   wrapText,
 } from "../src/editor/markdown-edit.ts";
 import { baseColors, huePopHtml, palette, paperAt, stackHeaderHtml, tabFill, themeGlyph } from "../src/look/memo-chrome.ts";
+import { clampHueSwatches } from "../src/look/swatches.ts";
 import { pointIn, pointOnScrollGutter, requireEl } from "../src/dom.ts";
 import {
   defaultBinds,
@@ -455,6 +457,18 @@ test("highlightMarkdown colors markers without changing the source text", () => 
   assert.match(html, /&lt;script&gt;/);
   assert.equal(html.includes("<script>"), false);
   assert.match(highlightMarkdown("\tfoo"), /\tfoo/);
+  const tagged = highlightMarkdown("pay #finance and `#code`");
+  assert.match(tagged, /data-tag="#finance"/);
+  assert.match(tagged, /md-code/);
+  assert.equal(tagged.includes('data-tag="#code"'), false);
+  assert.equal(highlightMarkdown("# Title #finance").includes("md-tag"), false);
+  assert.equal(highlightMarkdown("```\n#finance\n```", { tags: true }).includes("md-tag"), false);
+  assert.equal(highlightMarkdown("pay #finance", { tags: false }).includes("md-tag"), false);
+  assert.equal(tagAtOffset("pay #finance now", 6), "#finance");
+  assert.equal(tagAtOffset("a\n#finance", 2), "#finance");
+  assert.equal(tagAtOffset("a\n#finance", 10), "#finance");
+  assert.equal(tagAtOffset("# Title", 3), null);
+  assert.equal(tagAtOffset("```\n#finance\n```", 6), null);
 });
 
 test("formatJsonDocument pretty-prints objects and json fences", () => {
@@ -483,6 +497,7 @@ test("memo-chrome computes palettes and renders stack header template", () => {
   assert.ok(stackHeaderHtml().includes("class=\"brand-name\""));
   assert.ok(huePopHtml().includes("hue-slider"));
   assert.ok(huePopHtml().includes("hue-slot"));
+  assert.deepEqual(clampHueSwatches([48, 400, 48, 210, 12]), [48, 210, 12]);
 });
 
 test("release versions and Tauri IPC command contracts stay in sync without dangling handlers", () => {

@@ -31,6 +31,14 @@ textarea,
   margin-top: 0;
 }
 
+#preview .md-tag,
+.stack-preview .md-tag {
+  color: var(--md-link);
+  cursor: pointer;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
 #preview pre,
 #preview code {
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;

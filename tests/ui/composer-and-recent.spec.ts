@@ -75,6 +75,66 @@ test("recent list collapses to three rows and expands on More", async ({ page })
   await expect(page.locator("#recent-more")).toHaveText("Less");
 });
 
+test("clicking a memo tag opens search", async ({ page }) => {
+  const notes = sampleNotes(3);
+  notes[0] = { ...notes[0], content: "budget #finance ok" };
+  await openComposer(page, { notes });
+  const area = await composerTextarea(page);
+  await area.fill("pay #finance now");
+  await area.evaluate((el: HTMLTextAreaElement) => {
+    el.focus();
+    const at = el.value.indexOf("#finance") + 2;
+    el.setSelectionRange(at, at);
+    el.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+  });
+  await expect(page.locator("#recent-search")).toBeVisible();
+  await expect(page.locator("#recent-search")).toHaveValue("#finance");
+  await expect(page.locator("#recent li")).toHaveCount(1);
+});
+
+test("last-line tag click vs empty grow space", async ({ page }) => {
+  const notes = sampleNotes(2);
+  notes[0] = { ...notes[0], content: "budget #finance ok" };
+  await openComposer(page, { notes });
+  const area = await composerTextarea(page);
+  await area.fill("#finance");
+  const box = await area.boundingBox();
+  if (!box) {
+    throw new Error("textarea box");
+  }
+  await page.mouse.click(box.x + 16, box.y + box.height - 6);
+  await expect(page.locator("#recent-search")).toBeHidden();
+  await page.mouse.click(box.x + 28, box.y + 10);
+  await expect(page.locator("#recent-search")).toBeVisible();
+  await expect(page.locator("#recent-search")).toHaveValue("#finance");
+  const after = await area.boundingBox();
+  if (!after) {
+    throw new Error("textarea box after search");
+  }
+  await page.mouse.move(after.x + 28, after.y + 10);
+  await expect(area).toHaveCSS("cursor", "pointer");
+});
+
+test("preview tag links open search and headings stay plain", async ({ page }) => {
+  const notes = sampleNotes(2);
+  notes[0] = { ...notes[0], content: "budget #finance ok" };
+  await openComposer(page, { notes });
+  const area = await composerTextarea(page);
+  await area.fill("# Title\nsee #finance and `#code`");
+  const mode = page.locator("#mode-toggle");
+  if (!(await mode.isVisible())) {
+    await page.locator("#editor-menu-toggle").click();
+  }
+  await mode.click();
+  await expect(page.locator("#preview")).toBeVisible();
+  await expect(page.locator("#preview h1")).toContainText("Title");
+  await expect(page.locator("#preview h1 .md-tag")).toHaveCount(0);
+  await expect(page.locator("#preview code .md-tag")).toHaveCount(0);
+  await page.locator("#preview .md-tag").click();
+  await expect(page.locator("#recent-search")).toBeVisible();
+  await expect(page.locator("#recent-search")).toHaveValue("#finance");
+});
+
 test("recent search filters titles and shows an empty state", async ({ page }) => {
   await openComposer(page, { notes: sampleNotes(5, "Memo") });
   await page.locator("#recent-more").click();
