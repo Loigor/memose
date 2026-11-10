@@ -33,6 +33,18 @@ test("default visibility save and window snap toggle", async ({ page }) => {
   await expect.poll(async () => invokedCmds(page)).toContain("save_settings");
   await page.locator("#visibility-choices button", { hasText: "Public" }).click();
   await expect(page.locator("#settings-status")).toHaveText("Default memo visibility saved.");
+  await page.locator("#show-in-switcher").check();
+  await expect(page.locator("#settings-status")).toHaveText("Alt+Tab enabled. Pinned mode stays on.");
+  await expect.poll(async () => invokedCmds(page)).toContain("set_show_in_switcher");
+  await page.locator("#pinned-always-on-top").uncheck();
+  await expect(page.locator("#show-in-switcher")).toBeChecked();
+  await expect(page.locator("#show-in-switcher")).toBeDisabled();
+  await expect(page.locator("#settings-status")).toHaveText(
+    "Pinned memos no longer stay on top. Alt+Tab is on so you can still find them.",
+  );
+  await expect.poll(async () => invokedCmds(page)).toContain("set_pinned_always_on_top");
+  await page.locator("#pinned-always-on-top").check();
+  await expect(page.locator("#show-in-switcher")).toBeEnabled();
   await page.locator("#snap-memos").check();
   await expect(page.locator("#settings-status")).toHaveText("Window snap enabled.");
   await expect.poll(async () => invokedCmds(page)).toContain("set_snap_memos");

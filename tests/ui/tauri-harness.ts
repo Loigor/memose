@@ -31,6 +31,8 @@ export type HarnessSettings = {
   visibility?: string;
   space?: string;
   snapMemos?: boolean;
+  showInSwitcher?: boolean;
+  pinnedAlwaysOnTop?: boolean;
   coderEditor?: boolean;
   markdownHighlight?: boolean;
   markdownScheme?: string;
@@ -150,6 +152,8 @@ function installBrowserHarness(seed: BrowserSeed) {
     visibility: seed.settings?.visibility ?? "PRIVATE",
     space: seed.settings?.space ?? "",
     snapMemos: Boolean(seed.settings?.snapMemos),
+    showInSwitcher: Boolean(seed.settings?.showInSwitcher),
+    pinnedAlwaysOnTop: seed.settings?.pinnedAlwaysOnTop !== false,
     coderEditor: Boolean(seed.settings?.coderEditor),
     markdownHighlight: seed.settings?.markdownHighlight !== false,
     markdownScheme:
@@ -387,8 +391,15 @@ function installBrowserHarness(seed: BrowserSeed) {
       }
       case "list_recent":
         return listRecent(a.limit);
-      case "get_settings":
-        return { ...state.settings, hasToken: Boolean(state.token) };
+      case "get_settings": {
+        const alwaysOnTop = state.settings.pinnedAlwaysOnTop !== false;
+        return {
+          ...state.settings,
+          hasToken: Boolean(state.token),
+          pinnedAlwaysOnTop: alwaysOnTop,
+          showInSwitcher: Boolean(state.settings.showInSwitcher) || !alwaysOnTop,
+        };
+      }
       case "save_settings": {
         if (typeof a.baseUrl === "string") {
           state.settings.baseUrl = a.baseUrl;
@@ -585,6 +596,12 @@ function installBrowserHarness(seed: BrowserSeed) {
       case "set_snap_memos":
         state.settings.snapMemos = Boolean(a.enabled);
         emit("snap-changed", a.enabled);
+        return null;
+      case "set_show_in_switcher":
+        state.settings.showInSwitcher = Boolean(a.enabled);
+        return null;
+      case "set_pinned_always_on_top":
+        state.settings.pinnedAlwaysOnTop = Boolean(a.enabled);
         return null;
       case "set_coder_editor":
         state.settings.coderEditor = Boolean(a.enabled);

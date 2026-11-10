@@ -307,6 +307,8 @@ test("settings window html has Visibility, Shortcuts, and Sync (useMemos) tabs w
   assert.match(html, /Default memo visibility/);
   assert.match(html, /Window snap/);
   assert.match(html, /id="snap-memos"/);
+  assert.match(html, /id="show-in-switcher"/);
+  assert.match(html, /id="pinned-always-on-top"/);
   assert.match(html, /id="coder-editor"/);
   assert.match(html, /id="markdown-highlight"/);
   assert.match(html, /id="markdown-schemes"/);

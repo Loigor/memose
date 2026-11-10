@@ -26,6 +26,8 @@ type Settings = {
   coderEditor: boolean;
   markdownHighlight: boolean;
   markdownScheme: string;
+  showInSwitcher: boolean;
+  pinnedAlwaysOnTop: boolean;
 };
 
 type TabId = "visibility" | "shortcuts" | "sync";
@@ -35,6 +37,8 @@ const token = document.querySelector<HTMLInputElement>("#token");
 const tokenHint = document.querySelector<HTMLParagraphElement>("#token-hint");
 const status = document.querySelector<HTMLParagraphElement>("#settings-status");
 const autostart = document.querySelector<HTMLInputElement>("#autostart");
+const showInSwitcher = document.querySelector<HTMLInputElement>("#show-in-switcher");
+const pinnedAlwaysOnTop = document.querySelector<HTMLInputElement>("#pinned-always-on-top");
 const snapMemos = document.querySelector<HTMLInputElement>("#snap-memos");
 const coderEditor = document.querySelector<HTMLInputElement>("#coder-editor");
 const markdownHighlight = document.querySelector<HTMLInputElement>("#markdown-highlight");
@@ -58,6 +62,8 @@ if (
   !tokenHint ||
   !status ||
   !autostart ||
+  !showInSwitcher ||
+  !pinnedAlwaysOnTop ||
   !snapMemos ||
   !coderEditor ||
   !markdownHighlight ||
@@ -83,6 +89,8 @@ const tokenEl = token;
 const tokenHintEl = tokenHint;
 const statusEl = status;
 const autostartEl = autostart;
+const showInSwitcherEl = showInSwitcher;
+const pinnedAlwaysOnTopEl = pinnedAlwaysOnTop;
 const snapMemosEl = snapMemos;
 const coderEditorEl = coderEditor;
 const markdownHighlightEl = markdownHighlight;
@@ -269,6 +277,7 @@ async function loadSettings() {
     ? `A token is saved on ${thisComputer()}.`
     : "No token saved.";
   autostartEl.checked = settings.launchAtLogin;
+  paintDesktopPrefs(settings);
   snapMemosEl.checked = settings.snapMemos;
   coderEditorEl.checked = settings.coderEditor;
   markdownHighlightEl.checked = settings.markdownHighlight !== false;
@@ -578,6 +587,51 @@ document.querySelector("#clear-memos")?.addEventListener("click", () => {
       statusEl.textContent = String(error);
     }
   })();
+});
+
+function paintDesktopPrefs(settings: Pick<Settings, "showInSwitcher" | "pinnedAlwaysOnTop">) {
+  const alwaysOnTop = settings.pinnedAlwaysOnTop !== false;
+  pinnedAlwaysOnTopEl.checked = alwaysOnTop;
+  showInSwitcherEl.checked = Boolean(settings.showInSwitcher) || !alwaysOnTop;
+  showInSwitcherEl.disabled = !alwaysOnTop;
+}
+
+showInSwitcherEl.addEventListener("change", () => {
+  const enabled = showInSwitcherEl.checked;
+  void invoke("set_show_in_switcher", { enabled })
+    .then(() => {
+      statusEl.textContent = enabled
+        ? "Alt+Tab enabled. Pinned mode stays on."
+        : "Alt+Tab disabled.";
+    })
+    .catch((error: unknown) => {
+      statusEl.textContent = String(error);
+      showInSwitcherEl.checked = !enabled;
+    });
+});
+
+pinnedAlwaysOnTopEl.addEventListener("change", () => {
+  const enabled = pinnedAlwaysOnTopEl.checked;
+  if (!enabled) {
+    showInSwitcherEl.checked = true;
+    showInSwitcherEl.disabled = true;
+  }
+  void invoke("set_pinned_always_on_top", { enabled })
+    .then(() => invoke<Settings>("get_settings"))
+    .then((settings) => {
+      paintDesktopPrefs(settings);
+      statusEl.textContent = enabled
+        ? "Pinned memos stay on top."
+        : "Pinned memos no longer stay on top. Alt+Tab is on so you can still find them.";
+    })
+    .catch((error: unknown) => {
+      statusEl.textContent = String(error);
+      pinnedAlwaysOnTopEl.checked = !enabled;
+      paintDesktopPrefs({
+        showInSwitcher: showInSwitcherEl.checked,
+        pinnedAlwaysOnTop: pinnedAlwaysOnTopEl.checked,
+      });
+    });
 });
 
 snapMemosEl.addEventListener("change", () => {

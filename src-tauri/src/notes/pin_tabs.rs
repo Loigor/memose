@@ -20,9 +20,9 @@ pub struct PinTabHit {
 }
 
 pub fn tab_at(hits: &[PinTabHit], x: f64, y: f64) -> Option<&str> {
-    hits.iter().find(|hit| {
-        x >= hit.x && y >= hit.y && x < hit.x + hit.w && y < hit.y + hit.h
-    }).map(|hit| hit.id.as_str())
+    hits.iter()
+        .find(|hit| x >= hit.x && y >= hit.y && x < hit.x + hit.w && y < hit.y + hit.h)
+        .map(|hit| hit.id.as_str())
 }
 
 /// Local pin-tab workspace. JSON shape is the later sync memo body.
@@ -272,7 +272,11 @@ impl Db {
         Ok(state)
     }
 
-    pub fn move_pinned_note_to_tab(&self, note_id: &str, tab_id: &str) -> Result<PinTabs, AppError> {
+    pub fn move_pinned_note_to_tab(
+        &self,
+        note_id: &str,
+        tab_id: &str,
+    ) -> Result<PinTabs, AppError> {
         let mut state = self.pin_tabs()?;
         if !state.tabs.iter().any(|tab| tab.id == tab_id) {
             return Err(AppError::Message("pin tab not found".into()));
