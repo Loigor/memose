@@ -2097,6 +2097,64 @@ function finishSnapDrag() {
   void invoke("end_memo_drag", { label: getCurrentWindow().label });
 }
 
+type ScreenEdgeCue = {
+  left: number | null;
+  right: number | null;
+  top: number | null;
+  bottom: number | null;
+  origin_x: number;
+  origin_y: number;
+};
+
+function placeScreenEdges(cue: ScreenEdgeCue) {
+  const root = document.querySelector<HTMLElement>("#screen-edges");
+  const frame = document.querySelector<HTMLElement>("#frame");
+  if (!root || !frame) {
+    return;
+  }
+  const box = frame.getBoundingClientRect();
+  root.style.left = `${box.left}px`;
+  root.style.top = `${box.top}px`;
+  root.style.width = `${box.width}px`;
+  root.style.height = `${box.height}px`;
+  const place = (name: "left" | "right" | "top" | "bottom", at: number | null) => {
+    const edge = root.querySelector<HTMLElement>(`[data-edge="${name}"]`);
+    if (!edge) {
+      return;
+    }
+    edge.hidden = at === null;
+    if (at === null) {
+      return;
+    }
+    const local = (name === "left" || name === "right" ? at - box.left : at - box.top);
+    if (name === "left" || name === "right") {
+      edge.style.left = `${name === "right" ? local - 20 : local}px`;
+    } else {
+      edge.style.top = `${name === "bottom" ? local - 20 : local}px`;
+    }
+  };
+  place("left", cue.left);
+  place("right", cue.right);
+  place("top", cue.top);
+  place("bottom", cue.bottom);
+}
+
+function paintScreenEdges(cue: ScreenEdgeCue) {
+  const root = document.querySelector<HTMLElement>("#screen-edges");
+  if (!root) {
+    return;
+  }
+  const clear = cue.left === null && cue.right === null && cue.top === null && cue.bottom === null;
+  if (clear) {
+    root.hidden = true;
+    root.classList.add("is-clear");
+    return;
+  }
+  root.hidden = false;
+  root.classList.remove("is-clear");
+  placeScreenEdges(cue);
+}
+
 export function wireChrome() {
   window.addEventListener(
     "pointerdown",
@@ -2264,6 +2322,14 @@ export function wireChrome() {
     finishSnapDrag();
   });
   if (inTauri() && !isPreviewWindow()) {
+    void getCurrentWindow()
+      .listen<ScreenEdgeCue>("screen-edges", (event) => {
+        paintScreenEdges(event.payload);
+      })
+      .then(() => invoke("sync_screen_edges", { label: getCurrentWindow().label }))
+      .catch((error: unknown) => {
+        console.error(error);
+      });
     void getCurrentWindow().listen<[number, number] | null>("window-cursor", (event) => {
       cursorKnown = true;
       cursorPoint = event.payload ? { x: event.payload[0], y: event.payload[1] } : null;

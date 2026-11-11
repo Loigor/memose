@@ -129,6 +129,7 @@ pub fn run() {
             commands::set_collapsed,
             commands::stack_chain,
             commands::set_window_height,
+            commands::sync_screen_edges,
             commands::apply_composer_size,
             commands::save_note_size,
             commands::begin_memo_drag,

@@ -14,10 +14,9 @@ Hover may still peek the memo open. A click on the bar body, or focus in a text 
 
 A resized or snapped memo can end with most of its window outside the work area. The edge that left the screen is then hard to find.
 
-Two changes, both still to do:
+When the memo card crosses a screen edge, a 30px semi-transparent gradient is painted on that window, starting at the screen edge and fading into the window. The shadow gutter can sit past the edge without a cue. The cue follows the window as it moves.
 
-1. When any edge of a memo window crosses a screen edge, paint a semi-transparent gradient on that memo, 30px wide, starting at the screen edge and fading into the window. It shows which way the window left.
-2. With window snapping on, a memo snapped to the left or right screen edge must not hang past the bottom of that display. If its height would, shorten the height so the bottom of the window meets the bottom of the work area.
+With window snapping on, a memo whose card sits on the left or right edge of the work area is shortened when its bottom would pass that area. The bottom of the window then meets the bottom of the work area. A memo that is not on a side edge keeps its height, and the window is not shrunk below its minimum height.
 
 ## 3. Pinned tab bar on more than one display
 

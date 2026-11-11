@@ -5,7 +5,7 @@ use std::time::{Duration, Instant};
 
 use tauri::{AppHandle, Emitter, Manager, PhysicalPosition, PhysicalSize, WebviewWindow};
 
-use super::geom::{closer_snap, closer_snap_x};
+use super::geom::{closer_snap, closer_snap_x, fit_side_snap_height, screen_edge_cue};
 use super::{
     apply_pin_tab, contains, pin_label, place_at, resize_frame, save_pin_frame,
     slide_card_into_view, snap_enabled, snap_memo_edges, snap_screen_edges, ResizeEdge,
@@ -114,6 +114,7 @@ fn settle_window(app: &AppHandle, label: &str, note_id: Option<&str>, resize: bo
             save_pin_frame(app, id, &window);
         }
     }
+    publish_screen_edges(app, &window);
 }
 
 fn neighbor_cards(app: &AppHandle, window: &WebviewWindow) -> Vec<(i32, i32, i32, i32)> {
@@ -197,13 +198,24 @@ fn snap_moved_corner(app: &AppHandle, window: &WebviewWindow) {
     let Ok(position) = window.outer_position() else {
         return;
     };
-    let Some((x, y)) = snap_target_for_origin(app, window, position.x, position.y) else {
+    let Ok(size) = window.outer_size() else {
         return;
     };
-    if (x - position.x).abs() <= 2 && (y - position.y).abs() <= 2 {
-        return;
+    let mut x = position.x;
+    let mut y = position.y;
+    if let Some((sx, sy)) = snap_target_for_origin(app, window, position.x, position.y) {
+        if (sx - position.x).abs() > 2 || (sy - position.y).abs() > 2 {
+            x = sx;
+            y = sy;
+        }
     }
-    let _ = window.set_position(PhysicalPosition::new(x, y));
+    let height = side_snap_height(app, window, x, y, size.width as i32, size.height as i32);
+    if x != position.x || y != position.y {
+        let _ = window.set_position(PhysicalPosition::new(x, y));
+    }
+    if height != size.height as i32 {
+        let _ = window.set_size(PhysicalSize::new(size.width.max(1), height.max(1) as u32));
+    }
 }
 
 fn snap_resized_edges(app: &AppHandle, window: &WebviewWindow) {
@@ -270,6 +282,7 @@ fn snap_resized_edges(app: &AppHandle, window: &WebviewWindow) {
             height = next;
         }
     }
+    height = side_snap_height(app, window, x, y, width, height);
     if x == position.x
         && y == position.y
         && width == size.width as i32
@@ -514,11 +527,21 @@ pub fn set_window_height(app: &AppHandle, label: &str, logical_height: i32) {
         );
     }
     let scale = window.scale_factor().unwrap_or(1.0).max(0.5);
-    let height = ((f64::from(logical_height.max(96))) * scale)
+    let mut height = ((f64::from(logical_height.max(96))) * scale)
         .round()
-        .max(1.0) as u32;
+        .max(1.0) as i32;
+    if let Ok(position) = window.outer_position() {
+        height = side_snap_height(
+            app,
+            &window,
+            position.x,
+            position.y,
+            size.width as i32,
+            height,
+        );
+    }
     let width = size.width.max(1);
-    let _ = window.set_size(PhysicalSize::new(width, height));
+    let _ = window.set_size(PhysicalSize::new(width, height.max(1) as u32));
     if let Some(id) = label.strip_prefix("pin-") {
         if parks()
             .lock()
@@ -1435,6 +1458,37 @@ fn park_quiet(label: &str) -> bool {
         .unwrap_or(false)
 }
 
+fn gliding() -> &'static Mutex<HashMap<String, u64>> {
+    static GLIDING: LazyLock<Mutex<HashMap<String, u64>>> =
+        LazyLock::new(|| Mutex::new(HashMap::new()));
+    &GLIDING
+}
+
+fn begin_glide(app: &AppHandle, label: &str, ticket: u64) {
+    if let Ok(mut gliding) = gliding().lock() {
+        gliding.insert(label.to_string(), ticket);
+    }
+    if let Some(window) = app.get_webview_window(label) {
+        hide_screen_edges(&window);
+    }
+}
+
+fn end_glide(app: &AppHandle, label: &str, ticket: u64) {
+    let ended = gliding().lock().ok().is_some_and(|mut gliding| {
+        if gliding.get(label) != Some(&ticket) {
+            return false;
+        }
+        gliding.remove(label);
+        true
+    });
+    if !ended {
+        return;
+    }
+    if let Some(window) = app.get_webview_window(label) {
+        publish_screen_edges(app, &window);
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 fn glide_window(
     app: AppHandle,
@@ -1446,6 +1500,7 @@ fn glide_window(
     to_y: i32,
     clear: bool,
 ) {
+    begin_glide(&app, &label, ticket);
     tauri::async_runtime::spawn(async move {
         let steps = 8;
         for step in 1..=steps {
@@ -1465,6 +1520,7 @@ fn glide_window(
                         .map(|_| ())
                 });
                 if current.is_none() || drag_active(&label2) {
+                    end_glide(&app2, &label2, ticket);
                     return;
                 }
                 if let Some(window) = app2.get_webview_window(&label2) {
@@ -1479,6 +1535,9 @@ fn glide_window(
                             parked.remove(&label2);
                         }
                     }
+                }
+                if done {
+                    end_glide(&app2, &label2, ticket);
                 }
             });
         }
@@ -1828,6 +1887,180 @@ pub fn watch_offscreen_hover(app: AppHandle) {
         }
         let _ = rx.recv_timeout(Duration::from_millis(120));
     });
+}
+
+fn side_snap_height(
+    app: &AppHandle,
+    window: &WebviewWindow,
+    x: i32,
+    y: i32,
+    width: i32,
+    height: i32,
+) -> i32 {
+    if !snap_enabled(app) {
+        return height;
+    }
+    let Ok(scale) = window.scale_factor() else {
+        return height;
+    };
+    let Ok(monitors) = app.available_monitors() else {
+        return height;
+    };
+    let pad_x = (CARD_PAD_X * scale).round() as i32;
+    let pad_bottom = (CARD_PAD_BOTTOM * scale).round() as i32;
+    let min_h = (140.0 * scale).round() as i32;
+    let mut fitted = height;
+    for monitor in monitors {
+        let area = monitor.work_area();
+        let next = fit_side_snap_height(
+            x,
+            y,
+            width,
+            height,
+            pad_x,
+            pad_bottom,
+            area.position.x,
+            area.size.width as i32,
+            area.position.y.saturating_add(area.size.height as i32),
+            min_h,
+        );
+        if next < fitted {
+            fitted = next;
+        }
+    }
+    fitted
+}
+
+#[derive(Clone, Copy, PartialEq, serde::Serialize)]
+struct ScreenEdgeEvent {
+    left: Option<f64>,
+    right: Option<f64>,
+    top: Option<f64>,
+    bottom: Option<f64>,
+    /// Window origin when `left`/`top` were measured, in CSS pixels.
+    origin_x: f64,
+    origin_y: f64,
+}
+
+fn screen_edge_events() -> &'static Mutex<HashMap<String, ScreenEdgeEvent>> {
+    static LAST: LazyLock<Mutex<HashMap<String, ScreenEdgeEvent>>> =
+        LazyLock::new(|| Mutex::new(HashMap::new()));
+    &LAST
+}
+
+pub fn sync_screen_edges(app: &AppHandle, label: &str) {
+    if let Ok(mut last) = screen_edge_events().lock() {
+        last.remove(label);
+    }
+    let Some(window) = app.get_webview_window(label) else {
+        return;
+    };
+    publish_screen_edges(app, &window);
+}
+
+pub(super) fn publish_screen_edges(app: &AppHandle, window: &WebviewWindow) {
+    // Updating the cue on each hover-slide step makes the gradient ride with the memo.
+    if gliding()
+        .lock()
+        .ok()
+        .is_some_and(|gliding| gliding.contains_key(window.label()))
+    {
+        return;
+    }
+    let (Ok(position), Ok(size), Ok(scale)) = (
+        window.outer_position(),
+        window.outer_size(),
+        window.scale_factor(),
+    ) else {
+        return;
+    };
+    let cue = monitor_overlapping(
+        app,
+        position.x,
+        position.y,
+        size.width as i32,
+        size.height as i32,
+    )
+    .map(|monitor| {
+        let pad_x = (CARD_PAD_X * scale).round() as i32;
+        let pad_top = (CARD_PAD_TOP * scale).round() as i32;
+        let pad_bottom = (CARD_PAD_BOTTOM * scale).round() as i32;
+        let bounds = monitor.position();
+        let screen = monitor.size();
+        let raw = screen_edge_cue(
+            position.x,
+            position.y,
+            size.width as i32,
+            size.height as i32,
+            pad_x,
+            pad_top,
+            pad_bottom,
+            bounds.x,
+            bounds.y,
+            screen.width as i32,
+            screen.height as i32,
+            scale,
+        );
+        ScreenEdgeEvent {
+            left: raw.left,
+            right: raw.right,
+            top: raw.top,
+            bottom: raw.bottom,
+            origin_x: f64::from(position.x) / scale,
+            origin_y: f64::from(position.y) / scale,
+        }
+    })
+    .unwrap_or(ScreenEdgeEvent {
+        left: None,
+        right: None,
+        top: None,
+        bottom: None,
+        origin_x: f64::from(position.x) / scale,
+        origin_y: f64::from(position.y) / scale,
+    });
+    let label = window.label().to_string();
+    if let Ok(mut last) = screen_edge_events().lock() {
+        if last.get(&label) == Some(&cue) {
+            return;
+        }
+        last.insert(label, cue);
+    }
+    let _ = window.emit_to(window.label(), "screen-edges", cue);
+}
+
+fn hide_screen_edges(window: &WebviewWindow) {
+    let cue = ScreenEdgeEvent {
+        left: None,
+        right: None,
+        top: None,
+        bottom: None,
+        origin_x: 0.0,
+        origin_y: 0.0,
+    };
+    if let Ok(mut last) = screen_edge_events().lock() {
+        last.insert(window.label().to_string(), cue);
+    }
+    let _ = window.emit_to(window.label(), "screen-edges", cue);
+}
+
+fn monitor_overlapping(app: &AppHandle, x: i32, y: i32, w: i32, h: i32) -> Option<tauri::Monitor> {
+    let monitors = app.available_monitors().ok()?;
+    let mut best_area = 0i64;
+    let mut best = None;
+    for monitor in monitors {
+        let origin = monitor.position();
+        let size = monitor.size();
+        let right = origin.x.saturating_add(size.width as i32);
+        let bottom = origin.y.saturating_add(size.height as i32);
+        let overlap_w = (x.saturating_add(w).min(right) - x.max(origin.x)).max(0);
+        let overlap_h = (y.saturating_add(h).min(bottom) - y.max(origin.y)).max(0);
+        let area = i64::from(overlap_w) * i64::from(overlap_h);
+        if area > best_area {
+            best_area = area;
+            best = Some(monitor);
+        }
+    }
+    best
 }
 
 fn monitor_containing(app: &AppHandle, x: i32, y: i32) -> Option<tauri::Monitor> {

@@ -283,6 +283,11 @@ pub fn set_window_height(app: AppHandle, label: String, height: i32) {
 }
 
 #[tauri::command]
+pub fn sync_screen_edges(app: AppHandle, label: String) {
+    window_ctl::sync_screen_edges(&app, &label);
+}
+
+#[tauri::command]
 pub fn apply_composer_size(app: AppHandle, width: Option<i32>, height: Option<i32>) {
     window_ctl::apply_composer_size(&app, width, height);
 }

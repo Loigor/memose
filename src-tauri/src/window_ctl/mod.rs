@@ -9,7 +9,8 @@ pub use composer::{
 };
 pub use drag::{
     begin_corner_resize, begin_memo_drag, detach_guest, end_memo_drag, prepare_remove,
-    set_pin_tab_hits, set_window_height, slide_back, slide_into_view, watch_offscreen_hover,
+    set_pin_tab_hits, set_window_height, slide_back, slide_into_view, sync_screen_edges,
+    watch_offscreen_hover,
 };
 pub use pin::{close_pinned, open_pinned, organize_pinned, place_for_pin, toggle_pinned};
 
