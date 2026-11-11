@@ -1554,20 +1554,6 @@ function buildSection(note: Note): HTMLElement {
     if (!id || !state) {
       return;
     }
-    if (state.collapsed && editingHoldSection === id) {
-      editingHoldSection = null;
-      if (autoOpenNewSection === id) {
-        autoOpenNewSection = null;
-      }
-      state.hover = false;
-      state.suppressHover = isElementHovered(section);
-      const isBar = sectionBarOnly(id, state);
-      section.classList.toggle("is-bar", isBar);
-      section.classList.toggle("hover-open", state.collapsed && !isBar);
-      paintSectionColor(section, state);
-      paintChrome();
-      return;
-    }
     void toggleSection(id);
   });
   return section;
@@ -1860,9 +1846,6 @@ export function syncCollapsedPeek() {
       dismissAutoOpenNewSection();
       changed = true;
     }
-    if (next && holdCollapsed("host")) {
-      changed = true;
-    }
     if (next !== hostHover) {
       hostHover = next;
       changed = true;
@@ -1888,9 +1871,6 @@ export function syncCollapsedPeek() {
     const next = over && !state.suppressHover;
     if (next && autoOpenNewSection !== null && autoOpenNewSection !== id) {
       dismissAutoOpenNewSection();
-      changed = true;
-    }
-    if (next && id && holdCollapsed(id)) {
       changed = true;
     }
     if (next === state.hover) {
@@ -2159,13 +2139,6 @@ export function wireChrome() {
   const hostFold = document.querySelector<HTMLButtonElement>("#fold-toggle");
   hostFold?.addEventListener("click", (event) => {
     event.stopPropagation();
-    if (hostCollapsed && editingHoldSection === "host") {
-      editingHoldSection = null;
-      hostHover = false;
-      suppressHostHover = isElementHovered(cardEl);
-      paintChrome();
-      return;
-    }
     void setHostCollapsed(!hostCollapsed);
   });
 

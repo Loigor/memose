@@ -38,6 +38,11 @@ test("fold toggle collapses the host memo", async ({ page }) => {
   await page.locator("#fold-toggle").click();
   await expect.poll(async () => invokedCmds(page)).toContain("set_collapsed");
   await expect(page.locator("#fold-toggle")).toHaveAttribute("aria-pressed", "true");
+  await page.mouse.move(0, 0);
+  await page.locator("#fold-toggle").hover();
+  await page.locator("#fold-toggle").click();
+  await expect(page.locator("#fold-toggle")).toHaveAttribute("aria-pressed", "false");
+  await expect(page.locator("html")).not.toHaveClass(/collapsed/);
 });
 
 test("joining a third guest auto-folds the stack", async ({ page }) => {
