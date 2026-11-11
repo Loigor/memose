@@ -133,9 +133,16 @@ select {
 
 input[type="url"]:focus,
 input[type="password"]:focus,
-input[type="text"]:focus {
+input[type="text"]:focus,
+select:focus {
   outline: 2px solid #8a795d;
   outline-offset: 1px;
+}
+
+.pin-place {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
 }
 
 .toggle-row {

@@ -32,6 +32,9 @@ use crate::error::AppError;
 use crate::media;
 use crate::state::AppState;
 
+pub(crate) use geom::{normalize_pin_edge, normalize_pin_screen};
+use geom::{strip_edge_name, strip_frame};
+
 const PREVIEW: &str = "media-preview";
 const PREVIEW_GRACE: Duration = Duration::from_millis(300);
 
@@ -39,6 +42,31 @@ const WINDOW: &str = "main";
 const SETTINGS: &str = "settings";
 const PIN_TABS: &str = "pinned-tabs";
 const STRIP_H: f64 = 12.0;
+
+fn is_pin_strip(label: &str) -> bool {
+    label == PIN_TABS || label.starts_with("pinned-tabs-")
+}
+
+fn pin_strip_label(index: usize) -> String {
+    if index == 0 {
+        PIN_TABS.to_string()
+    } else {
+        format!("pinned-tabs-{index}")
+    }
+}
+
+fn strip_index(label: &str) -> Option<usize> {
+    if label == PIN_TABS {
+        return Some(0);
+    }
+    label.strip_prefix("pinned-tabs-")?.parse().ok()
+}
+
+fn strip_edges() -> &'static Mutex<HashMap<String, String>> {
+    static EDGES: LazyLock<Mutex<HashMap<String, String>>> =
+        LazyLock::new(|| Mutex::new(HashMap::new()));
+    &EDGES
+}
 const CARD_WIDTH: f64 = 408.0;
 const CARD_HEIGHT: f64 = 476.0;
 // Shadow gutter on `body` in styles.css. Auto-organize overlaps this so the
@@ -88,8 +116,10 @@ pub fn show_settings(app: &AppHandle) {
 }
 
 pub fn hide_pin_tabs(app: &AppHandle) {
-    if let Some(window) = app.get_webview_window(PIN_TABS) {
-        let _ = window.hide();
+    for (label, window) in app.webview_windows() {
+        if is_pin_strip(&label) {
+            let _ = window.hide();
+        }
     }
 }
 
@@ -116,24 +146,55 @@ fn raise_pin_tabs(app: &AppHandle) {
     if !app.state::<AppState>().pinned_mode.load(Ordering::SeqCst) {
         return;
     }
-    if let Some(window) = app.get_webview_window(PIN_TABS) {
-        style_desktop_window(app, &window, true);
+    for (label, window) in app.webview_windows() {
+        if is_pin_strip(&label) {
+            style_desktop_window(app, &window, true);
+        }
     }
 }
 
 fn show_pin_tabs_window(app: &AppHandle) {
-    if let Some(window) = app.get_webview_window(PIN_TABS) {
+    let (screen, edge) = saved_pin_place(app);
+    let monitors = monitors_for_strips(app, &screen);
+    if monitors.is_empty() {
+        return;
+    }
+    for (index, monitor) in monitors.iter().enumerate() {
+        let label = pin_strip_label(index);
+        let Some(window) = open_pin_strip(app, &label) else {
+            continue;
+        };
         let hidden = !window.is_visible().unwrap_or(false);
-        place_pin_tabs(app, &window, hidden);
+        place_strip(&window, monitor, edge, hidden);
         let _ = window.show();
         style_desktop_window(app, &window, true);
-        return;
+    }
+    let keep = monitors.len();
+    if let Ok(mut edges) = strip_edges().lock() {
+        edges.retain(|label, _| strip_index(label).is_some_and(|index| index < keep));
+    }
+    let extras: Vec<WebviewWindow> = app
+        .webview_windows()
+        .into_iter()
+        .filter(|(label, _)| {
+            is_pin_strip(label) && strip_index(label).is_some_and(|index| index >= keep)
+        })
+        .map(|(_, window)| window)
+        .collect();
+    for window in extras {
+        let _ = window.close();
+    }
+}
+
+fn open_pin_strip(app: &AppHandle, label: &str) -> Option<WebviewWindow> {
+    if let Some(window) = app.get_webview_window(label) {
+        return Some(window);
     }
     let script =
         "if(document.documentElement){document.documentElement.classList.add('pin-tabs-window');}";
     let builder = tauri::WebviewWindowBuilder::new(
         app,
-        PIN_TABS,
+        label,
         tauri::WebviewUrl::App("pin-tabs.html".into()),
     )
     .title("Memose")
@@ -151,34 +212,127 @@ fn show_pin_tabs_window(app: &AppHandle) {
     let builder = builder
         .no_redirection_bitmap(true)
         .background_color(tauri::window::Color(0, 0, 0, 0));
-    let window = match builder.build() {
-        Ok(window) => window,
+    match builder.build() {
+        Ok(window) => Some(window),
         Err(err) => {
             eprintln!("memose: could not open pinned tabs: {err}");
-            return;
+            None
         }
-    };
-    place_pin_tabs(app, &window, true);
-    let _ = window.show();
-    style_desktop_window(app, &window, true);
+    }
 }
 
-fn place_pin_tabs(app: &AppHandle, window: &WebviewWindow, reset_height: bool) {
-    let Some(monitor) = monitor_for_placement(app) else {
-        return;
+fn saved_pin_place(app: &AppHandle) -> (String, geom::StripEdge) {
+    let state = app.state::<AppState>();
+    let screen = state
+        .db
+        .get_meta(crate::notes::PIN_TAB_SCREEN)
+        .ok()
+        .flatten()
+        .unwrap_or_default();
+    let edge = state
+        .db
+        .get_meta(crate::notes::PIN_TAB_EDGE)
+        .ok()
+        .flatten()
+        .unwrap_or_default();
+    (normalize_pin_screen(&screen), geom::strip_edge(&edge))
+}
+
+fn monitor_key_of(monitor: &tauri::Monitor) -> String {
+    let name = monitor.name().map(String::as_str).unwrap_or("");
+    let trimmed = name.trim();
+    let position = monitor.position();
+    let named = (!trimmed.is_empty()).then_some(trimmed);
+    geom::monitor_key(named, position.x, position.y)
+}
+
+fn monitors_for_strips(app: &AppHandle, screen: &str) -> Vec<tauri::Monitor> {
+    if screen == "all" {
+        return app.available_monitors().unwrap_or_default();
+    }
+    if screen.starts_with("display:") {
+        if let Some(found) = app
+            .available_monitors()
+            .unwrap_or_default()
+            .into_iter()
+            .find(|monitor| monitor_key_of(monitor) == screen)
+        {
+            return vec![found];
+        }
+    }
+    monitor_for_placement(app).into_iter().collect()
+}
+
+fn strip_thickness(window: &WebviewWindow, edge: geom::StripEdge, scale: f64, reset: bool) -> u32 {
+    let collapsed = (STRIP_H * scale).round().max(1.0) as u32;
+    if reset {
+        return collapsed;
+    }
+    let Ok(size) = window.outer_size() else {
+        return collapsed;
     };
+    match edge {
+        geom::StripEdge::Left | geom::StripEdge::Right => size.width.max(1),
+        geom::StripEdge::Top | geom::StripEdge::Bottom => size.height.max(1),
+    }
+}
+
+fn place_strip(
+    window: &WebviewWindow,
+    monitor: &tauri::Monitor,
+    edge: geom::StripEdge,
+    reset: bool,
+) {
     let area = monitor.work_area();
     let scale = monitor.scale_factor().max(0.5);
-    let height = if reset_height {
-        (STRIP_H * scale).round().max(1.0) as u32
-    } else {
-        window
-            .outer_size()
-            .map(|size| size.height.max(1))
-            .unwrap_or_else(|_| (STRIP_H * scale).round().max(1.0) as u32)
+    let name = strip_edge_name(edge);
+    let previous = strip_edges()
+        .lock()
+        .ok()
+        .and_then(|edges| edges.get(window.label()).cloned());
+    let reset = reset || previous.as_deref() != Some(name);
+    let thick = strip_thickness(window, edge, scale, reset);
+    let (x, y, width, height) = strip_frame(
+        area.position.x,
+        area.position.y,
+        area.size.width,
+        area.size.height,
+        thick,
+        edge,
+    );
+    let _ = window.set_size(PhysicalSize::new(width, height));
+    let _ = window.set_position(PhysicalPosition::new(x, y));
+    if let Ok(mut edges) = strip_edges().lock() {
+        edges.insert(window.label().to_string(), name.to_string());
+    }
+    let _ = window.emit_to(window.label(), "pin-strip-edge", name);
+}
+
+pub(crate) fn pin_strip_edge(label: &str) -> String {
+    strip_edges()
+        .lock()
+        .ok()
+        .and_then(|edges| edges.get(label).cloned())
+        .unwrap_or_else(|| "top".into())
+}
+
+pub(crate) fn display_choices(app: &AppHandle) -> Vec<(String, String)> {
+    let Ok(monitors) = app.available_monitors() else {
+        return Vec::new();
     };
-    let _ = window.set_size(PhysicalSize::new(area.size.width.max(1), height));
-    let _ = window.set_position(PhysicalPosition::new(area.position.x, area.position.y));
+    monitors
+        .iter()
+        .enumerate()
+        .map(|(index, monitor)| {
+            let trimmed = monitor.name().map(String::as_str).unwrap_or("").trim();
+            let label = if trimmed.is_empty() {
+                format!("Display {}", index + 1)
+            } else {
+                trimmed.to_string()
+            };
+            (monitor_key_of(monitor), label)
+        })
+        .collect()
 }
 
 fn schedule_resign(app: &AppHandle) {
@@ -379,7 +533,7 @@ pub fn apply_desktop_prefs(app: &AppHandle) {
         if label == PREVIEW || label == SETTINGS || label == WINDOW {
             continue;
         }
-        let pin_like = label.starts_with("pin-") || label == PIN_TABS;
+        let pin_like = label.starts_with("pin-") || is_pin_strip(&label);
         style_desktop_window(app, &window, pin_like);
     }
     apply_switcher_policy(app);
@@ -469,5 +623,16 @@ mod desktop_prefs_tests {
         assert!(!effective_show_in_switcher(false, true));
         assert!(effective_show_in_switcher(true, true));
         assert!(effective_show_in_switcher(true, false));
+    }
+
+    #[test]
+    fn extra_strips_use_their_own_labels() {
+        assert_eq!(super::pin_strip_label(0), "pinned-tabs");
+        assert_eq!(super::pin_strip_label(2), "pinned-tabs-2");
+        assert_eq!(super::strip_index("pinned-tabs"), Some(0));
+        assert_eq!(super::strip_index("pinned-tabs-2"), Some(2));
+        assert!(super::is_pin_strip("pinned-tabs"));
+        assert!(super::is_pin_strip("pinned-tabs-2"));
+        assert!(!super::is_pin_strip("pin-note"));
     }
 }

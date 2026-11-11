@@ -20,14 +20,9 @@ With window snapping on, a memo whose card sits on the left or right edge of the
 
 ## 3. Pinned tab bar on more than one display
 
-The tab bar is one strip. It is placed on a single monitor, along the top of that monitor’s work area, and it spans that work area’s width. The monitor is the one that contains the composer when the composer is visible, otherwise the monitor under the cursor, otherwise the primary monitor. Unpinning every memo, writing a new one, and pinning it again can move the strip, because that choice runs again.
+The pinned tab bar is a strip along one edge of a display’s work area. The default is unchanged: when pinned mode turns on, the strip sits on the top edge of the display that contains the visible composer, otherwise the display under the cursor, otherwise the primary display.
 
-That “follow the cursor when pinned mode turns on” behavior can stay the default. Settings should add:
-
-- Which display the strip uses: the display under the cursor, a chosen display, or every display.
-- Which edge it sits on: top, bottom, left, or right.
-
-A strip on every display means one strip window per display. Left and right edges need a vertical strip; today the strip is only a short horizontal window.
+Settings, under Window & behavior, choose the display and the edge. The display is follow the cursor, one connected display, or every display. The edge is top, bottom, left, or right. Every display opens one strip window on each display. Left and right are vertical strips: a thin column on that edge that widens on hover, with the tab menu opening inward. Bottom and right stay pinned to that edge while the strip grows. The choice is saved and applied immediately when pinned mode is already on. A chosen display is remembered by its name. If it is unplugged, the strip follows the cursor until that display is back.
 
 ## 4. Normal editor — separate task, last
 

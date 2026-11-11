@@ -59,6 +59,18 @@ test("default visibility save and window snap toggle", async ({ page }) => {
   await expect.poll(async () => invokedCmds(page)).toContain("set_markdown_highlight");
 });
 
+test("pinned tab bar display and edge are saved", async ({ page }) => {
+  await openSettings(page);
+  await expect(page.locator("#pin-tab-screen")).toHaveValue("cursor");
+  await expect(page.locator("#pin-tab-edge")).toHaveValue("top");
+  await expect(page.locator("#pin-tab-screen option[value='display:Main']")).toHaveCount(1);
+  await page.locator("#pin-tab-screen").selectOption("display:Main");
+  await expect(page.locator("#settings-status")).toHaveText("Pinned tab bar updated.");
+  await page.locator("#pin-tab-edge").selectOption("left");
+  await expect(page.locator("#pin-tab-edge")).toHaveValue("left");
+  await expect.poll(async () => invokedCmds(page)).toContain("set_pin_tab_place");
+});
+
 test("launch at login toggle calls set_autostart", async ({ page }) => {
   await openSettings(page);
   await page.locator("#autostart").check();

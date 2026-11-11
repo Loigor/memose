@@ -542,6 +542,85 @@ pub fn fit_side_snap_height(
     fitted
 }
 
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(super) enum StripEdge {
+    Top,
+    Bottom,
+    Left,
+    Right,
+}
+
+pub(super) fn strip_edge(value: &str) -> StripEdge {
+    match value.trim() {
+        "bottom" => StripEdge::Bottom,
+        "left" => StripEdge::Left,
+        "right" => StripEdge::Right,
+        _ => StripEdge::Top,
+    }
+}
+
+pub(super) fn strip_edge_name(edge: StripEdge) -> &'static str {
+    match edge {
+        StripEdge::Top => "top",
+        StripEdge::Bottom => "bottom",
+        StripEdge::Left => "left",
+        StripEdge::Right => "right",
+    }
+}
+
+pub(crate) fn normalize_pin_edge(value: &str) -> &'static str {
+    strip_edge_name(strip_edge(value))
+}
+
+pub(crate) fn normalize_pin_screen(value: &str) -> String {
+    let value = value.trim();
+    if value == "all"
+        || (value.starts_with("display:") && value.len() > "display:".len() && value.len() <= 180)
+    {
+        return value.to_string();
+    }
+    "cursor".into()
+}
+
+/// shortcut: two monitors with the same name share one choice; include the position if that shows up.
+pub(super) fn monitor_key(name: Option<&str>, x: i32, y: i32) -> String {
+    match name.map(str::trim).filter(|name| !name.is_empty()) {
+        Some(name) => format!("display:{name}"),
+        None => format!("display:{x},{y}"),
+    }
+}
+
+/// Physical frame of the tab strip along one edge of a work area.
+pub(super) fn strip_frame(
+    area_x: i32,
+    area_y: i32,
+    area_w: u32,
+    area_h: u32,
+    thick: u32,
+    edge: StripEdge,
+) -> (i32, i32, u32, u32) {
+    let area_w = area_w.max(1);
+    let area_h = area_h.max(1);
+    let thick_w = thick.max(1).min(area_w);
+    let thick_h = thick.max(1).min(area_h);
+    match edge {
+        StripEdge::Top => (area_x, area_y, area_w, thick_h),
+        StripEdge::Bottom => (
+            area_x,
+            area_y.saturating_add((area_h - thick_h) as i32),
+            area_w,
+            thick_h,
+        ),
+        StripEdge::Left => (area_x, area_y, thick_w, area_h),
+        StripEdge::Right => (
+            area_x.saturating_add((area_w - thick_w) as i32),
+            area_y,
+            thick_w,
+            area_h,
+        ),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -822,5 +901,37 @@ mod tests {
             fit_side_snap_height(-24, 1030, 400, 400, 24, 32, 0, 1920, 1080, 140),
             400
         );
+    }
+
+    #[test]
+    fn the_strip_sits_on_the_chosen_edge_of_the_work_area() {
+        assert_eq!(
+            strip_frame(10, 20, 1920, 1080, 24, StripEdge::Top),
+            (10, 20, 1920, 24)
+        );
+        assert_eq!(
+            strip_frame(10, 20, 1920, 1080, 24, StripEdge::Bottom),
+            (10, 1076, 1920, 24)
+        );
+        assert_eq!(
+            strip_frame(10, 20, 1920, 1080, 24, StripEdge::Left),
+            (10, 20, 24, 1080)
+        );
+        assert_eq!(
+            strip_frame(10, 20, 1920, 1080, 24, StripEdge::Right),
+            (1906, 20, 24, 1080)
+        );
+    }
+
+    #[test]
+    fn pin_screen_choice_keeps_cursor_every_display_or_a_named_display() {
+        assert_eq!(normalize_pin_screen(""), "cursor");
+        assert_eq!(normalize_pin_screen("nope"), "cursor");
+        assert_eq!(normalize_pin_screen("all"), "all");
+        assert_eq!(normalize_pin_screen("display:Dell"), "display:Dell");
+        assert_eq!(normalize_pin_edge("left"), "left");
+        assert_eq!(normalize_pin_edge("nope"), "top");
+        assert_eq!(monitor_key(Some("Dell"), 0, 0), "display:Dell");
+        assert_eq!(monitor_key(None, 1920, 0), "display:1920,0");
     }
 }

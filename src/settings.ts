@@ -23,6 +23,8 @@ type Settings = {
   visibility: string;
   space: string;
   snapMemos: boolean;
+  pinTabScreen: string;
+  pinTabEdge: string;
   coderEditor: boolean;
   markdownHighlight: boolean;
   markdownScheme: string;
@@ -40,6 +42,8 @@ const autostart = document.querySelector<HTMLInputElement>("#autostart");
 const showInSwitcher = document.querySelector<HTMLInputElement>("#show-in-switcher");
 const pinnedAlwaysOnTop = document.querySelector<HTMLInputElement>("#pinned-always-on-top");
 const snapMemos = document.querySelector<HTMLInputElement>("#snap-memos");
+const pinTabScreen = document.querySelector<HTMLSelectElement>("#pin-tab-screen");
+const pinTabEdge = document.querySelector<HTMLSelectElement>("#pin-tab-edge");
 const coderEditor = document.querySelector<HTMLInputElement>("#coder-editor");
 const markdownHighlight = document.querySelector<HTMLInputElement>("#markdown-highlight");
 const markdownSchemes = document.querySelector<HTMLDivElement>("#markdown-schemes");
@@ -65,6 +69,8 @@ if (
   !showInSwitcher ||
   !pinnedAlwaysOnTop ||
   !snapMemos ||
+  !pinTabScreen ||
+  !pinTabEdge ||
   !coderEditor ||
   !markdownHighlight ||
   !markdownSchemes ||
@@ -92,6 +98,8 @@ const autostartEl = autostart;
 const showInSwitcherEl = showInSwitcher;
 const pinnedAlwaysOnTopEl = pinnedAlwaysOnTop;
 const snapMemosEl = snapMemos;
+const pinTabScreenEl = pinTabScreen;
+const pinTabEdgeEl = pinTabEdge;
 const coderEditorEl = coderEditor;
 const markdownHighlightEl = markdownHighlight;
 const markdownSchemesEl = markdownSchemes;
@@ -279,6 +287,7 @@ async function loadSettings() {
   autostartEl.checked = settings.launchAtLogin;
   paintDesktopPrefs(settings);
   snapMemosEl.checked = settings.snapMemos;
+  await loadPinPlace(settings);
   coderEditorEl.checked = settings.coderEditor;
   markdownHighlightEl.checked = settings.markdownHighlight !== false;
   chosenScheme = settings.markdownScheme === "cool" || settings.markdownScheme === "mono"
@@ -633,6 +642,51 @@ pinnedAlwaysOnTopEl.addEventListener("change", () => {
       });
     });
 });
+
+function option(value: string, label: string): HTMLOptionElement {
+  const el = document.createElement("option");
+  el.value = value;
+  el.textContent = label;
+  return el;
+}
+
+async function loadPinPlace(settings: Settings) {
+  const displays = await invoke<{ id: string; label: string }[]>("list_displays").catch(() => []);
+  const screen =
+    settings.pinTabScreen === "all" || settings.pinTabScreen?.startsWith("display:")
+      ? settings.pinTabScreen
+      : "cursor";
+  const edge =
+    settings.pinTabEdge === "bottom" || settings.pinTabEdge === "left" || settings.pinTabEdge === "right"
+      ? settings.pinTabEdge
+      : "top";
+  pinTabScreenEl.replaceChildren(
+    option("cursor", "Follow the cursor"),
+    option("all", "Every display"),
+    ...displays.map((display) => option(display.id, display.label)),
+  );
+  if (![...pinTabScreenEl.options].some((item) => item.value === screen)) {
+    pinTabScreenEl.append(option(screen, "Saved display"));
+  }
+  pinTabScreenEl.value = screen;
+  pinTabEdgeEl.value = edge;
+}
+
+function savePinPlace() {
+  void invoke("set_pin_tab_place", {
+    screen: pinTabScreenEl.value || "cursor",
+    edge: pinTabEdgeEl.value || "top",
+  })
+    .then(() => {
+      statusEl.textContent = "Pinned tab bar updated.";
+    })
+    .catch((error: unknown) => {
+      statusEl.textContent = String(error);
+    });
+}
+
+pinTabScreenEl.addEventListener("change", savePinPlace);
+pinTabEdgeEl.addEventListener("change", savePinPlace);
 
 snapMemosEl.addEventListener("change", () => {
   const enabled = snapMemosEl.checked;

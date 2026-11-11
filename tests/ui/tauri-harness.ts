@@ -36,6 +36,8 @@ export type HarnessSettings = {
   coderEditor?: boolean;
   markdownHighlight?: boolean;
   markdownScheme?: string;
+  pinTabScreen?: string;
+  pinTabEdge?: string;
 };
 
 export type PinTabSeed = {
@@ -160,6 +162,15 @@ function installBrowserHarness(seed: BrowserSeed) {
       seed.settings?.markdownScheme === "cool" || seed.settings?.markdownScheme === "mono"
         ? seed.settings.markdownScheme
         : "paper",
+    pinTabScreen: seed.settings?.pinTabScreen === "all" || seed.settings?.pinTabScreen?.startsWith("display:")
+      ? seed.settings.pinTabScreen
+      : "cursor",
+    pinTabEdge:
+      seed.settings?.pinTabEdge === "bottom" ||
+      seed.settings?.pinTabEdge === "left" ||
+      seed.settings?.pinTabEdge === "right"
+        ? seed.settings.pinTabEdge
+        : "top",
   };
   const shortcuts = {
     newMemo: `${command}+Alt+N`,
@@ -587,6 +598,14 @@ function installBrowserHarness(seed: BrowserSeed) {
       }
       case "set_pin_tab_hits":
         return null;
+      case "list_displays":
+        return [{ id: "display:Main", label: "Main" }];
+      case "set_pin_tab_place":
+        state.settings.pinTabScreen = String(a.screen || "cursor");
+        state.settings.pinTabEdge = String(a.edge || "top");
+        return null;
+      case "pin_strip_edge":
+        return state.settings.pinTabEdge || "top";
       case "hide_memos":
       case "hide_composer":
         return null;

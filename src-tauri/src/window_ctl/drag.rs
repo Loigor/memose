@@ -7,10 +7,9 @@ use tauri::{AppHandle, Emitter, Manager, PhysicalPosition, PhysicalSize, Webview
 
 use super::geom::{closer_snap, closer_snap_x, fit_side_snap_height, screen_edge_cue};
 use super::{
-    apply_pin_tab, contains, pin_label, place_at, resize_frame, save_pin_frame,
+    apply_pin_tab, contains, is_pin_strip, pin_label, place_at, resize_frame, save_pin_frame,
     slide_card_into_view, snap_enabled, snap_memo_edges, snap_screen_edges, ResizeEdge,
-    CARD_HEIGHT, CARD_PAD_BOTTOM, CARD_PAD_TOP, CARD_PAD_X, EDGE_CATCH, PIN_TABS, PREVIEW,
-    SETTINGS,
+    CARD_HEIGHT, CARD_PAD_BOTTOM, CARD_PAD_TOP, CARD_PAD_X, EDGE_CATCH, PREVIEW, SETTINGS,
 };
 use crate::notes::{tab_at, PinTabHit};
 use crate::state::AppState;
@@ -686,7 +685,9 @@ fn finish_memo_drag(app: &AppHandle, label: &str) {
     if was_dragging {
         settle_window(app, label, note_id, false);
     }
-    emit_strip_cursor(app, None);
+    for window in pin_strips(app) {
+        emit_strip_cursor(&window, None);
+    }
 }
 
 fn show_aim(app: &AppHandle, host_id: &str, mode: &str) {
@@ -762,8 +763,9 @@ struct TabAim {
     ready: bool,
 }
 
-fn tab_hits() -> &'static Mutex<Vec<PinTabHit>> {
-    static HITS: LazyLock<Mutex<Vec<PinTabHit>>> = LazyLock::new(|| Mutex::new(Vec::new()));
+fn tab_hits() -> &'static Mutex<HashMap<String, Vec<PinTabHit>>> {
+    static HITS: LazyLock<Mutex<HashMap<String, Vec<PinTabHit>>>> =
+        LazyLock::new(|| Mutex::new(HashMap::new()));
     &HITS
 }
 
@@ -773,68 +775,83 @@ fn tab_aims() -> &'static Mutex<HashMap<String, TabAim>> {
     &AIMS
 }
 
-pub fn set_pin_tab_hits(hits: Vec<PinTabHit>) {
+pub fn set_pin_tab_hits(label: String, hits: Vec<PinTabHit>) {
     if let Ok(mut stored) = tab_hits().lock() {
-        *stored = hits;
+        stored.insert(label, hits);
     }
 }
 
-fn emit_strip_cursor(app: &AppHandle, local: Option<(i32, i32)>) {
-    if let Some(window) = app.get_webview_window(PIN_TABS) {
-        let _ = window.emit("window-cursor", local);
-    }
+fn pin_strips(app: &AppHandle) -> Vec<WebviewWindow> {
+    app.webview_windows()
+        .into_iter()
+        .filter(|(label, _)| is_pin_strip(label))
+        .map(|(_, window)| window)
+        .collect()
+}
+
+fn emit_strip_cursor(window: &WebviewWindow, local: Option<(i32, i32)>) {
+    let _ = window.emit_to(window.label(), "window-cursor", local);
 }
 
 fn pulse_strip_cursor(app: &AppHandle) {
-    let Some(window) = app.get_webview_window(PIN_TABS) else {
+    let Ok(cursor) = app.cursor_position() else {
         return;
     };
-    if !window.is_visible().unwrap_or(false) {
-        emit_strip_cursor(app, None);
-        return;
-    }
-    let (Ok(cursor), Ok(position), Ok(size)) = (
-        app.cursor_position(),
-        window.outer_position(),
-        window.outer_size(),
-    ) else {
-        return;
-    };
-    let over = cursor.x >= f64::from(position.x)
-        && cursor.y >= f64::from(position.y)
-        && cursor.x < f64::from(position.x) + f64::from(size.width)
-        && cursor.y < f64::from(position.y) + f64::from(size.height);
-    if over {
-        let scale = window.scale_factor().unwrap_or(1.0).max(0.01);
-        emit_strip_cursor(
-            app,
-            Some((
-                ((cursor.x - f64::from(position.x)) / scale).round() as i32,
-                ((cursor.y - f64::from(position.y)) / scale).round() as i32,
-            )),
-        );
-    } else {
-        emit_strip_cursor(app, None);
+    for window in pin_strips(app) {
+        if !window.is_visible().unwrap_or(false) {
+            emit_strip_cursor(&window, None);
+            continue;
+        }
+        let (Ok(position), Ok(size)) = (window.outer_position(), window.outer_size()) else {
+            continue;
+        };
+        let over = cursor.x >= f64::from(position.x)
+            && cursor.y >= f64::from(position.y)
+            && cursor.x < f64::from(position.x) + f64::from(size.width)
+            && cursor.y < f64::from(position.y) + f64::from(size.height);
+        if over {
+            let scale = window.scale_factor().unwrap_or(1.0).max(0.01);
+            emit_strip_cursor(
+                &window,
+                Some((
+                    ((cursor.x - f64::from(position.x)) / scale).round() as i32,
+                    ((cursor.y - f64::from(position.y)) / scale).round() as i32,
+                )),
+            );
+        } else {
+            emit_strip_cursor(&window, None);
+        }
     }
 }
 
 fn tab_under_cursor(app: &AppHandle) -> Option<String> {
-    let window = app.get_webview_window(PIN_TABS)?;
-    if !window.is_visible().unwrap_or(false) {
-        return None;
-    }
     let cursor = app.cursor_position().ok()?;
-    let position = window.outer_position().ok()?;
-    let scale = window.scale_factor().unwrap_or(1.0).max(0.01);
-    let x = (cursor.x - f64::from(position.x)) / scale;
-    let y = (cursor.y - f64::from(position.y)) / scale;
+    let locals: Vec<(String, f64, f64)> = app
+        .webview_windows()
+        .into_iter()
+        .filter(|(label, window)| is_pin_strip(label) && window.is_visible().unwrap_or(false))
+        .filter_map(|(label, window)| {
+            let position = window.outer_position().ok()?;
+            let scale = window.scale_factor().unwrap_or(1.0).max(0.01);
+            Some((
+                label,
+                (cursor.x - f64::from(position.x)) / scale,
+                (cursor.y - f64::from(position.y)) / scale,
+            ))
+        })
+        .collect();
     let hits = tab_hits().lock().ok()?;
-    tab_at(&hits, x, y).map(str::to_string)
+    for (label, x, y) in locals {
+        if let Some(id) = hits.get(&label).and_then(|list| tab_at(list, x, y)) {
+            return Some(id.to_string());
+        }
+    }
+    None
 }
 
 fn show_tab_aim(app: &AppHandle, tab_id: &str, mode: &str) {
-    if let Some(window) = app.get_webview_window(PIN_TABS) {
-        let _ = window.emit("pin-tab-aim", (tab_id, mode));
+    for window in pin_strips(app) {
+        let _ = window.emit_to(window.label(), "pin-tab-aim", (tab_id, mode));
     }
 }
 
@@ -1780,7 +1797,7 @@ fn tick_offscreen_hover(app: &AppHandle) {
             None
         };
         cursor_hits.insert(label.clone(), local);
-        if label != PIN_TABS {
+        if !is_pin_strip(&label) {
             hits.push((label, over_window, window.is_focused().unwrap_or(false)));
         }
     }

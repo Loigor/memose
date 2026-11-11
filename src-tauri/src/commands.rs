@@ -20,6 +20,8 @@ pub(crate) struct SettingsView {
     visibility: String,
     space: String,
     snap_memos: bool,
+    pin_tab_screen: String,
+    pin_tab_edge: String,
     coder_editor: bool,
     markdown_highlight: bool,
     markdown_scheme: String,
@@ -155,6 +157,16 @@ pub fn get_settings(app: AppHandle, state: State<AppState>) -> Result<SettingsVi
         ),
         space: state.db.get_meta(notes::MEMO_SPACE)?.unwrap_or_default(),
         snap_memos: state.db.get_meta(notes::SNAP_MEMOS)?.as_deref() == Some("1"),
+        pin_tab_screen: window_ctl::normalize_pin_screen(
+            &state
+                .db
+                .get_meta(notes::PIN_TAB_SCREEN)?
+                .unwrap_or_default(),
+        ),
+        pin_tab_edge: window_ctl::normalize_pin_edge(
+            &state.db.get_meta(notes::PIN_TAB_EDGE)?.unwrap_or_default(),
+        )
+        .to_string(),
         coder_editor: state.db.get_meta(notes::CODER_EDITOR)?.as_deref() == Some("1"),
         markdown_highlight: state.db.get_meta(notes::MARKDOWN_HIGHLIGHT)?.as_deref() != Some("0"),
         markdown_scheme: markdown_scheme(state.db.get_meta(notes::MARKDOWN_SCHEME)?.as_deref()),
@@ -203,6 +215,46 @@ pub fn set_snap_memos(
         .set_meta(notes::SNAP_MEMOS, if enabled { "1" } else { "0" })?;
     let _ = app.emit("snap-changed", enabled);
     Ok(())
+}
+
+#[tauri::command]
+pub fn list_displays(app: AppHandle) -> Vec<DisplayChoice> {
+    window_ctl::display_choices(&app)
+        .into_iter()
+        .map(|(id, label)| DisplayChoice { id, label })
+        .collect()
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct DisplayChoice {
+    id: String,
+    label: String,
+}
+
+#[tauri::command]
+pub fn set_pin_tab_place(
+    app: AppHandle,
+    state: State<AppState>,
+    screen: String,
+    edge: String,
+) -> Result<(), AppError> {
+    state.db.set_meta(
+        notes::PIN_TAB_SCREEN,
+        &window_ctl::normalize_pin_screen(&screen),
+    )?;
+    state
+        .db
+        .set_meta(notes::PIN_TAB_EDGE, window_ctl::normalize_pin_edge(&edge))?;
+    if state.pinned_mode.load(Ordering::SeqCst) {
+        window_ctl::show_pin_tabs(&app);
+    }
+    Ok(())
+}
+
+#[tauri::command]
+pub fn pin_strip_edge(window: tauri::WebviewWindow) -> String {
+    window_ctl::pin_strip_edge(window.label())
 }
 
 #[tauri::command]
@@ -795,8 +847,8 @@ pub fn select_pin_tab(
 }
 
 #[tauri::command]
-pub fn set_pin_tab_hits(hits: Vec<PinTabHit>) {
-    window_ctl::set_pin_tab_hits(hits);
+pub fn set_pin_tab_hits(window: tauri::WebviewWindow, hits: Vec<PinTabHit>) {
+    window_ctl::set_pin_tab_hits(window.label().to_string(), hits);
 }
 
 #[tauri::command]
