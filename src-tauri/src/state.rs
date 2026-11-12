@@ -4,7 +4,7 @@ use std::sync::atomic::{AtomicBool, AtomicU64};
 use std::sync::Mutex;
 use std::time::Instant;
 
-use tauri::menu::CheckMenuItem;
+use tauri::menu::Menu;
 use tauri::Wry;
 
 use crate::notes::Db;
@@ -28,7 +28,7 @@ pub struct AppState {
     pub sync_tx: Mutex<Option<tokio::sync::mpsc::UnboundedSender<Job>>>,
     pub last_index: Mutex<Option<Instant>>,
     pub blur_hidden_at: Mutex<Option<Instant>>,
-    pub autostart_item: Mutex<Option<CheckMenuItem<Wry>>>,
+    pub tray_menu: Mutex<Option<Menu<Wry>>>,
     pub preview_open: AtomicBool,
     pub preview_name: Mutex<Option<String>>,
     pub preview_opened_at: Mutex<Option<Instant>>,
@@ -59,7 +59,7 @@ impl AppState {
             sync_tx: Mutex::new(None),
             last_index: Mutex::new(None),
             blur_hidden_at: Mutex::new(None),
-            autostart_item: Mutex::new(None),
+            tray_menu: Mutex::new(None),
             preview_open: AtomicBool::new(false),
             preview_name: Mutex::new(None),
             preview_opened_at: Mutex::new(None),

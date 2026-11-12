@@ -31,6 +31,7 @@ use tauri::{
 use crate::error::AppError;
 use crate::media;
 use crate::state::AppState;
+use crate::tray;
 
 pub(crate) use geom::{normalize_pin_edge, normalize_pin_screen};
 use geom::{strip_edge_name, strip_frame};
@@ -124,6 +125,10 @@ pub fn hide_pin_tabs(app: &AppHandle) {
 }
 
 pub fn show_pin_tabs(app: &AppHandle) {
+    if !pin_tab_bar_enabled(app) {
+        hide_pin_tabs(app);
+        return;
+    }
     #[cfg(target_os = "windows")]
     {
         let app = app.clone();
@@ -485,6 +490,20 @@ fn snap_enabled(app: &AppHandle) -> bool {
         == Some("1")
 }
 
+pub(crate) fn pin_tab_bar_enabled(app: &AppHandle) -> bool {
+    let saved = app
+        .state::<AppState>()
+        .db
+        .get_meta(crate::notes::PIN_TAB_BAR_ENABLED)
+        .ok()
+        .flatten();
+    effective_pin_tab_bar_enabled(saved.as_deref())
+}
+
+fn effective_pin_tab_bar_enabled(saved: Option<&str>) -> bool {
+    saved != Some("0")
+}
+
 pub(super) fn effective_show_in_switcher(requested: bool, always_on_top: bool) -> bool {
     requested || !always_on_top
 }
@@ -543,6 +562,7 @@ pub fn apply_desktop_prefs(app: &AppHandle) {
             pin::open_pinned_windows(app);
         }
     }
+    tray::refresh(app);
 }
 
 pub(super) fn apply_switcher_policy(app: &AppHandle) {
@@ -615,7 +635,7 @@ fn save_pin_frame(app: &AppHandle, id: &str, window: &WebviewWindow) {
 
 #[cfg(test)]
 mod desktop_prefs_tests {
-    use super::effective_show_in_switcher;
+    use super::{effective_pin_tab_bar_enabled, effective_show_in_switcher};
 
     #[test]
     fn switcher_turns_on_when_pins_are_not_always_on_top() {
@@ -623,6 +643,13 @@ mod desktop_prefs_tests {
         assert!(!effective_show_in_switcher(false, true));
         assert!(effective_show_in_switcher(true, true));
         assert!(effective_show_in_switcher(true, false));
+    }
+
+    #[test]
+    fn pin_tab_bar_defaults_on() {
+        assert!(effective_pin_tab_bar_enabled(None));
+        assert!(effective_pin_tab_bar_enabled(Some("1")));
+        assert!(!effective_pin_tab_bar_enabled(Some("0")));
     }
 
     #[test]

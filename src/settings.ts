@@ -23,6 +23,7 @@ type Settings = {
   visibility: string;
   space: string;
   snapMemos: boolean;
+  pinTabBarEnabled: boolean;
   pinTabScreen: string;
   pinTabEdge: string;
   coderEditor: boolean;
@@ -33,7 +34,7 @@ type Settings = {
   pinnedAlwaysOnTop: boolean;
 };
 
-type TabId = "visibility" | "shortcuts" | "sync";
+type TabId = "visibility" | "window" | "editor" | "shortcuts" | "sync";
 
 const baseUrl = document.querySelector<HTMLInputElement>("#base-url");
 const token = document.querySelector<HTMLInputElement>("#token");
@@ -43,6 +44,8 @@ const autostart = document.querySelector<HTMLInputElement>("#autostart");
 const showInSwitcher = document.querySelector<HTMLInputElement>("#show-in-switcher");
 const pinnedAlwaysOnTop = document.querySelector<HTMLInputElement>("#pinned-always-on-top");
 const snapMemos = document.querySelector<HTMLInputElement>("#snap-memos");
+const pinTabBarEnabled = document.querySelector<HTMLInputElement>("#pin-tab-bar-enabled");
+const pinTabPlace = document.querySelector<HTMLDivElement>("#pin-tab-place");
 const pinTabScreen = document.querySelector<HTMLSelectElement>("#pin-tab-screen");
 const pinTabEdge = document.querySelector<HTMLSelectElement>("#pin-tab-edge");
 const coderEditor = document.querySelector<HTMLInputElement>("#coder-editor");
@@ -71,6 +74,8 @@ if (
   !showInSwitcher ||
   !pinnedAlwaysOnTop ||
   !snapMemos ||
+  !pinTabBarEnabled ||
+  !pinTabPlace ||
   !pinTabScreen ||
   !pinTabEdge ||
   !coderEditor ||
@@ -101,6 +106,8 @@ const autostartEl = autostart;
 const showInSwitcherEl = showInSwitcher;
 const pinnedAlwaysOnTopEl = pinnedAlwaysOnTop;
 const snapMemosEl = snapMemos;
+const pinTabBarEnabledEl = pinTabBarEnabled;
+const pinTabPlaceEl = pinTabPlace;
 const pinTabScreenEl = pinTabScreen;
 const pinTabEdgeEl = pinTabEdge;
 const coderEditorEl = coderEditor;
@@ -291,6 +298,7 @@ async function loadSettings() {
   autostartEl.checked = settings.launchAtLogin;
   paintDesktopPrefs(settings);
   snapMemosEl.checked = settings.snapMemos;
+  paintPinTabBar(settings.pinTabBarEnabled !== false);
   await loadPinPlace(settings);
   coderEditorEl.checked = settings.coderEditor;
   indentWidthEl.value = String(settings.indentWidth >= 1 && settings.indentWidth <= 8 ? settings.indentWidth : 2);
@@ -655,6 +663,13 @@ function option(value: string, label: string): HTMLOptionElement {
   return el;
 }
 
+function paintPinTabBar(enabled: boolean) {
+  pinTabBarEnabledEl.checked = enabled;
+  pinTabScreenEl.disabled = !enabled;
+  pinTabEdgeEl.disabled = !enabled;
+  pinTabPlaceEl.classList.toggle("is-disabled", !enabled);
+}
+
 async function loadPinPlace(settings: Settings) {
   const displays = await invoke<{ id: string; label: string }[]>("list_displays").catch(() => []);
   const screen =
@@ -692,6 +707,20 @@ function savePinPlace() {
 
 pinTabScreenEl.addEventListener("change", savePinPlace);
 pinTabEdgeEl.addEventListener("change", savePinPlace);
+pinTabBarEnabledEl.addEventListener("change", () => {
+  const enabled = pinTabBarEnabledEl.checked;
+  paintPinTabBar(enabled);
+  void invoke("set_pin_tab_bar_enabled", { enabled })
+    .then(() => {
+      statusEl.textContent = enabled
+        ? "Pinned tab bar enabled."
+        : "Pinned tab bar hidden. Tabs are available from the tray menu.";
+    })
+    .catch((error: unknown) => {
+      statusEl.textContent = String(error);
+      paintPinTabBar(!enabled);
+    });
+});
 
 snapMemosEl.addEventListener("change", () => {
   const enabled = snapMemosEl.checked;

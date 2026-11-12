@@ -17,6 +17,7 @@ use super::{
 };
 use crate::notes::request_sync;
 use crate::state::AppState;
+use crate::tray;
 
 const PIN_CASCADE: i32 = 36;
 
@@ -34,12 +35,14 @@ pub fn toggle_pinned(app: &tauri::AppHandle) {
         if !composer_open(app) {
             super::apply_switcher_policy(app);
         }
+        tray::refresh(app);
         return;
     }
     state.pinned_mode.store(true, Ordering::SeqCst);
     open_pinned_windows(app);
     dismiss_composer(app);
     request_sync(app);
+    tray::refresh(app);
 }
 
 fn active_pin_note_ids(app: &tauri::AppHandle) -> HashSet<String> {

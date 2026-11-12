@@ -20,6 +20,7 @@ pub(crate) struct SettingsView {
     visibility: String,
     space: String,
     snap_memos: bool,
+    pin_tab_bar_enabled: bool,
     pin_tab_screen: String,
     pin_tab_edge: String,
     coder_editor: bool,
@@ -158,6 +159,7 @@ pub fn get_settings(app: AppHandle, state: State<AppState>) -> Result<SettingsVi
         ),
         space: state.db.get_meta(notes::MEMO_SPACE)?.unwrap_or_default(),
         snap_memos: state.db.get_meta(notes::SNAP_MEMOS)?.as_deref() == Some("1"),
+        pin_tab_bar_enabled: state.db.get_meta(notes::PIN_TAB_BAR_ENABLED)?.as_deref() != Some("0"),
         pin_tab_screen: window_ctl::normalize_pin_screen(
             &state
                 .db
@@ -264,6 +266,24 @@ pub fn set_pin_tab_place(
 }
 
 #[tauri::command]
+pub fn set_pin_tab_bar_enabled(
+    app: AppHandle,
+    state: State<AppState>,
+    enabled: bool,
+) -> Result<(), AppError> {
+    state
+        .db
+        .set_meta(notes::PIN_TAB_BAR_ENABLED, if enabled { "1" } else { "0" })?;
+    if enabled && state.pinned_mode.load(Ordering::SeqCst) {
+        window_ctl::show_pin_tabs(&app);
+    } else {
+        window_ctl::hide_pin_tabs(&app);
+    }
+    tray::refresh(&app);
+    Ok(())
+}
+
+#[tauri::command]
 pub fn pin_strip_edge(window: tauri::WebviewWindow) -> String {
     window_ctl::pin_strip_edge(window.label())
 }
@@ -295,11 +315,7 @@ pub fn set_pinned_always_on_top(
 }
 
 #[tauri::command]
-pub fn set_indent_width(
-    app: AppHandle,
-    state: State<AppState>,
-    width: u8,
-) -> Result<(), AppError> {
+pub fn set_indent_width(app: AppHandle, state: State<AppState>, width: u8) -> Result<(), AppError> {
     let width = indent_width(Some(width.to_string()));
     state.db.set_meta(notes::INDENT_WIDTH, &width.to_string())?;
     emit_editor_prefs(&app, &state)
@@ -851,6 +867,7 @@ pub fn set_pinned(
     }
     let _ = app.emit("pin-tabs-changed", ());
     let _ = app.emit("notes-changed", ());
+    tray::refresh(&app);
     Ok(())
 }
 
@@ -864,6 +881,7 @@ pub fn add_pin_tab(app: AppHandle, state: State<'_, AppState>) -> Result<PinTabs
     let tabs = state.db.add_pin_tab()?;
     window_ctl::apply_pin_tab(&app);
     let _ = app.emit("pin-tabs-changed", ());
+    tray::refresh(&app);
     Ok(tabs)
 }
 
@@ -876,6 +894,7 @@ pub fn select_pin_tab(
     let tabs = state.db.select_pin_tab(&id)?;
     window_ctl::apply_pin_tab(&app);
     let _ = app.emit("pin-tabs-changed", ());
+    tray::refresh(&app);
     Ok(tabs)
 }
 
@@ -886,13 +905,17 @@ pub fn set_pin_tab_hits(window: tauri::WebviewWindow, hits: Vec<PinTabHit>) {
 
 #[tauri::command]
 pub fn update_pin_tab(
+    app: AppHandle,
     state: State<'_, AppState>,
     id: String,
     name: Option<String>,
     hue: Option<u16>,
     swatches: Option<Vec<u16>>,
 ) -> Result<PinTabs, AppError> {
-    state.db.update_pin_tab(&id, name, hue, swatches)
+    let tabs = state.db.update_pin_tab(&id, name, hue, swatches)?;
+    let _ = app.emit("pin-tabs-changed", ());
+    tray::refresh(&app);
+    Ok(tabs)
 }
 
 #[tauri::command]

@@ -13,6 +13,7 @@ use super::{
 };
 use crate::notes::{tab_at, PinTabHit};
 use crate::state::AppState;
+use crate::tray;
 
 const MEMO_CATCH: i32 = 36;
 const STACK_LIMIT: usize = 8;
@@ -903,6 +904,7 @@ fn commit_tab_move(app: &AppHandle, note_id: &str, tab_id: &str) {
     }
     apply_pin_tab(app);
     let _ = app.emit("pin-tabs-changed", ());
+    tray::refresh(app);
     show_tab_aim(app, tab_id, "ready");
 }
 

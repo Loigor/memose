@@ -582,6 +582,7 @@ pub const MEMO_VISIBILITY: &str = "memo_visibility";
 pub const MEMO_SPACE: &str = "memo_space";
 pub const SPACE_CATALOG: &str = "space_catalog";
 pub const SNAP_MEMOS: &str = "snap_memos";
+pub const PIN_TAB_BAR_ENABLED: &str = "pin_tab_bar_enabled";
 pub const PIN_TAB_SCREEN: &str = "pin_tab_screen";
 pub const PIN_TAB_EDGE: &str = "pin_tab_edge";
 pub const SHOW_IN_SWITCHER: &str = "show_in_switcher";
@@ -723,7 +724,10 @@ fn ensure_note_columns(conn: &Connection) -> Result<(), AppError> {
         ("swatches", "ALTER TABLE notes ADD COLUMN swatches TEXT"),
         ("theme", "ALTER TABLE notes ADD COLUMN theme TEXT"),
         ("coder", "ALTER TABLE notes ADD COLUMN coder INTEGER"),
-        ("editor_view", "ALTER TABLE notes ADD COLUMN editor_view TEXT"),
+        (
+            "editor_view",
+            "ALTER TABLE notes ADD COLUMN editor_view TEXT",
+        ),
         ("visibility", "ALTER TABLE notes ADD COLUMN visibility TEXT"),
         (
             "remote_space",
@@ -811,7 +815,9 @@ fn map_note(row: &rusqlite::Row<'_>) -> rusqlite::Result<Note> {
     })
 }
 
-fn map_editor_view(row: &rusqlite::Row<'_>) -> rusqlite::Result<(bool, Vec<Vec<u32>>, Vec<Vec<u32>>)> {
+type EditorViewTuple = (bool, Vec<Vec<u32>>, Vec<Vec<u32>>);
+
+fn map_editor_view(row: &rusqlite::Row<'_>) -> rusqlite::Result<EditorViewTuple> {
     Ok(parse_editor_view(row.get(22)?))
 }
 
@@ -826,7 +832,7 @@ struct EditorView {
     marks: Vec<Vec<u32>>,
 }
 
-fn parse_editor_view(raw: Option<String>) -> (bool, Vec<Vec<u32>>, Vec<Vec<u32>>) {
+fn parse_editor_view(raw: Option<String>) -> EditorViewTuple {
     let Some(raw) = raw.filter(|value| value.len() <= 32_000) else {
         return (false, Vec::new(), Vec::new());
     };

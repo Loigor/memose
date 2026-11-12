@@ -40,6 +40,7 @@ export type HarnessSettings = {
   markdownHighlight?: boolean;
   markdownScheme?: string;
   indentWidth?: number;
+  pinTabBarEnabled?: boolean;
   pinTabScreen?: string;
   pinTabEdge?: string;
 };
@@ -173,6 +174,7 @@ function installBrowserHarness(seed: BrowserSeed) {
       seed.settings?.indentWidth != null && seed.settings.indentWidth >= 1 && seed.settings.indentWidth <= 8
         ? Math.round(seed.settings.indentWidth)
         : 2,
+    pinTabBarEnabled: seed.settings?.pinTabBarEnabled !== false,
     pinTabScreen: seed.settings?.pinTabScreen === "all" || seed.settings?.pinTabScreen?.startsWith("display:")
       ? seed.settings.pinTabScreen
       : "cursor",
@@ -614,6 +616,9 @@ function installBrowserHarness(seed: BrowserSeed) {
       case "set_pin_tab_place":
         state.settings.pinTabScreen = String(a.screen || "cursor");
         state.settings.pinTabEdge = String(a.edge || "top");
+        return null;
+      case "set_pin_tab_bar_enabled":
+        state.settings.pinTabBarEnabled = Boolean(a.enabled);
         return null;
       case "pin_strip_edge":
         return state.settings.pinTabEdge || "top";

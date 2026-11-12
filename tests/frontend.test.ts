@@ -390,7 +390,7 @@ test("shortcuts module formats and matches keyboard and mouse chords", () => {
   assert.equal(mouseChordToBind(4, true, false, true, false), "Shift+Alt+Mouse4");
 });
 
-test("settings window html has Visibility, Shortcuts, and Sync (useMemos) tabs with Default memo visibility and Window snap", () => {
+test("settings window separates visibility, window, editor, shortcuts, and sync", () => {
   const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
   const html = fs.readFileSync(path.join(root, "settings.html"), "utf8");
   const tabs = [...html.matchAll(/data-tab="([^"]+)"[\s\S]*?>\s*([^<]+?)\s*<\/button>/g)].map((m) => ({
@@ -399,6 +399,8 @@ test("settings window html has Visibility, Shortcuts, and Sync (useMemos) tabs w
   }));
   assert.deepEqual(tabs, [
     { id: "visibility", label: "Visibility" },
+    { id: "window", label: "Window" },
+    { id: "editor", label: "Editor" },
     { id: "shortcuts", label: "Shortcuts" },
     { id: "sync", label: "Sync (useMemos)" },
   ]);
@@ -408,6 +410,7 @@ test("settings window html has Visibility, Shortcuts, and Sync (useMemos) tabs w
   assert.match(html, /id="snap-memos"/);
   assert.match(html, /id="pin-tab-screen"/);
   assert.match(html, /id="pin-tab-edge"/);
+  assert.match(html, /id="pin-tab-bar-enabled"/);
   assert.match(html, /id="show-in-switcher"/);
   assert.match(html, /id="pinned-always-on-top"/);
   assert.match(html, /id="coder-editor"/);

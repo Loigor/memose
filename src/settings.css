@@ -42,7 +42,7 @@ h2 {
 
 .settings-tabs {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(5, minmax(0, 1fr));
   gap: 4px;
   padding: 4px;
   border: 1px solid #e0d9cc;
@@ -143,6 +143,10 @@ select:focus {
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: 12px;
+}
+
+.pin-place.is-disabled {
+  opacity: 0.55;
 }
 
 .toggle-row {

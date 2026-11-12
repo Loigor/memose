@@ -124,6 +124,7 @@ pub fn run() {
             commands::set_snap_memos,
             commands::list_displays,
             commands::set_pin_tab_place,
+            commands::set_pin_tab_bar_enabled,
             commands::set_show_in_switcher,
             commands::set_pinned_always_on_top,
             commands::set_indent_width,
