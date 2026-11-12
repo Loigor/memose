@@ -6,7 +6,7 @@ import { marked } from "marked";
 import { audienceChoice, revealPressedChoice } from "./look/audience-ui";
 import { activeField, editingHost, fieldAt, fieldsIn, type Editable } from "./editor/editable";
 import { applyMediaFigureSize, focusLiftedCode, handleBlockAreaNavigation, handleBlockMediaDeletion, syncInlineLineSlot } from "./editor/editor-blocks";
-import { codeSurface, memoUsesCoder, readLineMarks, refreshEditorFields, wrapEditorField, writeLineMarks } from "./editor/editor-field";
+import { codeSurface, denseLines, memoUsesCoder, readFolds, readLineMarks, refreshEditorFields, wrapEditorField, writeFolds, writeLineMarks } from "./editor/editor-field";
 import { filesFromTransfer } from "./media/files";
 import { BlockHistory, cloneBlocks, restoreCaret, type Caret } from "./editor/history";
 import { namedTheme, type Look } from "./look/look";
@@ -148,6 +148,8 @@ export type StackState = {
   theme: ThemeName | null;
   coder: boolean | null;
   wrap: boolean;
+  folds: number[][];
+  marks: number[][];
   mdBar: boolean;
   visibility: string;
   space: string;
@@ -168,12 +170,18 @@ function sectionMarkRoot(state: StackState): ParentNode {
 }
 
 function pushSectionUndo(state: StackState, force = true) {
-  state.history.push(state.blocks, state.caret, force, readLineMarks(sectionMarkRoot(state)));
+  const root = sectionMarkRoot(state);
+  state.history.push(state.blocks, state.caret, force, readLineMarks(root), readFolds(root));
 }
 
 export function undoSection(section: HTMLElement, state: StackState): boolean {
   const container = section.querySelector<HTMLElement>(".stack-blocks");
-  const entry = state.history.takeUndo(state.blocks, state.caret, readLineMarks(container ?? section));
+  const entry = state.history.takeUndo(
+    state.blocks,
+    state.caret,
+    readLineMarks(container ?? section),
+    readFolds(container ?? section),
+  );
   if (!entry) {
     return false;
   }
@@ -181,18 +189,26 @@ export function undoSection(section: HTMLElement, state: StackState): boolean {
   state.caret = entry.caret ? { ...entry.caret } : null;
   state.content = serializeBlocks(state.blocks);
   renderSectionBlocks(section, state);
-  scheduleSectionSave(section, state);
+  state.folds = entry.folds ?? [];
+  state.marks = entry.marks ?? [];
   const next = section.querySelector<HTMLElement>(".stack-blocks");
   if (next) {
-    writeLineMarks(next, entry.marks);
+    writeFolds(next, state.folds);
+    writeLineMarks(next, state.marks);
     restoreCaret(next, state.caret);
   }
+  scheduleSectionSave(section, state);
   return true;
 }
 
 export function redoSection(section: HTMLElement, state: StackState): boolean {
   const container = section.querySelector<HTMLElement>(".stack-blocks");
-  const entry = state.history.takeRedo(state.blocks, state.caret, readLineMarks(container ?? section));
+  const entry = state.history.takeRedo(
+    state.blocks,
+    state.caret,
+    readLineMarks(container ?? section),
+    readFolds(container ?? section),
+  );
   if (!entry) {
     return false;
   }
@@ -200,28 +216,49 @@ export function redoSection(section: HTMLElement, state: StackState): boolean {
   state.caret = entry.caret ? { ...entry.caret } : null;
   state.content = serializeBlocks(state.blocks);
   renderSectionBlocks(section, state);
-  scheduleSectionSave(section, state);
+  state.folds = entry.folds ?? [];
+  state.marks = entry.marks ?? [];
   const next = section.querySelector<HTMLElement>(".stack-blocks");
   if (next) {
-    writeLineMarks(next, entry.marks);
+    writeFolds(next, state.folds);
+    writeLineMarks(next, state.marks);
     restoreCaret(next, state.caret);
   }
+  scheduleSectionSave(section, state);
   return true;
 }
 
 export const stackState = new Map<string, StackState>();
-stackEl?.addEventListener("memose-undo", (event) => {
+function stackSectionFrom(event: Event): HTMLElement | null {
   const node = event.target;
-  const section =
-    node instanceof Element
-      ? node.closest<HTMLElement>(".stack-note")
-      : node instanceof Node
-        ? node.parentElement?.closest<HTMLElement>(".stack-note") ?? null
-        : null;
+  if (node instanceof Element) {
+    return node.closest<HTMLElement>(".stack-note");
+  }
+  if (node instanceof Node) {
+    return node.parentElement?.closest<HTMLElement>(".stack-note") ?? null;
+  }
+  return null;
+}
+
+stackEl?.addEventListener("memose-undo", (event) => {
+  const section = stackSectionFrom(event);
   const id = section?.dataset.id;
   const held = id ? stackState.get(id) : undefined;
   if (held) {
     pushSectionUndo(held, true);
+  }
+});
+stackEl?.addEventListener("memose-editor-view", (event) => {
+  const section = stackSectionFrom(event);
+  const id = section?.dataset.id;
+  const held = id ? stackState.get(id) : undefined;
+  if (section && held) {
+    const container = section.querySelector(".stack-blocks");
+    if (container?.querySelector("textarea")) {
+      held.folds = readFolds(container);
+      held.marks = readLineMarks(container);
+    }
+    scheduleSectionSave(section, held);
   }
 });
 const saveTimers = new Map<string, ReturnType<typeof setTimeout>>();
@@ -672,8 +709,26 @@ function scheduleSectionSave(section: HTMLElement, state: StackState) {
       void invoke("save_edit", { id, content }).catch((error: unknown) => {
         console.error(error);
       });
+      void saveSectionEditorView(id, state).catch((error: unknown) => {
+        console.error(error);
+      });
     }, 300),
   );
+}
+
+async function saveSectionEditorView(id: string, state: StackState) {
+  const section = stackEl?.querySelector<HTMLElement>(`.stack-note[data-id="${CSS.escape(id)}"]`);
+  const container = section?.querySelector(".stack-blocks");
+  if (container?.querySelector("textarea")) {
+    state.folds = readFolds(container);
+    state.marks = readLineMarks(container);
+  }
+  await invoke("save_editor_view", {
+    id,
+    lineWrap: state.wrap,
+    folds: denseLines(state.folds),
+    marks: denseLines(state.marks),
+  });
 }
 
 export function applySectionEdit(section: HTMLElement, state: StackState, area: Editable, edit: Edit) {
@@ -736,6 +791,11 @@ function renderSectionBlocks(section: HTMLElement, state: StackState, focusName?
   const container = section.querySelector<HTMLElement>(".stack-blocks");
   if (!container) {
     return;
+  }
+  paintSectionCoder(section, state);
+  if (container.querySelector("textarea")) {
+    state.folds = readFolds(container);
+    state.marks = readLineMarks(container);
   }
   state.blocks = ensureTextSlots(state.blocks);
   state.content = serializeBlocks(state.blocks);
@@ -1110,6 +1170,13 @@ function renderSectionBlocks(section: HTMLElement, state: StackState, focusName?
     currentRow = row;
     currentRowSideArea = null;
   });
+  if (container.querySelector("textarea")) {
+    writeFolds(container, state.folds);
+    writeLineMarks(container, state.marks);
+  } else {
+    state.folds = [];
+    state.marks = [];
+  }
   resizeAllBlockTextareas(container);
   if (focusName) {
     const mediaIndex = state.blocks.findIndex((item) => item.kind === "media" && item.name === focusName);
@@ -1349,6 +1416,7 @@ async function flushSectionSaves(ids?: Iterable<string>) {
       }
       state.loaded = state.content;
       await invoke("save_edit", { id, content: state.content });
+      await saveSectionEditorView(id, state);
     }),
   );
 }
@@ -1639,6 +1707,7 @@ function buildSection(note: Note): HTMLElement {
       paintSectionCoder(section, held);
       refreshEditorFields(section);
       resizeAllBlockTextareas(section);
+      scheduleSectionSave(section, held);
       closeSectionFormatPop();
       return;
     }
@@ -1841,7 +1910,9 @@ export async function loadStack() {
       coder:
         prev?.coder ??
         (note.coder === true ? true : note.coder === false ? false : null),
-      wrap: prev?.wrap ?? false,
+      wrap: prev?.wrap ?? note.lineWrap === true,
+      folds: prev?.folds ?? denseLines(note.folds),
+      marks: prev?.marks ?? denseLines(note.marks),
       mdBar: prev?.mdBar ?? false,
       visibility: note.visibility || "PRIVATE",
       space: note.space || "",

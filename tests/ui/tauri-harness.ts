@@ -21,6 +21,9 @@ export type NoteSeed = {
   stackHost?: string | null;
   theme?: string | null;
   coder?: boolean | null;
+  lineWrap?: boolean;
+  folds?: number[][];
+  marks?: number[][];
   serverContent?: string | null;
 };
 
@@ -121,6 +124,9 @@ function installBrowserHarness(seed: BrowserSeed) {
       stackHost: partial.stackHost ?? null,
       theme: partial.theme ?? null,
       coder: partial.coder ?? null,
+      lineWrap: partial.lineWrap === true,
+      folds: Array.isArray(partial.folds) ? partial.folds : [],
+      marks: Array.isArray(partial.marks) ? partial.marks : [],
       serverContent: partial.serverContent ?? null,
     };
   }
@@ -683,6 +689,15 @@ function installBrowserHarness(seed: BrowserSeed) {
         if (note) {
           note.winW = Number(a.width);
           note.winH = Number(a.height);
+        }
+        return null;
+      }
+      case "save_editor_view": {
+        const note = noteById(a.id);
+        if (note) {
+          note.lineWrap = a.lineWrap === true;
+          note.folds = Array.isArray(a.folds) ? a.folds : [];
+          note.marks = Array.isArray(a.marks) ? a.marks : [];
         }
         return null;
       }

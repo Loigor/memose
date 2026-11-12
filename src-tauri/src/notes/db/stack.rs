@@ -80,7 +80,7 @@ impl Db {
     pub fn guest_of(&self, host_id: &str) -> Result<Option<Note>, AppError> {
         self.with(|conn| {
             let mut stmt = conn.prepare(
-                "SELECT id, content, created_at, updated_at, sync_state, remote_name, last_error, pinned, win_x, win_y, win_w, win_h, opacity, hue_light, hue_dark, swatches, visibility, remote_space, collapsed, stack_host, theme, coder FROM notes WHERE stack_host = ?1 LIMIT 1",
+                "SELECT id, content, created_at, updated_at, sync_state, remote_name, last_error, pinned, win_x, win_y, win_w, win_h, opacity, hue_light, hue_dark, swatches, visibility, remote_space, collapsed, stack_host, theme, coder, editor_view FROM notes WHERE stack_host = ?1 LIMIT 1",
             )?;
             let mut rows = stmt.query(params![host_id])?;
             if let Some(row) = rows.next()? {

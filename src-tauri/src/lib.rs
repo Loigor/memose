@@ -136,6 +136,7 @@ pub fn run() {
             commands::sync_screen_edges,
             commands::apply_composer_size,
             commands::save_note_size,
+            commands::save_editor_view,
             commands::begin_memo_drag,
             commands::end_memo_drag,
             commands::slide_into_view,

@@ -70,6 +70,7 @@ export type NoteHistoryEntry = {
   blocks: Block[];
   caret: Caret | null;
   marks: LineMarks;
+  folds: LineMarks;
 };
 
 function cloneMarks(marks: LineMarks | undefined): LineMarks {
@@ -88,8 +89,17 @@ function marksKey(marks: LineMarks | undefined): string {
   return out;
 }
 
-function sameSnapshot(blocks: Block[], marks: LineMarks | undefined, entry: NoteHistoryEntry): boolean {
-  return serializeBlocks(entry.blocks) === serializeBlocks(blocks) && marksKey(entry.marks) === marksKey(marks);
+function sameSnapshot(
+  blocks: Block[],
+  marks: LineMarks | undefined,
+  folds: LineMarks | undefined,
+  entry: NoteHistoryEntry,
+): boolean {
+  return (
+    serializeBlocks(entry.blocks) === serializeBlocks(blocks) &&
+    marksKey(entry.marks) === marksKey(marks) &&
+    marksKey(entry.folds) === marksKey(folds)
+  );
 }
 
 export function cloneBlocks(items: Block[]): Block[] {
@@ -113,13 +123,13 @@ export class BlockHistory {
   redoStack: NoteHistoryEntry[] = [];
   lastInputSnapAt = 0;
 
-  push(blocks: Block[], caret: Caret | null, force = true, marks: LineMarks = []) {
+  push(blocks: Block[], caret: Caret | null, force = true, marks: LineMarks = [], folds: LineMarks = []) {
     const now = performance.now();
     if (!force && now - this.lastInputSnapAt < 900 && this.undoStack.length > 0) {
       return;
     }
     const top = this.undoStack[this.undoStack.length - 1];
-    if (top && sameSnapshot(blocks, marks, top)) {
+    if (top && sameSnapshot(blocks, marks, folds, top)) {
       top.caret = caret ? { ...caret } : null;
       return;
     }
@@ -127,6 +137,7 @@ export class BlockHistory {
       blocks: cloneBlocks(blocks),
       caret: caret ? { ...caret } : null,
       marks: cloneMarks(marks),
+      folds: cloneMarks(folds),
     });
     if (this.undoStack.length > 60) {
       this.undoStack.shift();
@@ -142,27 +153,38 @@ export class BlockHistory {
     this.lastInputSnapAt = 0;
   }
 
-  takeUndo(currentBlocks: Block[], currentCaret: Caret | null, currentMarks: LineMarks = []): NoteHistoryEntry | null {
+  takeUndo(
+    currentBlocks: Block[],
+    currentCaret: Caret | null,
+    currentMarks: LineMarks = [],
+    currentFolds: LineMarks = [],
+  ): NoteHistoryEntry | null {
     if (this.undoStack.length === 0) {
       return null;
     }
     let entry = this.undoStack.pop()!;
-    while (this.undoStack.length > 0 && sameSnapshot(currentBlocks, currentMarks, entry)) {
+    while (this.undoStack.length > 0 && sameSnapshot(currentBlocks, currentMarks, currentFolds, entry)) {
       entry = this.undoStack.pop()!;
     }
-    if (sameSnapshot(currentBlocks, currentMarks, entry)) {
+    if (sameSnapshot(currentBlocks, currentMarks, currentFolds, entry)) {
       return null;
     }
     this.redoStack.push({
       blocks: cloneBlocks(currentBlocks),
       caret: currentCaret ? { ...currentCaret } : null,
       marks: cloneMarks(currentMarks),
+      folds: cloneMarks(currentFolds),
     });
     this.lastInputSnapAt = 0;
     return entry;
   }
 
-  takeRedo(currentBlocks: Block[], currentCaret: Caret | null, currentMarks: LineMarks = []): NoteHistoryEntry | null {
+  takeRedo(
+    currentBlocks: Block[],
+    currentCaret: Caret | null,
+    currentMarks: LineMarks = [],
+    currentFolds: LineMarks = [],
+  ): NoteHistoryEntry | null {
     if (this.redoStack.length === 0) {
       return null;
     }
@@ -171,6 +193,7 @@ export class BlockHistory {
       blocks: cloneBlocks(currentBlocks),
       caret: currentCaret ? { ...currentCaret } : null,
       marks: cloneMarks(currentMarks),
+      folds: cloneMarks(currentFolds),
     });
     this.lastInputSnapAt = 0;
     return entry;

@@ -8,7 +8,7 @@ import {
   openMarkdownMenu,
   revealEditorButton,
 } from "./helpers";
-import { emitEvent, getInvocations, sampleNotes } from "./tauri-harness";
+import { emitEvent, getInvocations, getNotes, sampleNotes } from "./tauri-harness";
 
 test("empty composer shows the editor after composer-focus", async ({ page }) => {
   await openComposer(page);
@@ -537,6 +537,29 @@ test("a brace block in a code field folds without dropping the text", async ({ p
   await fold.click();
   await expect(page.locator(".md-fold-mark")).toHaveCount(0);
   await expect.poll(() => code.evaluate((el) => (el as HTMLTextAreaElement).value)).toContain('"a"');
+});
+
+test("line wrap, a fold, and a line mark reopen with the memo", async ({ page }) => {
+  const notes = sampleNotes(2);
+  const body = 'keep\n{\n  "a": 1\n}';
+  notes[0] = { ...notes[0], content: body, coder: true, lineWrap: true, folds: [[1]], marks: [[0]] };
+  await openComposer(page, { notes });
+  await page.locator("#recent .title", { hasText: "keep" }).click();
+  await expect(page.locator("#card")).toHaveAttribute("data-coder", "");
+  await expect(page.locator("#card")).toHaveAttribute("data-wrap", "");
+  await expect(page.locator(".md-line-ball")).toHaveCount(1);
+  await expect(page.locator(".md-fold-mark")).toBeVisible();
+  const area = page.locator("#blocks textarea");
+  await expect.poll(() => area.evaluate((el) => (el as HTMLTextAreaElement).value)).toContain('"a"');
+  const format = page.locator("#format-toggle");
+  await revealEditorButton(page, format);
+  await format.click();
+  await page.locator('#format-pop button[data-format="wrap"]').click();
+  await expect(page.locator("#card")).not.toHaveAttribute("data-wrap", "");
+  await expect.poll(async () => {
+    const stored = await getNotes(page);
+    return stored.find((note) => note.id === "note-0000");
+  }).toMatchObject({ lineWrap: false, folds: [[1]], marks: [[0]] });
 });
 
 test("a brace block in the coder editor folds without dropping the text", async ({ page }) => {

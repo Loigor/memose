@@ -7,7 +7,7 @@ import { marked } from "marked";
 import { audienceChoice, revealPressedChoice } from "./look/audience-ui";
 import { activeField, editingHost, fieldAt, fieldsIn, isEditable, type Editable } from "./editor/editable";
 import { applyMediaFigureSize, focusLiftedCode, handleBlockAreaNavigation, handleBlockMediaDeletion, syncInlineLineSlot } from "./editor/editor-blocks";
-import { codeSurface, memoUsesCoder, readLineMarks, refreshEditorFields, setEditorPrefs, wrapEditorField, writeLineMarks, type EditorPrefs } from "./editor/editor-field";
+import { codeSurface, denseLines, memoUsesCoder, readFolds, readLineMarks, refreshEditorFields, setEditorPrefs, wrapEditorField, writeFolds, writeLineMarks, type EditorPrefs } from "./editor/editor-field";
 import { filesFromTransfer, uniqueFiles } from "./media/files";
 import {
   BlockHistory,
@@ -264,7 +264,7 @@ async function applyMemoSize(width?: number | null, height?: number | null) {
 const hostHistory = new BlockHistory();
 
 function pushHostUndo(force = true) {
-  hostHistory.push(noteBlocks, caret, force, readLineMarks(blocksEl));
+  hostHistory.push(noteBlocks, caret, force, readLineMarks(blocksEl), readFolds(blocksEl));
 }
 
 function resetHostHistory() {
@@ -272,31 +272,38 @@ function resetHostHistory() {
 }
 
 function undoHost(): boolean {
-  const entry = hostHistory.takeUndo(noteBlocks, caret, readLineMarks(blocksEl));
+  const entry = hostHistory.takeUndo(noteBlocks, caret, readLineMarks(blocksEl), readFolds(blocksEl));
   if (!entry) {
     return false;
   }
   noteBlocks = cloneBlocks(entry.blocks);
   caret = entry.caret ? { ...entry.caret } : null;
   publishBlocks();
+  restoreHostEditorView(entry.folds, entry.marks);
   scheduleDraft();
-  writeLineMarks(blocksEl, entry.marks);
   restoreCaret(blocksEl, caret);
   return true;
 }
 
 function redoHost(): boolean {
-  const entry = hostHistory.takeRedo(noteBlocks, caret, readLineMarks(blocksEl));
+  const entry = hostHistory.takeRedo(noteBlocks, caret, readLineMarks(blocksEl), readFolds(blocksEl));
   if (!entry) {
     return false;
   }
   noteBlocks = cloneBlocks(entry.blocks);
   caret = entry.caret ? { ...entry.caret } : null;
   publishBlocks();
+  restoreHostEditorView(entry.folds, entry.marks);
   scheduleDraft();
-  writeLineMarks(blocksEl, entry.marks);
   restoreCaret(blocksEl, caret);
   return true;
+}
+
+function restoreHostEditorView(folds: number[][], marks: number[][]) {
+  hostFolds = folds ?? [];
+  hostMarks = marks ?? [];
+  writeFolds(blocksEl, hostFolds);
+  writeLineMarks(blocksEl, hostMarks);
 }
 
 marked.setOptions({ gfm: true, breaks: true });
@@ -305,6 +312,11 @@ const cardEl = requireEl(card, "card");
 const blocksEl = requireEl(blocks, "blocks");
 blocksEl.addEventListener("memose-undo", () => {
   pushHostUndo(true);
+});
+blocksEl.addEventListener("memose-editor-view", () => {
+  hostFolds = readFolds(blocksEl);
+  hostMarks = readLineMarks(blocksEl);
+  scheduleEditorView();
 });
 blocksEl.addEventListener("scroll", rememberPlace);
 const previewEl = requireEl(preview, "preview");
@@ -357,6 +369,7 @@ function publishBlocks(focusName?: string) {
 }
 
 function showStored(content: string) {
+  skipEditorCapture = true;
   showingPreview = false;
   noteContent = content;
   noteBlocks = parseBlocks(content);
@@ -486,6 +499,11 @@ function togglePreview() {
 }
 
 function renderBlocks(focusName?: string) {
+  if (!skipEditorCapture && blocksEl.querySelector("textarea")) {
+    hostFolds = readFolds(blocksEl);
+    hostMarks = readLineMarks(blocksEl);
+  }
+  skipEditorCapture = false;
   const reuse = new Map<string, HTMLElement[]>();
   for (const node of blocksEl.querySelectorAll<HTMLElement>("[data-media]")) {
     const name = node.dataset.media;
@@ -882,6 +900,13 @@ function renderBlocks(focusName?: string) {
     currentRow = row;
     currentRowSideArea = null;
   });
+  if (blocksEl.querySelector("textarea")) {
+    writeFolds(blocksEl, hostFolds);
+    writeLineMarks(blocksEl, hostMarks);
+  } else {
+    hostFolds = [];
+    hostMarks = [];
+  }
   if (!focusName) {
     return;
   }
@@ -1121,6 +1146,7 @@ async function persistDraft() {
   if (noteId) {
     await invoke("save_edit", { id: noteId, content: noteContent });
     setEditedAt(Date.now());
+    await saveHostEditorView(noteId);
     if (lookUnsaved || lookTimer !== undefined) {
       await flushLook();
     }
@@ -1144,6 +1170,58 @@ async function persistDraft() {
     lookUnsaved = false;
     await enqueueLook(saved.id);
   }
+  await saveHostEditorView(saved.id);
+}
+
+let editorViewWrite: Promise<void> = Promise.resolve();
+
+function scheduleEditorView() {
+  editorViewUnsaved = true;
+  if (!inTauri() || !currentLookId()) {
+    return;
+  }
+  clearTimeout(editorViewTimer);
+  editorViewTimer = setTimeout(() => {
+    editorViewTimer = undefined;
+    void flushEditorView();
+  }, 300);
+}
+
+async function flushEditorView() {
+  clearTimeout(editorViewTimer);
+  editorViewTimer = undefined;
+  const id = currentLookId();
+  if (!id || !inTauri()) {
+    editorViewUnsaved = false;
+    return;
+  }
+  await saveHostEditorView(id);
+}
+
+async function saveHostEditorView(id: string) {
+  if (!inTauri()) {
+    return;
+  }
+  clearTimeout(editorViewTimer);
+  editorViewTimer = undefined;
+  if (blocksEl.querySelector("textarea")) {
+    hostFolds = readFolds(blocksEl);
+    hostMarks = readLineMarks(blocksEl);
+  }
+  const payload = {
+    id,
+    lineWrap: coderWrap,
+    folds: denseLines(hostFolds),
+    marks: denseLines(hostMarks),
+  };
+  editorViewUnsaved = false;
+  editorViewWrite = editorViewWrite
+    .then(() => invoke("save_editor_view", payload))
+    .then(() => undefined)
+    .catch((error: unknown) => {
+      console.error(error);
+    });
+  await editorViewWrite;
 }
 
 async function openRecent(item: Note) {
@@ -1180,16 +1258,18 @@ async function openRecent(item: Note) {
   const typed = noteContent;
   const savingNewMemo = editingId === null && typed.trim().length > 0;
   if (inTauri() && savingNewMemo) {
-    if (audienceDirty) {
+    if (audienceDirty || editorViewUnsaved) {
       await persistDraft();
     }
     await attachPendingLook();
+    await flushEditorView();
     await invoke("commit_note", { content: typed });
   } else {
     if (inTauri() && editingId !== null && typed.trim().length > 0) {
       await invoke("save_edit", { id: editingId, content: typed });
     }
     await flushLook();
+    await flushEditorView();
   }
   let opened = item;
   if (inTauri() && (item.syncState === "remote" || item.syncState === "conflict")) {
@@ -1203,7 +1283,7 @@ async function openRecent(item: Note) {
   editingId = opened.id;
   draftId = null;
   showStored(opened.content);
-  adoptLook(lookFromNote(opened));
+  adoptLook(lookFromNote(opened), opened);
   setConflict(opened.syncState === "conflict" ? opened.id : null);
   setPinPressed(opened.pinned);
   setEditedAt(opened.updatedAt);
@@ -1624,7 +1704,7 @@ async function loadDraft() {
   editingId = null;
   setEditedAt(draft?.updatedAt ?? null);
   paintAudience(draft);
-  adoptLook(draft ? lookFromNote(draft) : defaultLook());
+  adoptLook(draft ? lookFromNote(draft) : defaultLook(), draft ?? emptyEditorView);
   if (!draft || (draft.hueLight == null && draft.hueDark == null)) {
     applySpaceDefaultLook(draft?.space || chosenSpace);
   }
@@ -1632,6 +1712,12 @@ async function loadDraft() {
 
 let look: Look = { opacity: 100, hueLight: null, hueDark: null, swatches: [], theme: null, coder: null };
 let coderWrap = false;
+let hostFolds: number[][] = [];
+let hostMarks: number[][] = [];
+let editorViewTimer: ReturnType<typeof setTimeout> | undefined;
+let editorViewUnsaved = false;
+let skipEditorCapture = false;
+const emptyEditorView = { lineWrap: false, folds: [] as number[][], marks: [] as number[][] };
 let appTheme: ThemeName = "light";
 let lookTimer: ReturnType<typeof setTimeout> | undefined;
 let lookWrite: Promise<void> = Promise.resolve();
@@ -1649,7 +1735,8 @@ function currentLookId(): string | null {
   return editingId || draftId;
 }
 
-function adoptLook(next: Look) {
+function adoptLook(next: Look, view?: { lineWrap?: boolean; folds?: number[][]; marks?: number[][] }) {
+  const before = memoUsesCoder(look.coder);
   look = {
     opacity: next.opacity,
     hueLight: next.hueLight,
@@ -1660,8 +1747,22 @@ function adoptLook(next: Look) {
   };
   opacityCarry = look.opacity;
   lookUnsaved = false;
-  coderWrap = false;
+  if (view) {
+    coderWrap = view.lineWrap === true;
+    hostFolds = denseLines(view.folds);
+    hostMarks = denseLines(view.marks);
+  }
+  const after = memoUsesCoder(look.coder);
   paintLook();
+  if (before !== after && !showingPreview) {
+    renderBlocks();
+  }
+  if (view) {
+    hostFolds = denseLines(view.folds);
+    hostMarks = denseLines(view.marks);
+    writeFolds(blocksEl, hostFolds);
+    writeLineMarks(blocksEl, hostMarks);
+  }
   syncSlider();
 }
 
@@ -1951,10 +2052,11 @@ async function returnToNewMemo(generation: number) {
     await invoke("save_edit", { id: noteId, content: noteContent });
   }
   await flushLook();
+  await flushEditorView();
   editingId = null;
   draftId = null;
   showStored("");
-  adoptLook(defaultLook());
+  adoptLook(defaultLook(), emptyEditorView);
   setPinPressed(false);
   setEditedAt(null);
   paintAudience(null);
@@ -1978,19 +2080,22 @@ async function startFresh(generation: number) {
       await invoke("save_edit", { id: noteId, content: noteContent });
     }
     await flushLook();
+    await flushEditorView();
   } else if (noteContent.trim().length > 0 && !pinnedNoteId) {
-    if (audienceDirty) {
+    if (audienceDirty || editorViewUnsaved) {
       await persistDraft();
     }
     await attachPendingLook();
+    await flushEditorView();
     await invoke("commit_note", { content: noteContent });
   } else {
     await flushLook();
+    await flushEditorView();
   }
   editingId = null;
   draftId = null;
   showStored("");
-  adoptLook(defaultLook());
+  adoptLook(defaultLook(), emptyEditorView);
   setPinPressed(false);
   setEditedAt(null);
   paintAudience(null);
@@ -2458,6 +2563,7 @@ formatPopEl.addEventListener("click", (event) => {
   if (action === "wrap") {
     coderWrap = !coderWrap;
     paintCoder();
+    scheduleEditorView();
     closeFormatPop();
     return;
   }
@@ -2542,7 +2648,12 @@ deleteYesEl.addEventListener("click", () => {
     }
     editingId = null;
     draftId = null;
+    coderWrap = false;
+    hostFolds = [];
+    hostMarks = [];
+    editorViewUnsaved = false;
     showStored("");
+    paintCoder();
     setPinPressed(false);
     setEditedAt(null);
     paintAudience(null);
@@ -3076,11 +3187,13 @@ let pinLoad = 0;
 
 function applyPinned(note: Note) {
   const dirty = loadedContent.length > 0 && noteContent !== loadedContent;
+  let reloaded = false;
   if (!dirty && (editingId !== note.id || loadedContent !== note.content)) {
     editingId = note.id;
     showStored(note.content);
     loadedContent = note.content;
     resumePlace();
+    reloaded = true;
   }
   setConflict(note.syncState === "conflict" ? note.id : null);
   setPinPressed(note.pinned);
@@ -3088,7 +3201,7 @@ function applyPinned(note: Note) {
   setHostCollapsedFlag(Boolean(note.collapsed));
   paintAudience(note);
   if (lookTimer === undefined) {
-    adoptLook(lookFromNote(note));
+    adoptLook(lookFromNote(note), reloaded ? note : undefined);
   }
 }
 
@@ -3312,10 +3425,16 @@ if (isPreviewWindow()) {
       .catch((error: unknown) => {
         console.error(error);
       })
-      .then(() => {
+      .then(async () => {
         clearTimeout(draftTimer);
+        await flushEditorView();
+        coderWrap = false;
+        hostFolds = [];
+        hostMarks = [];
+        editorViewUnsaved = false;
         if (generation === openGen) {
           showStored("");
+          paintCoder();
           editingId = null;
           draftId = null;
           setPinPressed(false);

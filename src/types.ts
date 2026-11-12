@@ -19,6 +19,9 @@ export type Note = {
   stackHost?: string | null;
   theme?: string | null;
   coder?: boolean | null;
+  lineWrap?: boolean;
+  folds?: number[][];
+  marks?: number[][];
 };
 
 export type MemoSpace = {

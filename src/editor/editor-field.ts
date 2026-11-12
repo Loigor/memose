@@ -476,6 +476,7 @@ function attachFolding(area: HTMLTextAreaElement) {
     const sourceAt = displayToSource(native, state.holes, at);
     state.folds.delete(line);
     showFolded(area, sourceAt);
+    notifyEditorView(area);
   });
   area.addEventListener(
     "beforeinput",
@@ -517,6 +518,7 @@ function attachFolding(area: HTMLTextAreaElement) {
             state.holes = next.holes;
           }
         }
+        notifyEditorView(area);
       }
       syncMarks(area);
     },
@@ -557,6 +559,11 @@ function toggleFold(area: HTMLTextAreaElement, event: MouseEvent) {
     state.folds.add(line);
   }
   showFolded(area, area.selectionStart ?? 0);
+  notifyEditorView(area);
+}
+
+function notifyEditorView(area: HTMLTextAreaElement) {
+  area.dispatchEvent(new CustomEvent("memose-editor-view", { bubbles: true }));
 }
 
 function sourceText(area: HTMLTextAreaElement): string {
@@ -582,6 +589,7 @@ function syncMarks(area: HTMLTextAreaElement) {
   if (lines.size === 0) {
     markState.delete(area);
   }
+  notifyEditorView(area);
 }
 
 export function readLineMarks(root: ParentNode): number[][] {
@@ -603,6 +611,9 @@ export function writeLineMarks(root: ParentNode, marks: number[][] | undefined) 
     const index = Number(area.dataset.index);
     const lines = Number.isInteger(index) ? (saved[index] ?? []) : [];
     if (lines.length === 0) {
+      if (markState.delete(area)) {
+        paintEditorField(area);
+      }
       continue;
     }
     markState.set(area, { text: sourceText(area), lines: new Set(lines) });
@@ -660,6 +671,7 @@ function attachLineMarks(field: HTMLElement, area: HTMLTextAreaElement) {
         markState.delete(area);
       }
       paintEditorField(area);
+      notifyEditorView(area);
     }, 220);
   });
   field.addEventListener("dblclick", (event) => {
@@ -686,7 +698,59 @@ function attachLineMarks(field: HTMLElement, area: HTMLTextAreaElement) {
       markState.delete(area);
     }
     paintEditorField(area);
+    notifyEditorView(area);
   });
+}
+
+export function denseLines(rows: number[][] | undefined): number[][] {
+  if (!Array.isArray(rows)) {
+    return [];
+  }
+  return Array.from({ length: rows.length }, (_, index) => {
+    const row = rows[index];
+    return Array.isArray(row) ? row.filter((line) => Number.isInteger(line) && line >= 0) : [];
+  });
+}
+
+export function readFolds(root: ParentNode): number[][] {
+  const folds: number[][] = [];
+  for (const area of root.querySelectorAll<HTMLTextAreaElement>("textarea")) {
+    const index = Number(area.dataset.index);
+    if (!Number.isInteger(index) || index < 0) {
+      continue;
+    }
+    const lines = foldState.get(area)?.folds;
+    folds[index] = lines && lines.size > 0 ? [...lines].sort((a, b) => a - b) : [];
+  }
+  return folds;
+}
+
+export function writeFolds(root: ParentNode, folds: number[][] | undefined) {
+  const saved = folds ?? [];
+  for (const area of root.querySelectorAll<HTMLTextAreaElement>("textarea")) {
+    const index = Number(area.dataset.index);
+    const lines = Number.isInteger(index) ? (saved[index] ?? []) : [];
+    const kept = lines.filter((line) => Number.isInteger(line) && line >= 0);
+    if (kept.length === 0) {
+      const state = foldState.get(area);
+      if (state && state.folds.size > 0) {
+        state.folds.clear();
+        showFolded(area, nativeStart(area));
+        foldState.delete(area);
+      }
+      continue;
+    }
+    const source = sourceText(area);
+    const state: FoldState = {
+      source,
+      folds: new Set(kept),
+      holes: [],
+      view: foldView(source, new Set()),
+    };
+    foldState.set(area, state);
+    installValue(area);
+    showFolded(area, nativeStart(area));
+  }
 }
 
 function paintMarkBars(area: HTMLTextAreaElement, field: HTMLElement) {

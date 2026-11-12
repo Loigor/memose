@@ -377,6 +377,17 @@ pub fn save_note_size(
 }
 
 #[tauri::command]
+pub fn save_editor_view(
+    state: State<AppState>,
+    id: String,
+    line_wrap: bool,
+    folds: Vec<Vec<u32>>,
+    marks: Vec<Vec<u32>>,
+) -> Result<(), AppError> {
+    state.db.save_editor_view(&id, line_wrap, &folds, &marks)
+}
+
+#[tauri::command]
 pub fn begin_memo_drag(app: AppHandle, label: String) {
     window_ctl::begin_memo_drag(app, label);
 }
