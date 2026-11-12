@@ -40,9 +40,21 @@ textarea,
 }
 
 #preview pre,
-#preview code {
+#preview code,
+.stack-preview pre,
+.stack-preview code {
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   font-size: 13px;
+}
+
+#preview pre,
+.stack-preview pre {
+  position: relative;
+}
+
+#preview pre[data-lang],
+.stack-preview pre[data-lang] {
+  padding-right: 6.5em;
 }
 
 #preview img,

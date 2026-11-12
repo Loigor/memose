@@ -441,12 +441,15 @@ header.compact-meta #edited-sep {
 }
 
 .md-toolbar button {
-  min-width: 28px;
+  min-width: 0;
   height: 26px;
-  padding: 4px 8px;
+  padding: 3px 8px;
   font-size: 12px;
+  font-weight: 500;
   line-height: 1.2;
+  letter-spacing: 0;
   text-align: center;
+  text-transform: none;
   white-space: nowrap;
 }
 
@@ -455,9 +458,15 @@ header.compact-meta #edited-sep {
 }
 
 .md-toolbar button[data-markdown="italic"] {
-  font-family: Palatino, Georgia, serif;
   font-style: italic;
-  font-weight: 600;
+}
+
+.md-toolbar button[data-markdown="title"] {
+  font-weight: 650;
+}
+
+.md-toolbar button[data-markdown="quote"] {
+  box-shadow: inset 2px 0 0 var(--md-marker);
 }
 
 #color-pop,

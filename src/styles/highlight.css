@@ -70,6 +70,33 @@ html[data-mdhl] .stack-blocks textarea::-moz-selection {
   color: var(--md-marker);
 }
 
+.tok-kw { color: var(--tok-kw); }
+.tok-str { color: var(--tok-str); }
+.tok-num { color: var(--tok-num); }
+.tok-cmt { color: var(--tok-cmt); }
+.tok-key { color: var(--tok-key); }
+
+.md-lang {
+  position: absolute;
+  top: 6px;
+  right: 8px;
+  z-index: 3;
+  max-width: 9em;
+  overflow: hidden;
+  padding: 0 4px;
+  font-family: system-ui, sans-serif;
+  font-size: 11px;
+  line-height: 1.4;
+  letter-spacing: 0;
+  text-overflow: ellipsis;
+  text-transform: none;
+  white-space: nowrap;
+  color: var(--md-code);
+  background: var(--paper);
+  pointer-events: none;
+  user-select: none;
+}
+
 html,
 html[data-mdhl-scheme="paper"] {
   --md-heading: #9a3412;
@@ -78,6 +105,11 @@ html[data-mdhl-scheme="paper"] {
   --md-code: #0f766e;
   --md-link: #1d4ed8;
   --md-marker: #78716c;
+  --tok-kw: #9a3412;
+  --tok-str: #0f766e;
+  --tok-num: #1d4ed8;
+  --tok-cmt: #78716c;
+  --tok-key: #7c2d12;
 }
 
 html[data-mdhl-scheme="cool"] {
@@ -87,6 +119,11 @@ html[data-mdhl-scheme="cool"] {
   --md-code: #0369a1;
   --md-link: #2563eb;
   --md-marker: #64748b;
+  --tok-kw: #1d4ed8;
+  --tok-str: #0f766e;
+  --tok-num: #7c3aed;
+  --tok-cmt: #64748b;
+  --tok-key: #0369a1;
 }
 
 html[data-mdhl-scheme="mono"] {
@@ -96,6 +133,11 @@ html[data-mdhl-scheme="mono"] {
   --md-code: #404040;
   --md-link: #0a0a0a;
   --md-marker: #737373;
+  --tok-kw: #171717;
+  --tok-str: #404040;
+  --tok-num: #262626;
+  --tok-cmt: #737373;
+  --tok-key: #0a0a0a;
 }
 
 html[data-theme="dark"],
@@ -106,6 +148,11 @@ html[data-theme="dark"][data-mdhl-scheme="paper"] {
   --md-code: #5eead4;
   --md-link: #93c5fd;
   --md-marker: #a8a29e;
+  --tok-kw: #fdba74;
+  --tok-str: #5eead4;
+  --tok-num: #93c5fd;
+  --tok-cmt: #a8a29e;
+  --tok-key: #fed7aa;
 }
 
 html[data-theme="dark"][data-mdhl-scheme="cool"] {
@@ -115,6 +162,11 @@ html[data-theme="dark"][data-mdhl-scheme="cool"] {
   --md-code: #7dd3fc;
   --md-link: #bfdbfe;
   --md-marker: #94a3b8;
+  --tok-kw: #93c5fd;
+  --tok-str: #5eead4;
+  --tok-num: #d8b4fe;
+  --tok-cmt: #94a3b8;
+  --tok-key: #7dd3fc;
 }
 
 html[data-theme="dark"][data-mdhl-scheme="mono"] {
@@ -124,6 +176,11 @@ html[data-theme="dark"][data-mdhl-scheme="mono"] {
   --md-code: #a3a3a3;
   --md-link: #fafafa;
   --md-marker: #737373;
+  --tok-kw: #f5f5f5;
+  --tok-str: #a3a3a3;
+  --tok-num: #e5e5e5;
+  --tok-cmt: #737373;
+  --tok-key: #fafafa;
 }
 
 .md-field[data-coder] {
@@ -198,6 +255,13 @@ html[data-theme="dark"][data-mdhl-scheme="mono"] {
   word-wrap: normal;
   overflow-wrap: normal;
   overflow-x: hidden;
+}
+
+#blocks .md-field[data-coder][data-lang] .md-hl,
+#blocks .md-field[data-coder][data-lang] textarea,
+.stack-blocks .md-field[data-coder][data-lang] .md-hl,
+.stack-blocks .md-field[data-coder][data-lang] textarea {
+  padding-right: 6.5em;
 }
 
 .md-field[data-coder] .md-hl * {

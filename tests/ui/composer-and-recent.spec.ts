@@ -80,6 +80,26 @@ test("recent list collapses to three rows and expands on More", async ({ page })
   await expect(page.locator("#recent-more")).toHaveText("Less");
 });
 
+test("markdown menu labels the block actions", async ({ page }) => {
+  await openComposer(page);
+  await openMarkdownMenu(page);
+  await expect(page.locator("#md-toolbar button")).toHaveText([
+    "Bold",
+    "Italic",
+    "Title",
+    "List",
+    "Numbered",
+    "Task",
+    "Quote",
+    "Code block",
+  ]);
+  const area = await composerTextarea(page);
+  await area.fill("hello");
+  await area.evaluate((el: HTMLTextAreaElement) => el.setSelectionRange(0, 5));
+  await page.locator('#md-toolbar button[data-markdown="list"]').click();
+  await expect.poll(() => editorText(area)).toBe("- hello");
+});
+
 test("clicking a memo tag opens search", async ({ page }) => {
   const notes = sampleNotes(3);
   notes[0] = { ...notes[0], content: "budget #finance ok" };
@@ -97,6 +117,25 @@ test("clicking a memo tag opens search", async ({ page }) => {
   await expect(page.locator("#recent-search")).toBeVisible();
   await expect(page.locator("#recent-search")).toHaveValue("#finance");
   await expect(page.locator("#recent li")).toHaveCount(1);
+});
+
+test("clicking a rendered tag opens search", async ({ page }) => {
+  const notes = sampleNotes(2);
+  notes[0] = { ...notes[0], content: "budget #finance ok" };
+  notes[1] = { ...notes[1], content: "rent #rent due" };
+  await openComposer(page, { notes });
+  const area = await composerTextarea(page);
+  await area.fill("see **#finance** now\n- pay #rent");
+  await area.blur();
+  for (const name of ["#finance", "#rent"]) {
+    const tag = page.locator(".md-row .md-tag", { hasText: name });
+    const box = await tag.boundingBox();
+    if (!box) {
+      throw new Error(`missing ${name}`);
+    }
+    await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
+    await expect(page.locator("#recent-search")).toHaveValue(name);
+  }
 });
 
 test("last-line tag click vs empty grow space", async ({ page }) => {
@@ -426,6 +465,21 @@ test("new memo shortcut leaves the caret in the editor", async ({ page }) => {
   await expect.poll(() => editorText(page.locator("#blocks .md-lines, #blocks textarea").first())).toBe("");
   await page.keyboard.type("hi");
   await expect.poll(() => editorText(page.locator("#blocks .md-lines, #blocks textarea").first())).toBe("hi");
+});
+
+test("a language fence becomes a highlighted code block after enter", async ({ page }) => {
+  await openComposer(page);
+  const area = await composerTextarea(page);
+  await area.click();
+  await page.keyboard.type("```json");
+  await expect(page.locator("textarea[data-kind='code']")).toHaveCount(0);
+  await page.keyboard.press("Enter");
+  await expect(page.locator(".md-lang")).toHaveText("json");
+  const code = page.locator("textarea[data-kind='code']");
+  await expect(code).toHaveValue("");
+  await page.keyboard.type('{"a": 1}');
+  await expect(page.locator(".md-hl .tok-key")).toHaveText('"a"');
+  await expect(page.locator(".md-hl .tok-num")).toHaveText("1");
 });
 
 test("fenced code in the markdown editor uses a coder field", async ({ page }) => {

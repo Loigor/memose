@@ -13,6 +13,9 @@ import { namedTheme, type Look } from "./look/look";
 import {
   applyCode,
   applyJsonFormat,
+  applyList,
+  applyOrdered,
+  applyQuote,
   applyTask,
   applyTitle,
   closedFenceIn,
@@ -845,6 +848,9 @@ function renderSectionBlocks(section: HTMLElement, state: StackState, focusName?
       const area = document.createElement("textarea");
       area.dataset.index = String(index);
       area.dataset.kind = block.kind;
+      if (block.kind === "code" && block.lang) {
+        area.dataset.lang = block.lang;
+      }
       area.value = block.text;
       area.rows = 1;
       area.spellcheck = false;
@@ -1373,7 +1379,7 @@ function buildSection(note: Note): HTMLElement {
     if (!state || !state.collapsed || pressTravel > 8 || header.dataset.moved === "1") {
       return;
     }
-    if (event.target instanceof Element && event.target.closest("textarea, button, input, .color-pop, .audience-pop, .format-pop, .md-toolbar, .editor-tools")) {
+    if (event.target instanceof Element && event.target.closest("textarea, .md-lines, button, input, .color-pop, .audience-pop, .format-pop, .md-toolbar, .editor-tools")) {
       return;
     }
     if (holdCollapsed(note.id)) {
@@ -1392,7 +1398,7 @@ function buildSection(note: Note): HTMLElement {
     if (!(target instanceof Element)) {
       return;
     }
-    if (target.closest("header, button, input, textarea, .media, .media-audio, .file-attachment, .color-pop, .audience-pop, .format-pop, .md-toolbar, .editor-tools, #resize-grip, .resize-handle")) {
+    if (target.closest("header, button, input, textarea, .md-lines, .media, .media-audio, .file-attachment, .color-pop, .audience-pop, .format-pop, .md-toolbar, .editor-tools, #resize-grip, .resize-handle")) {
       return;
     }
     startWindowDrag(event);
@@ -1496,13 +1502,19 @@ function buildSection(note: Note): HTMLElement {
           ? wrapText(value, start, end, "*", "*")
           : kind === "title"
             ? applyTitle(value, start, end)
-            : kind === "task"
-              ? applyTask(value, start, end)
-              : kind === "code"
-                ? applyCode(value, start, end)
-                : kind === "json"
-                  ? applyJsonFormat(value)
-                  : null;
+            : kind === "list"
+              ? applyList(value, start, end)
+              : kind === "ordered"
+                ? applyOrdered(value, start, end)
+                : kind === "task"
+                  ? applyTask(value, start, end)
+                  : kind === "quote"
+                    ? applyQuote(value, start, end)
+                    : kind === "code"
+                      ? applyCode(value, start, end)
+                      : kind === "json"
+                        ? applyJsonFormat(value)
+                        : null;
     if (!edit) {
       return;
     }

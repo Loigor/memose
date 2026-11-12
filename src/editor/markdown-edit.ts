@@ -32,18 +32,29 @@ export function applyCode(value: string, start: number, end: number): Edit {
 }
 
 export function completeOpenFence(value: string, caret: number): Edit | null {
-  if (closedFenceIn(value)) {
+  if (caret === 0 || value[caret - 1] !== "\n") {
     return null;
   }
-  const { lineStart, lineEnd } = lineBounds(value, caret);
-  const line = value.slice(lineStart, lineEnd);
-  const open = /^(```+)\s*$/.exec(line);
-  if (!open || caret < lineStart + open[1].length) {
+  const prevEnd = caret - 1;
+  const prevStart = prevEnd === 0 ? 0 : value.lastIndexOf("\n", prevEnd - 1) + 1;
+  const opener = /^(```+)([^`]*)$/.exec(value.slice(prevStart, prevEnd));
+  const ticks = opener?.[1];
+  if (!ticks || inFence(value, prevStart)) {
     return null;
   }
-  const ticks = open[1];
-  const next = `${value.slice(0, lineEnd)}\n${ticks}${value.slice(lineEnd)}`;
-  return { value: next, start: lineEnd + 1, end: lineEnd + 1 };
+  const lineBreak = value.indexOf("\n", caret);
+  if (value.slice(caret, lineBreak === -1 ? value.length : lineBreak).length > 0) {
+    return null;
+  }
+  const later = value.slice(lineBreak === -1 ? value.length : lineBreak + 1);
+  for (const row of later.split("\n")) {
+    const marks = /^(```+)(.*)$/.exec(row);
+    if (marks?.[1] && marks[1].length >= ticks.length && marks[2].trim() === "") {
+      return null;
+    }
+  }
+  const next = `${value.slice(0, caret)}\n${ticks}${value.slice(caret)}`;
+  return { value: next, start: caret, end: caret };
 }
 
 export function liftedCodeIndex(blocks: Block[], fromIndex: number): number {
@@ -55,32 +66,79 @@ export function liftedCodeIndex(blocks: Block[], fromIndex: number): number {
   return -1;
 }
 
-export function applyTitle(value: string, start: number, end: number): Edit {
-  const { lineStart, lineEnd } = lineBounds(value, start);
-  const line = value.slice(lineStart, lineEnd);
-  if (/^#{1,6}\s/.test(line)) {
+const blockMarker = /^([ \t]*)(#{1,6}[ \t]+|>[ \t]*|(?:[-*+]|\d+[.)])[ \t]+(?:\[[ xX]\][ \t]*)?)?([\s\S]*)$/;
+
+function withBlockPrefix(line: string, prefix: string, keep: (line: string) => boolean, keepIndent = true): string {
+  if (keep(line)) {
+    return line;
+  }
+  const match = blockMarker.exec(line);
+  const indent = keepIndent ? (match?.[1] ?? "") : "";
+  const body = match?.[2] ? (match[3] ?? "") : line.replace(/^[ \t]*/, "");
+  return `${indent}${prefix}${body}`;
+}
+
+function rewriteLines(value: string, start: number, end: number, rewrite: (line: string) => string): Edit {
+  const from = Math.min(start, end);
+  const to = Math.max(start, end);
+  if (inFence(value, from)) {
     return { value, start, end };
   }
-  const prefix = "# ";
-  return {
-    value: value.slice(0, lineStart) + prefix + value.slice(lineStart),
-    start: start + prefix.length,
-    end: end + prefix.length,
-  };
+  const lines = value.split("\n");
+  let offset = 0;
+  let nextStart = from;
+  let nextEnd = to;
+  let changed = false;
+  for (let i = 0; i < lines.length; i += 1) {
+    const line = lines[i] ?? "";
+    const lineStart = offset;
+    const lineEnd = lineStart + line.length;
+    const overlaps = from === to ? from >= lineStart && from <= lineEnd : from < lineEnd && to > lineStart;
+    if (overlaps) {
+      const next = rewrite(line);
+      if (next !== line) {
+        changed = true;
+        const delta = next.length - line.length;
+        lines[i] = next;
+        if (nextStart >= lineStart) {
+          nextStart += delta;
+        }
+        if (nextEnd >= lineStart) {
+          nextEnd += delta;
+        }
+      }
+    }
+    offset = lineEnd + 1;
+  }
+  if (!changed) {
+    return { value, start, end };
+  }
+  return { value: lines.join("\n"), start: nextStart, end: nextEnd };
+}
+
+export function applyTitle(value: string, start: number, end: number): Edit {
+  return rewriteLines(value, start, end, (line) => withBlockPrefix(line, "# ", (item) => /^#{1,6}[ \t]/.test(item), false));
 }
 
 export function applyTask(value: string, start: number, end: number): Edit {
-  const { lineStart, lineEnd } = lineBounds(value, start);
-  const line = value.slice(lineStart, lineEnd);
-  if (taskLine.test(line)) {
-    return { value, start, end };
-  }
-  const prefix = "- [ ] ";
-  return {
-    value: value.slice(0, lineStart) + prefix + value.slice(lineStart),
-    start: start + prefix.length,
-    end: end + prefix.length,
-  };
+  return rewriteLines(value, start, end, (line) => withBlockPrefix(line, "- [ ] ", (item) => taskLine.test(item)));
+}
+
+export function applyList(value: string, start: number, end: number): Edit {
+  return rewriteLines(value, start, end, (line) =>
+    withBlockPrefix(line, "- ", (item) => listLine.test(item) && !taskLine.test(item)),
+  );
+}
+
+export function applyOrdered(value: string, start: number, end: number): Edit {
+  const next = rewriteLines(value, start, end, (line) =>
+    withBlockPrefix(line, "1. ", (item) => orderedListLine.test(item)),
+  );
+  return renumberOrderedLists(next.value, next.start, next.end);
+}
+
+export function applyQuote(value: string, start: number, end: number): Edit {
+  return rewriteLines(value, start, end, (line) => withBlockPrefix(line, "> ", (item) => item.startsWith(">"), false));
 }
 
 const fenceLine = /^\s*```/;

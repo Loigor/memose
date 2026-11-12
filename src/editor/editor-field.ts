@@ -1,3 +1,4 @@
+import { highlightCode } from "./code-highlight.ts";
 import { highlightMarkdown } from "./md-highlight.ts";
 
 export type HighlightScheme = "paper" | "cool" | "mono";
@@ -81,11 +82,14 @@ export function paintEditorField(area: HTMLTextAreaElement) {
   const note = area.closest("#card, .stack-note");
   const wrap = Boolean(note?.hasAttribute("data-wrap"));
   field.toggleAttribute("data-wrap", coder && wrap);
-  if (prefs.markdownHighlight || coder) {
+  if (area.dataset.kind === "code") {
+    highlight.innerHTML = highlightCode(area.value, area.dataset.lang ?? "");
+  } else if (prefs.markdownHighlight || coder) {
     highlight.innerHTML = highlightMarkdown(area.value, { tags: !coder });
   } else {
     highlight.replaceChildren();
   }
+  paintLang(field, area);
   const scope = area.closest("#blocks, .stack-blocks");
   if (scope) {
     renumberGutters(scope, Boolean(note?.hasAttribute("data-coder")));
@@ -117,6 +121,32 @@ export function setEditorPrefs(next: EditorPrefs) {
     markdownScheme: namedScheme(next.markdownScheme),
   };
   refreshEditorFields();
+}
+
+function paintLang(field: HTMLElement, area: HTMLTextAreaElement) {
+  const label = (area.dataset.lang ?? "").trim().split(/\s+/)[0] ?? "";
+  if (label) {
+    field.dataset.lang = label;
+  } else {
+    delete field.dataset.lang;
+  }
+  const surface = field.querySelector(":scope > .md-surface") ?? field;
+  let badge = surface.querySelector(":scope > .md-lang");
+  if (!label) {
+    badge?.remove();
+    area.removeAttribute("aria-label");
+    return;
+  }
+  if (!(badge instanceof HTMLElement)) {
+    badge = document.createElement("div");
+    badge.className = "md-lang";
+    badge.setAttribute("aria-hidden", "true");
+    surface.append(badge);
+  }
+  if (badge.textContent !== label) {
+    badge.textContent = label;
+  }
+  area.setAttribute("aria-label", `${label} code`);
 }
 
 function applyEditorDataset() {

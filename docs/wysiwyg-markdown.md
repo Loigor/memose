@@ -20,7 +20,7 @@ One editing surface. Each line is a row. The row’s class comes from the line p
 - A quote, bullet, task, and rule do the same. The caret line shows the markdown, so the caret stays on a real character. When the caret leaves, a quote shows a bar, a bullet shows a dot, a task shows a checkbox, and a rule shows a line. An ordered item keeps its number. A checked task strikes the rest of the line.
 - Anything else is body text. On the caret line, bold, italic, code, and link markers stay visible. On the other lines they show the rendered span. A `#tag` stays visible, including inside bold or italic. On a heading line the `#` stays part of the heading.
 
-Fenced code and media stay separate blocks between text regions, as they do now. Closing a fence or inserting a `memose-media` token still splits the note into those blocks.
+A fence line stays in the text until Enter, so `` ```json `` can be finished before it becomes a block. Enter lifts that line into a code block, shows the language at the top right, and highlights the code. Closing a fence or inserting a `memose-media` token still splits the note into those blocks.
 
 The coder editor is the raw textarea, gutter, and overlay. A fenced block inside it stays a coder field: the note’s line numbers continue through that block, and the block adds its own gutter in the code color, indented beside them. Preview is still the read-only `marked` view. The normal editor is the default. “Coder editor default” in settings still chooses the textarea instead. Turning coder mode on or off rebuilds the surface once. A color change does not.
 
@@ -41,11 +41,11 @@ A memo with more than a thousand lines must not slow the editor or the app.
 
 Enter at the end of a task line continues the list, and that finished line renders as a checkbox. Tab still indents markdown. Arrow keys move inside the rows, and at the edge of the block they move to the previous or next text or code field. Backspace at the start of a line joins it with the line above. Backspace in an empty code block removes that block and leaves the caret where the block started. Backspace at the start of a nonempty text or code field moves the caret to the end of the previous field. Backspace before a media block still removes that media.
 
-The format buttons still wrap the selection in markdown characters. The caret line shows those characters. The other lines hide them and show the rendered span. A keystroke paints after the browser has applied the character, so the style sticks on the first memo.
+Bold and Italic wrap the selection. Title, List, Numbered, Task, Quote, and Code block set the line, replacing a marker that is already there. The caret line shows those characters. The other lines hide them and show the rendered span. A keystroke paints after the browser has applied the character, so the style sticks on the first memo.
 
 ## Not in this pass
 
 - CodeMirror, TipTap, ProseMirror, Milkdown, Lexical, or any editor that serializes its own document.
-- Mermaid, KaTeX, a syntax-highlighter runtime, or a second preview column.
+- Mermaid, KaTeX, Shiki, Highlight.js, or a second preview column.
 
 CodeMirror’s live preview hides syntax and is a large runtime. The rich-text editors rewrite markers on save, so a sync would see an edit the user did not type.

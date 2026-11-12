@@ -22,6 +22,9 @@ import { darkHue, defaultLook, lightHue, lookFromNote, tinted, type Look } from 
 import {
   applyCode,
   applyJsonFormat,
+  applyList,
+  applyOrdered,
+  applyQuote,
   applyTask,
   applyTitle,
   closedFenceIn,
@@ -640,6 +643,9 @@ function renderBlocks(focusName?: string) {
       area.setAttribute("writingsuggestions", "false");
       area.dataset.index = String(index);
       area.dataset.kind = block.kind;
+      if (block.kind === "code" && block.lang) {
+        area.dataset.lang = block.lang;
+      }
       area.value = block.text;
       if (noteBlocks.length === 1 && block.kind === "text") {
         area.placeholder = "Write a note…";
@@ -1013,13 +1019,19 @@ function applyMarkdown(kind: string) {
         ? wrapText(value, start, end, "*", "*")
         : kind === "title"
           ? applyTitle(value, start, end)
-          : kind === "task"
-            ? applyTask(value, start, end)
-            : kind === "code"
-              ? applyCode(value, start, end)
-              : kind === "json"
-                ? applyJsonFormat(value)
-                : null;
+          : kind === "list"
+            ? applyList(value, start, end)
+            : kind === "ordered"
+              ? applyOrdered(value, start, end)
+              : kind === "task"
+                ? applyTask(value, start, end)
+                : kind === "quote"
+                  ? applyQuote(value, start, end)
+                  : kind === "code"
+                    ? applyCode(value, start, end)
+                    : kind === "json"
+                      ? applyJsonFormat(value)
+                      : null;
   if (!edit) {
     return;
   }
@@ -2017,13 +2029,20 @@ function openTagSearch(raw: string, keep?: HTMLElement | null) {
 
 function editorTagArea(target: EventTarget | null): Editable | null {
   const field = editingHost(target);
-  if (!field) {
-    return null;
-  }
-  if (field.closest(".md-field[data-coder]") || field.dataset.kind === "code") {
+  if (!field || field.dataset.kind === "code") {
     return null;
   }
   return field;
+}
+
+function tagSpan(target: EventTarget | null): string | null {
+  const el = target instanceof Element ? target : target instanceof Text ? target.parentElement : null;
+  const tag = el?.closest(".md-tag");
+  if (!(tag instanceof HTMLElement) || tag.closest("pre, code")) {
+    return null;
+  }
+  const value = tag.dataset.tag || tag.textContent || "";
+  return value.startsWith("#") ? value : null;
 }
 
 function offsetInField(field: Editable, x: number, y: number): number | null {
@@ -2136,8 +2155,34 @@ notePaneEl.addEventListener("mousedown", () => {
 
 const notesRoot = document.querySelector<HTMLElement>("#notes") ?? cardEl;
 let tagCursorFrame = 0;
+let tagPress: { tag: string; x: number; y: number } | null = null;
+notesRoot.addEventListener("mousedown", (event) => {
+  tagPress = null;
+  if (event.button !== 0) {
+    return;
+  }
+  const tag = tagSpan(event.target) ?? tagFromEvent(event);
+  if (!tag) {
+    return;
+  }
+  tagPress = { tag, x: event.clientX, y: event.clientY };
+});
+document.addEventListener("mouseup", (event) => {
+  const pressed = tagPress;
+  tagPress = null;
+  if (!pressed || event.button !== 0 || Math.hypot(event.clientX - pressed.x, event.clientY - pressed.y) > 5) {
+    return;
+  }
+  const area = editorTagArea(event.target);
+  if (area && area.selectionStart !== area.selectionEnd) {
+    return;
+  }
+  const keep =
+    area ?? (event.target instanceof Element ? event.target.closest<HTMLElement>(".md-tag") : null);
+  openTagSearch(pressed.tag, keep);
+});
 notesRoot.addEventListener("click", (event) => {
-  const tag = tagFromEvent(event);
+  const tag = tagSpan(event.target) ?? tagFromEvent(event);
   if (!tag) {
     return;
   }

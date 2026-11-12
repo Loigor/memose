@@ -6,6 +6,7 @@ import { fileURLToPath } from "node:url";
 
 import { moveBlockMedia } from "../src/editor/editor-blocks.ts";
 import { backspaceEdit, inlinePieces, renderParts, rowClass, snapOffset, stepOffset } from "../src/editor/line-style.ts";
+import { highlightCode } from "../src/editor/code-highlight.ts";
 import { highlightMarkdown } from "../src/editor/md-highlight.ts";
 import { tagAtOffset } from "../src/editor/md-tags.ts";
 import { uniqueFiles } from "../src/media/files.ts";
@@ -14,6 +15,9 @@ import { withKeptScroll } from "../src/editor/textarea.ts";
 import { defaultLook, lookFromNote, namedTheme } from "../src/look/look.ts";
 import {
   applyCode,
+  applyList,
+  applyOrdered,
+  applyQuote,
   applyTask,
   dropCodeBlock,
   applyTitle,
@@ -132,15 +136,21 @@ test("applyCode inserts a fenced code block and places the caret inside", () => 
   assert.equal(multi.end, 17);
 });
 
-test("completeOpenFence closes a ticks-only fence and liftedCodeIndex finds the new block", () => {
-  const closed = completeOpenFence("```", 3);
-  assert.equal(closed?.value, "```\n```");
-  assert.equal(closed?.start, 4);
-  assert.equal(completeOpenFence("```js", 5), null);
-  assert.equal(completeOpenFence("```\n```", 3), null);
-  const blocks = parseBlocks("hello\n```\n```");
-  assert.equal(liftedCodeIndex(blocks, 0), 1);
-  assert.equal(blocks[1]?.kind, "code");
+test("completeOpenFence waits for the line break so the language can be typed", () => {
+  assert.equal(completeOpenFence("```", 3), null);
+  assert.equal(completeOpenFence("```json", 7), null);
+  const json = completeOpenFence("```json\n", 8);
+  assert.equal(json?.value, "```json\n\n```");
+  assert.equal(json?.start, 8);
+  const blocks = parseBlocks(json?.value ?? "");
+  const code = blocks.find((block) => block.kind === "code");
+  assert.equal(code?.kind, "code");
+  if (code?.kind === "code") {
+    assert.equal(code.lang, "json");
+    assert.equal(code.text, "");
+  }
+  assert.equal(completeOpenFence("```\n```", 4), null);
+  assert.equal(liftedCodeIndex(parseBlocks("hello\n```\n```"), 0), 1);
 });
 
 test("applyTitle prefixes a line with heading and leaves existing headings intact", () => {
@@ -151,6 +161,18 @@ test("applyTitle prefixes a line with heading and leaves existing headings intac
 
   const unchanged = applyTitle(h1.value, h1.start, h1.end);
   assert.equal(unchanged.value, "# Title");
+});
+
+test("block buttons replace the current marker and keep list indent", () => {
+  assert.equal(applyList("hello", 0, 5).value, "- hello");
+  assert.equal(applyList("- [ ] milk", 0, 10).value, "- milk");
+  assert.equal(applyTask("- item", 0, 6).value, "- [ ] item");
+  assert.equal(applyTitle("  - item", 2, 8).value, "# item");
+  assert.equal(applyQuote("note", 0, 4).value, "> note");
+  assert.equal(applyList("  > note", 0, 8).value, "  - note");
+  const numbered = applyOrdered("a\nb", 0, 3);
+  assert.equal(numbered.value, "1. a\n2. b");
+  assert.equal(applyList("```\ncode\n```", 4, 8).value, "```\ncode\n```");
 });
 
 test("applyTask and toggleTask manage markdown task lists and ignore code fences", () => {
@@ -539,6 +561,21 @@ test("overlay editor keeps selected textarea glyphs invisible", () => {
   assert.match(css, /\.md-overflow-shift/);
   assert.match(css, /::-webkit-scrollbar/);
   assert.match(css, /scrollbar-width: thin/);
+});
+
+test("highlightCode colors a language and keeps every source character", () => {
+  const source = '{\n  "a": 1,\n  "ok": true\n}';
+  const html = highlightCode(source, "json");
+  assert.match(html, /tok-key/);
+  assert.match(html, /tok-num/);
+  assert.match(html, /tok-kw/);
+  assert.equal(
+    html.replace(/<[^>]+>/g, "").replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&amp;/g, "&"),
+    source,
+  );
+  assert.match(highlightCode("const x = 1; // note", "js"), /tok-kw[\s\S]*const/);
+  assert.match(highlightCode("const x = 1; // note", "javascript"), /tok-cmt/);
+  assert.match(highlightCode("a < b & c", "js"), /a &lt; b &amp; c/);
 });
 
 test("highlightMarkdown colors markers without changing the source text", () => {

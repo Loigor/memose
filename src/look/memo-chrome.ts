@@ -111,13 +111,19 @@ export function huePopHtml(): string {
 }
 
 export function markdownToolbarHtml(): string {
-  return `<div class="md-toolbar" hidden>
-    <button type="button" data-markdown="bold" aria-label="Bold">B</button>
-    <button type="button" data-markdown="italic" aria-label="Italic">I</button>
-    <button type="button" data-markdown="title" aria-label="Title">T</button>
-    <button type="button" data-markdown="task" aria-label="Task list">[ ]</button>
-    <button type="button" data-markdown="code" aria-label="Code">&lt;&gt;</button>
-  </div>`;
+  return `<div class="md-toolbar" hidden>${markdownButtonsHtml()}</div>`;
+}
+
+function markdownButtonsHtml(): string {
+  return `
+    <button type="button" data-markdown="bold" aria-label="Bold">Bold</button>
+    <button type="button" data-markdown="italic" aria-label="Italic">Italic</button>
+    <button type="button" data-markdown="title" aria-label="Title">Title</button>
+    <button type="button" data-markdown="list" aria-label="Bullet list">List</button>
+    <button type="button" data-markdown="ordered" aria-label="Numbered list">Numbered</button>
+    <button type="button" data-markdown="task" aria-label="Task list">Task</button>
+    <button type="button" data-markdown="quote" aria-label="Quote">Quote</button>
+    <button type="button" data-markdown="code" aria-label="Code block">Code block</button>`;
 }
 
 export function formatMenuHtml(): string {
