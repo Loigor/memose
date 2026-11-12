@@ -24,6 +24,28 @@
             Visibility
           </button>
           <button
+            id="tab-window"
+            class="settings-tab"
+            type="button"
+            role="tab"
+            aria-selected="false"
+            aria-controls="panel-window"
+            data-tab="window"
+          >
+            Window
+          </button>
+          <button
+            id="tab-editor"
+            class="settings-tab"
+            type="button"
+            role="tab"
+            aria-selected="false"
+            aria-controls="panel-editor"
+            data-tab="editor"
+          >
+            Editor
+          </button>
+          <button
             id="tab-shortcuts"
             class="settings-tab"
             type="button"
@@ -43,7 +65,7 @@
             aria-controls="panel-sync"
             data-tab="sync"
           >
-            Sync (useMemos)
+            Sync
           </button>
         </nav>
       </header>
@@ -74,7 +96,16 @@
               <button id="create-space" type="submit">Create</button>
             </form>
           </div>
+        </section>
 
+        <section
+          id="panel-window"
+          class="settings-panel"
+          role="tabpanel"
+          aria-labelledby="tab-window"
+          data-panel="window"
+          hidden
+        >
           <div class="settings-card">
             <div class="card-header">
               <h2>Window &amp; behavior</h2>
@@ -106,6 +137,59 @@
               </span>
               <input id="snap-memos" type="checkbox" />
             </label>
+            <label class="toggle-row" for="pin-tab-bar-enabled">
+              <span class="toggle-copy">
+                <span class="toggle-title">Show tab bar</span>
+                <span class="hint">
+                  Show pinned-mode tabs at the screen edge. When hidden, tabs remain available from the tray menu.
+                </span>
+              </span>
+              <input id="pin-tab-bar-enabled" type="checkbox" checked />
+            </label>
+            <div id="pin-tab-place" class="pin-place">
+              <label for="pin-tab-screen">
+                <span class="field-label">Tab bar display</span>
+                <select id="pin-tab-screen">
+                  <option value="cursor">Follow the cursor</option>
+                  <option value="all">Every display</option>
+                </select>
+              </label>
+              <label for="pin-tab-edge">
+                <span class="field-label">Tab bar edge</span>
+                <select id="pin-tab-edge">
+                  <option value="top">Top</option>
+                  <option value="bottom">Bottom</option>
+                  <option value="left">Left</option>
+                  <option value="right">Right</option>
+                </select>
+              </label>
+            </div>
+            <p class="hint">
+              Follow the cursor on the top edge, or pick a display and an edge. Every display puts a strip on each screen.
+            </p>
+            <label class="toggle-row" for="autostart">
+              <span class="toggle-copy">
+                <span class="toggle-title">Launch at login</span>
+                <span class="hint">Start Memose automatically when you sign in.</span>
+              </span>
+              <input id="autostart" type="checkbox" />
+            </label>
+          </div>
+        </section>
+
+        <section
+          id="panel-editor"
+          class="settings-panel"
+          role="tabpanel"
+          aria-labelledby="tab-editor"
+          data-panel="editor"
+          hidden
+        >
+          <div class="settings-card">
+            <div class="card-header">
+              <h2>Editor defaults</h2>
+              <p class="hint">Choose how new memos look and how text is displayed while editing.</p>
+            </div>
             <label class="toggle-row" for="coder-editor">
               <span class="toggle-copy">
                 <span class="toggle-title">Coder editor default</span>
@@ -114,6 +198,13 @@
                 </span>
               </span>
               <input id="coder-editor" type="checkbox" />
+            </label>
+            <label class="toggle-row" for="indent-width">
+              <span class="toggle-copy">
+                <span class="toggle-title">Whitespace size</span>
+                <span class="hint">How many characters one whitespace is.</span>
+              </span>
+              <input id="indent-width" type="number" min="1" max="8" step="1" value="2" />
             </label>
             <label class="toggle-row" for="markdown-highlight">
               <span class="toggle-copy">
@@ -126,13 +217,6 @@
             </label>
             <p class="field-label">Syntax color scheme</p>
             <div id="markdown-schemes" class="choices"></div>
-            <label class="toggle-row" for="autostart">
-              <span class="toggle-copy">
-                <span class="toggle-title">Launch at login</span>
-                <span class="hint">Start Memose automatically when you sign in.</span>
-              </span>
-              <input id="autostart" type="checkbox" />
-            </label>
           </div>
         </section>
 

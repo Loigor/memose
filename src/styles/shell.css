@@ -333,3 +333,49 @@ html.collapsed:not(.hover-open) #frame:not(.has-stack) #notes {
 .lifting {
   opacity: 0.28;
 }
+
+#screen-edges {
+  position: fixed;
+  z-index: 70;
+  overflow: hidden;
+  border-radius: 10px;
+  pointer-events: none;
+  opacity: 1;
+  transition: opacity 160ms ease-out;
+}
+
+#screen-edges.is-clear {
+  opacity: 0;
+}
+
+#screen-edges .edge.left,
+#screen-edges .edge.right {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 20px;
+}
+
+#screen-edges .edge.top,
+#screen-edges .edge.bottom {
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: 20px;
+}
+
+#screen-edges .edge.left {
+  background: linear-gradient(to right, color-mix(in srgb, #000000 80%, transparent), transparent);
+}
+
+#screen-edges .edge.right {
+  background: linear-gradient(to left, color-mix(in srgb, #000000 80%, transparent), transparent);
+}
+
+#screen-edges .edge.top {
+  background: linear-gradient(to bottom, color-mix(in srgb, #000000 80%, transparent), transparent);
+}
+
+#screen-edges .edge.bottom {
+  background: linear-gradient(to top, color-mix(in srgb, #000000 80%, transparent), transparent);
+}

@@ -32,18 +32,29 @@ export function applyCode(value: string, start: number, end: number): Edit {
 }
 
 export function completeOpenFence(value: string, caret: number): Edit | null {
-  if (closedFenceIn(value)) {
+  if (caret === 0 || value[caret - 1] !== "\n") {
     return null;
   }
-  const { lineStart, lineEnd } = lineBounds(value, caret);
-  const line = value.slice(lineStart, lineEnd);
-  const open = /^(```+)\s*$/.exec(line);
-  if (!open || caret < lineStart + open[1].length) {
+  const prevEnd = caret - 1;
+  const prevStart = prevEnd === 0 ? 0 : value.lastIndexOf("\n", prevEnd - 1) + 1;
+  const opener = /^(```+)([^`]*)$/.exec(value.slice(prevStart, prevEnd));
+  const ticks = opener?.[1];
+  if (!ticks || inFence(value, prevStart)) {
     return null;
   }
-  const ticks = open[1];
-  const next = `${value.slice(0, lineEnd)}\n${ticks}${value.slice(lineEnd)}`;
-  return { value: next, start: lineEnd + 1, end: lineEnd + 1 };
+  const lineBreak = value.indexOf("\n", caret);
+  if (value.slice(caret, lineBreak === -1 ? value.length : lineBreak).length > 0) {
+    return null;
+  }
+  const later = value.slice(lineBreak === -1 ? value.length : lineBreak + 1);
+  for (const row of later.split("\n")) {
+    const marks = /^(```+)(.*)$/.exec(row);
+    if (marks?.[1] && marks[1].length >= ticks.length && marks[2].trim() === "") {
+      return null;
+    }
+  }
+  const next = `${value.slice(0, caret)}\n${ticks}${value.slice(caret)}`;
+  return { value: next, start: caret, end: caret };
 }
 
 export function liftedCodeIndex(blocks: Block[], fromIndex: number): number {
@@ -55,32 +66,79 @@ export function liftedCodeIndex(blocks: Block[], fromIndex: number): number {
   return -1;
 }
 
-export function applyTitle(value: string, start: number, end: number): Edit {
-  const { lineStart, lineEnd } = lineBounds(value, start);
-  const line = value.slice(lineStart, lineEnd);
-  if (/^#{1,6}\s/.test(line)) {
+const blockMarker = /^([ \t]*)(#{1,6}[ \t]+|>[ \t]*|(?:[-*+]|\d+[.)])[ \t]+(?:\[[ xX]\][ \t]*)?)?([\s\S]*)$/;
+
+function withBlockPrefix(line: string, prefix: string, keep: (line: string) => boolean, keepIndent = true): string {
+  if (keep(line)) {
+    return line;
+  }
+  const match = blockMarker.exec(line);
+  const indent = keepIndent ? (match?.[1] ?? "") : "";
+  const body = match?.[2] ? (match[3] ?? "") : line.replace(/^[ \t]*/, "");
+  return `${indent}${prefix}${body}`;
+}
+
+function rewriteLines(value: string, start: number, end: number, rewrite: (line: string) => string): Edit {
+  const from = Math.min(start, end);
+  const to = Math.max(start, end);
+  if (inFence(value, from)) {
     return { value, start, end };
   }
-  const prefix = "# ";
-  return {
-    value: value.slice(0, lineStart) + prefix + value.slice(lineStart),
-    start: start + prefix.length,
-    end: end + prefix.length,
-  };
+  const lines = value.split("\n");
+  let offset = 0;
+  let nextStart = from;
+  let nextEnd = to;
+  let changed = false;
+  for (let i = 0; i < lines.length; i += 1) {
+    const line = lines[i] ?? "";
+    const lineStart = offset;
+    const lineEnd = lineStart + line.length;
+    const overlaps = from === to ? from >= lineStart && from <= lineEnd : from < lineEnd && to > lineStart;
+    if (overlaps) {
+      const next = rewrite(line);
+      if (next !== line) {
+        changed = true;
+        const delta = next.length - line.length;
+        lines[i] = next;
+        if (from >= lineStart) {
+          nextStart += delta;
+        }
+        if (to >= lineStart) {
+          nextEnd += delta;
+        }
+      }
+    }
+    offset = lineEnd + 1;
+  }
+  if (!changed) {
+    return { value, start, end };
+  }
+  return { value: lines.join("\n"), start: nextStart, end: nextEnd };
+}
+
+export function applyTitle(value: string, start: number, end: number): Edit {
+  return rewriteLines(value, start, end, (line) => withBlockPrefix(line, "# ", (item) => /^#{1,6}[ \t]/.test(item), false));
 }
 
 export function applyTask(value: string, start: number, end: number): Edit {
-  const { lineStart, lineEnd } = lineBounds(value, start);
-  const line = value.slice(lineStart, lineEnd);
-  if (taskLine.test(line)) {
-    return { value, start, end };
-  }
-  const prefix = "- [ ] ";
-  return {
-    value: value.slice(0, lineStart) + prefix + value.slice(lineStart),
-    start: start + prefix.length,
-    end: end + prefix.length,
-  };
+  return rewriteLines(value, start, end, (line) => withBlockPrefix(line, "- [ ] ", (item) => taskLine.test(item)));
+}
+
+export function applyList(value: string, start: number, end: number): Edit {
+  return rewriteLines(value, start, end, (line) =>
+    withBlockPrefix(line, "- ", (item) => listLine.test(item) && !taskLine.test(item)),
+  );
+}
+
+export function applyOrdered(value: string, start: number, end: number): Edit {
+  const next = rewriteLines(value, start, end, (line) =>
+    withBlockPrefix(line, "1. ", (item) => orderedListLine.test(item)),
+  );
+  return renumberOrderedLists(next.value, next.start, next.end);
+}
+
+export function applyQuote(value: string, start: number, end: number): Edit {
+  return rewriteLines(value, start, end, (line) => withBlockPrefix(line, "> ", (item) => item.startsWith(">"), false));
 }
 
 const fenceLine = /^\s*```/;
@@ -400,6 +458,145 @@ export function tabOnMarkdown(value: string, start: number, end: number, shiftKe
   return renumberOrderedLists(next, nextStart, nextEnd);
 }
 
+let indentWidth = 2;
+
+export function setIndentWidth(width: number) {
+  const next = Math.round(width);
+  indentWidth = next >= 1 && next <= 8 ? next : 2;
+}
+
+export function indentWidthCols(): number {
+  return indentWidth;
+}
+
+function indentUnit(): string {
+  return " ".repeat(indentWidth);
+}
+
+export function copyIndentAfterBreak(value: string, caret: number): Edit | null {
+  if (caret <= 0 || value[caret - 1] !== "\n") {
+    return null;
+  }
+  const prevEnd = caret - 1;
+  const prevStart = prevEnd === 0 ? 0 : value.lastIndexOf("\n", prevEnd - 1) + 1;
+  const prev = value.slice(prevStart, prevEnd);
+  const lead = /^[ \t]*/.exec(prev)?.[0] ?? "";
+  const body = prev.slice(lead.length).trimEnd();
+  const extra = /[{[(]$/.test(body) ? indentUnit() : "";
+  const insert = lead + extra;
+  if (!insert || value.startsWith(insert, caret)) {
+    return null;
+  }
+  const next = value.slice(0, caret) + insert + value.slice(caret);
+  const at = caret + insert.length;
+  return { value: next, start: at, end: at };
+}
+
+export function indentCode(value: string, start: number, end: number, shift: boolean): Edit {
+  const unit = indentUnit();
+  const from = Math.min(start, end);
+  const to = Math.max(start, end);
+  if (from === to && !shift) {
+    const next = value.slice(0, from) + unit + value.slice(to);
+    const at = from + unit.length;
+    return { value: next, start: at, end: at };
+  }
+  const first = lineBounds(value, from);
+  const effectiveEnd = to > from && value[to - 1] === "\n" ? to - 1 : to;
+  const last = lineBounds(value, effectiveEnd);
+  const lines = value.slice(first.lineStart, last.lineEnd).split("\n");
+  let firstDelta = 0;
+  let total = 0;
+  const updated = lines.map((line, index) => {
+    if (!shift) {
+      if (index === 0) {
+        firstDelta = unit.length;
+      }
+      total += unit.length;
+      return unit + line;
+    }
+    const lead = /^[ \t]+/.exec(line)?.[0] ?? "";
+    const remove = lead.startsWith("\t")
+      ? 1
+      : lead.startsWith(unit)
+        ? unit.length
+        : Math.min(unit.length, lead.length);
+    if (index === 0) {
+      firstDelta = -remove;
+    }
+    total -= remove;
+    return line.slice(remove);
+  });
+  const next = value.slice(0, first.lineStart) + updated.join("\n") + value.slice(last.lineEnd);
+  const nextStart = Math.max(first.lineStart, from + firstDelta);
+  const nextEnd = Math.max(nextStart, to + total);
+  return { value: next, start: nextStart, end: nextEnd };
+}
+
+// shortcut: splitting a marked line drops the marker, upgrade when a mark must stay on one half.
+export function remapLineMarks(before: string, after: string, marks: ReadonlySet<number>): Set<number> {
+  const next = new Set<number>();
+  if (marks.size === 0 || before === after) {
+    return before === after ? new Set(marks) : next;
+  }
+  const oldLines = before.split("\n");
+  const newLines = after.split("\n");
+  let prefix = 0;
+  while (prefix < oldLines.length && prefix < newLines.length && oldLines[prefix] === newLines[prefix]) {
+    prefix += 1;
+  }
+  let suffix = 0;
+  while (
+    suffix < oldLines.length - prefix &&
+    suffix < newLines.length - prefix &&
+    oldLines[oldLines.length - 1 - suffix] === newLines[newLines.length - 1 - suffix]
+  ) {
+    suffix += 1;
+  }
+  const delta = newLines.length - oldLines.length;
+  const suffixStart = oldLines.length - suffix;
+  const keep = (line: number) => {
+    const text = newLines[line];
+    if (text != null && text.trim() !== "") {
+      next.add(line);
+    }
+  };
+  for (const line of marks) {
+    if (line < prefix) {
+      keep(line);
+      continue;
+    }
+    if (line >= suffixStart) {
+      keep(line + delta);
+      continue;
+    }
+    if (delta === 0) {
+      keep(line);
+      continue;
+    }
+    const text = oldLines[line] ?? "";
+    if (text.trim() === "") {
+      continue;
+    }
+    let found = -1;
+    const middleEnd = newLines.length - suffix;
+    for (let index = prefix; index < middleEnd; index += 1) {
+      if (newLines[index] !== text) {
+        continue;
+      }
+      if (found >= 0) {
+        found = -1;
+        break;
+      }
+      found = index;
+    }
+    if (found >= 0) {
+      keep(found);
+    }
+  }
+  return next;
+}
+
 export type TextBlock = { kind: "text"; text: string };
 export type CodeBlock = { kind: "code"; lang: string; text: string };
 export type MediaBlock = { kind: "media"; name: string; label?: string; width?: number; inline?: boolean };
@@ -567,6 +764,41 @@ export function ensureTextSlots(items: Block[]): Block[] {
     next.unshift({ kind: "text", text: "" });
   }
   return next;
+}
+
+export function dropCodeBlock(
+  blocks: Block[],
+  index: number,
+): { blocks: Block[]; index: number; offset: number } {
+  let textOrdinal = -1;
+  let offset = 0;
+  for (let i = 0; i < index; i += 1) {
+    const block = blocks[i];
+    if (block?.kind === "text") {
+      textOrdinal += 1;
+      offset = block.text.length;
+    }
+  }
+  const next = ensureTextSlots(blocks.filter((_, i) => i !== index));
+  if (textOrdinal < 0) {
+    const first = next.findIndex((block) => block.kind === "text");
+    return { blocks: next, index: Math.max(0, first), offset: 0 };
+  }
+  let seen = -1;
+  let focus = 0;
+  for (let i = 0; i < next.length; i += 1) {
+    if (next[i]?.kind !== "text") {
+      continue;
+    }
+    seen += 1;
+    if (seen === textOrdinal) {
+      focus = i;
+      break;
+    }
+  }
+  const target = next[focus];
+  const clamped = target?.kind === "text" ? Math.min(offset, target.text.length) : 0;
+  return { blocks: next, index: focus, offset: clamped };
 }
 
 export function parseBlocks(content: string): Block[] {

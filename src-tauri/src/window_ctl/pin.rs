@@ -6,7 +6,8 @@ use tauri::{Emitter, Manager, PhysicalPosition, PhysicalSize, WebviewWindow, Win
 
 use super::composer::{composer_open, dismiss_composer};
 use super::drag::{
-    drag_active, follow_active, parks, schedule_settle, slide_back, suppress_settle,
+    drag_active, follow_active, parks, publish_screen_edges, schedule_settle, slide_back,
+    suppress_settle,
 };
 use super::geom::{first_open_tile, grid_slot, nudge_origin, organize_grid, visual_card};
 use super::{
@@ -16,6 +17,7 @@ use super::{
 };
 use crate::notes::request_sync;
 use crate::state::AppState;
+use crate::tray;
 
 const PIN_CASCADE: i32 = 36;
 
@@ -33,12 +35,14 @@ pub fn toggle_pinned(app: &tauri::AppHandle) {
         if !composer_open(app) {
             super::apply_switcher_policy(app);
         }
+        tray::refresh(app);
         return;
     }
     state.pinned_mode.store(true, Ordering::SeqCst);
     open_pinned_windows(app);
     dismiss_composer(app);
     request_sync(app);
+    tray::refresh(app);
 }
 
 fn active_pin_note_ids(app: &tauri::AppHandle) -> HashSet<String> {
@@ -370,17 +374,23 @@ fn open_pin_window(app: &tauri::AppHandle, id: &str) {
             schedule_resign(&handle);
         }
         WindowEvent::Moved(_) => {
+            let label = pin_label(&note_id);
+            if let Some(window) = handle.get_webview_window(&label) {
+                publish_screen_edges(&handle, &window);
+            }
             if follow_active(&note_id) || Instant::now() < accept_moves_at {
                 return;
             }
-            let label = pin_label(&note_id);
             schedule_settle(&handle, &label, Some(note_id.clone()), false);
         }
         WindowEvent::Resized(_) => {
+            let label = pin_label(&note_id);
+            if let Some(window) = handle.get_webview_window(&label) {
+                publish_screen_edges(&handle, &window);
+            }
             if Instant::now() < accept_moves_at {
                 return;
             }
-            let label = pin_label(&note_id);
             schedule_settle(&handle, &label, Some(note_id.clone()), true);
         }
         WindowEvent::CloseRequested { api, .. } => {

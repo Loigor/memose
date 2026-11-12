@@ -151,7 +151,7 @@ These are the Playwright specs (`tests/ui/*.spec.ts`, excluding `@scale`). A fai
 
 | Case | UI | Expect |
 | :--- | :--- | :--- |
-| Tabs | Click Visibility / Shortcuts / Sync (useMemos) | `aria-selected`, matching `data-panel` |
+| Tabs | Click Visibility / Shortcuts / Sync | `aria-selected`, matching `data-panel` |
 | Keyboard | `ArrowRight` / `ArrowLeft` on a tab | Next / previous tab |
 | Default visibility | Visibility buttons | `save_settings` with `visibility` / `space` |
 | Window snap / login | `#snap-memos`, `#autostart` | `set_snap_memos` / `set_autostart` |

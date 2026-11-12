@@ -18,8 +18,8 @@ test("settings tabs switch with arrow keys", async ({ page }) => {
   await openSettings(page);
   await page.locator("#tab-visibility").focus();
   await page.keyboard.press("ArrowRight");
-  await expect(page.locator("#tab-shortcuts")).toHaveAttribute("aria-selected", "true");
-  await expect(page.locator("#panel-shortcuts")).toBeVisible();
+  await expect(page.locator("#tab-window")).toHaveAttribute("aria-selected", "true");
+  await expect(page.locator("#panel-window")).toBeVisible();
   await page.keyboard.press("ArrowLeft");
   await expect(page.locator("#tab-visibility")).toHaveAttribute("aria-selected", "true");
 });
@@ -33,6 +33,7 @@ test("default visibility save and window snap toggle", async ({ page }) => {
   await expect.poll(async () => invokedCmds(page)).toContain("save_settings");
   await page.locator("#visibility-choices button", { hasText: "Public" }).click();
   await expect(page.locator("#settings-status")).toHaveText("Default memo visibility saved.");
+  await page.locator("#tab-window").click();
   await page.locator("#show-in-switcher").check();
   await expect(page.locator("#settings-status")).toHaveText("Alt+Tab enabled. Pinned mode stays on.");
   await expect.poll(async () => invokedCmds(page)).toContain("set_show_in_switcher");
@@ -48,6 +49,7 @@ test("default visibility save and window snap toggle", async ({ page }) => {
   await page.locator("#snap-memos").check();
   await expect(page.locator("#settings-status")).toHaveText("Window snap enabled.");
   await expect.poll(async () => invokedCmds(page)).toContain("set_snap_memos");
+  await page.locator("#tab-editor").click();
   await page.locator("#coder-editor").check();
   await expect(page.locator("#settings-status")).toHaveText("New memos use the coder editor.");
   await expect.poll(async () => invokedCmds(page)).toContain("set_coder_editor");
@@ -59,8 +61,30 @@ test("default visibility save and window snap toggle", async ({ page }) => {
   await expect.poll(async () => invokedCmds(page)).toContain("set_markdown_highlight");
 });
 
+test("pinned tab bar display and edge are saved", async ({ page }) => {
+  await openSettings(page);
+  await page.locator("#tab-window").click();
+  await expect(page.locator("#pin-tab-bar-enabled")).toBeChecked();
+  await expect(page.locator("#pin-tab-screen")).toHaveValue("cursor");
+  await expect(page.locator("#pin-tab-edge")).toHaveValue("top");
+  await expect(page.locator("#pin-tab-screen option[value='display:Main']")).toHaveCount(1);
+  await page.locator("#pin-tab-screen").selectOption("display:Main");
+  await expect(page.locator("#settings-status")).toHaveText("Pinned tab bar updated.");
+  await page.locator("#pin-tab-edge").selectOption("left");
+  await expect(page.locator("#pin-tab-edge")).toHaveValue("left");
+  await expect.poll(async () => invokedCmds(page)).toContain("set_pin_tab_place");
+  await page.locator("#pin-tab-bar-enabled").uncheck();
+  await expect(page.locator("#pin-tab-screen")).toBeDisabled();
+  await expect(page.locator("#pin-tab-edge")).toBeDisabled();
+  await expect(page.locator("#settings-status")).toHaveText(
+    "Pinned tab bar hidden. Tabs are available from the tray menu.",
+  );
+  await expect.poll(async () => invokedCmds(page)).toContain("set_pin_tab_bar_enabled");
+});
+
 test("launch at login toggle calls set_autostart", async ({ page }) => {
   await openSettings(page);
+  await page.locator("#tab-window").click();
   await page.locator("#autostart").check();
   await expect(page.locator("#settings-status")).toHaveText("Launch at login enabled.");
   await expect.poll(async () => invokedCmds(page)).toContain("set_autostart");

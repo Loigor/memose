@@ -34,7 +34,7 @@ html.pin-tabs-window body {
   gap: 2px;
   height: 12px;
   padding: 0 8px;
-  transition: height 140ms ease-out, padding-top 140ms ease-out;
+  transition: height 140ms ease-out, width 140ms ease-out, padding-top 140ms ease-out;
 }
 
 html.is-hiding #row {
@@ -171,4 +171,116 @@ html[data-theme="dark"] .pin-tab {
   width: 100%;
   padding: 0;
   box-shadow: none;
+}
+
+html[data-edge="bottom"] #strip {
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+}
+
+html[data-edge="bottom"] #hairline {
+  top: auto;
+  bottom: 0;
+}
+
+html[data-edge="bottom"].is-open #row {
+  padding-top: 0;
+  padding-bottom: 4px;
+}
+
+html[data-edge="bottom"] #tab-menu {
+  top: auto;
+  bottom: 28px;
+}
+
+html[data-edge="left"] #strip,
+html[data-edge="right"] #strip {
+  height: 100%;
+}
+
+html[data-edge="right"] #strip {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+}
+
+html[data-edge="left"] #row,
+html[data-edge="right"] #row,
+html[data-edge="left"].is-open #row,
+html[data-edge="right"].is-open #row {
+  flex-direction: column;
+  width: 12px;
+  height: 100%;
+  padding: 8px 0;
+}
+
+html[data-edge="left"].is-open #row,
+html[data-edge="right"].is-open #row {
+  width: 28px;
+  padding: 4px 0;
+}
+
+html[data-edge="left"] #tabs,
+html[data-edge="right"] #tabs {
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+}
+
+html[data-edge="left"] #tab-add,
+html[data-edge="right"] #tab-add,
+html[data-edge="left"] .pin-tab,
+html[data-edge="right"] .pin-tab {
+  width: 100%;
+  min-width: 0;
+  max-width: none;
+  height: auto;
+}
+
+html[data-edge="left"] .pin-tab,
+html[data-edge="right"] .pin-tab {
+  flex: 0 0 auto;
+  min-height: min-content;
+  max-height: 160px;
+  font-size: 11px;
+  writing-mode: vertical-rl;
+  text-orientation: upright;
+  line-height: 1;
+  letter-spacing: -0.25em;
+  padding-top: 6px;
+  padding-bottom: 6px;
+}
+
+html[data-edge="left"] #tab-add,
+html[data-edge="right"] #tab-add {
+  height: 28px;
+}
+
+html[data-edge="left"] #hairline,
+html[data-edge="right"] #hairline {
+  top: 0;
+  bottom: 0;
+  width: 6px;
+  height: auto;
+}
+
+html[data-edge="left"] #hairline {
+  right: auto;
+  left: 0;
+}
+
+html[data-edge="right"] #hairline {
+  right: 0;
+  left: auto;
+}
+
+html[data-edge="left"] #tab-menu {
+  left: 32px;
+  right: auto;
+}
+
+html[data-edge="right"] #tab-menu {
+  left: auto;
+  right: 32px;
 }

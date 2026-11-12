@@ -1,0 +1,29 @@
+# Refinements after 1.0.3
+
+Notes from Windows testing on a multi-display desk. Order is the order they were built.
+
+## 1. Fold does not unfold — bug
+
+A folded memo (the title bar, “Fold memo” / “Unfold memo”) stays folded. Moving onto the bar to press Unfold does not open it.
+
+Hovering a folded memo was recorded as an editing hold, the same hold used when the body of the bar is clicked so it stays open. The fold button, while that hold is set, only clears the hold and leaves `collapsed` true. Because the pointer has to enter the memo to reach the button, every attempt arms the hold again and Unfold never runs.
+
+Hover may still peek the memo open. A click on the bar body, or focus in a text field, may still hold it open. The fold button itself always toggles the saved folded state.
+
+## 2. A memo can sit off the screen
+
+A resized or snapped memo can end with most of its window outside the work area. The edge that left the screen is then hard to find.
+
+When the memo card crosses a screen edge, a 20px semi-transparent gradient is painted on that window, starting at the screen edge and fading into the window. The shadow gutter can sit past the edge without a cue. The cue follows the window as it moves.
+
+With window snapping on, a memo whose card sits on the left or right edge of the work area is shortened when its bottom would pass that area. The bottom of the window then meets the bottom of the work area. A memo that is not on a side edge keeps its height, and the window is not shrunk below its minimum height.
+
+## 3. Pinned tab bar on more than one display
+
+The pinned tab bar is a strip along one edge of a display’s work area. The default is unchanged: when pinned mode turns on, the strip sits on the top edge of the display that contains the visible composer, otherwise the display under the cursor, otherwise the primary display.
+
+Settings, under Window & behavior, choose the display and the edge. The display is follow the cursor, one connected display, or every display. The edge is top, bottom, left, or right. Every display opens one strip window on each display. Left and right are vertical strips: a thin column on that edge that widens on hover, with the tab menu opening inward. Bottom and right stay pinned to that edge while the strip grows. The choice is saved and applied immediately when pinned mode is already on. A chosen display is remembered by its name. If it is unplugged, the strip follows the cursor until that display is back.
+
+## 4. Normal editor
+
+The normal editor is the line editor in wysiwyg-markdown.md. The caret stays in the row it is editing. Backspace in an empty code block removes that block.

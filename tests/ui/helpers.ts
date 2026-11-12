@@ -12,7 +12,7 @@ export async function openComposer(page: Page, seed: HarnessSeed = {}): Promise<
   await page.goto("/");
   await waitForListener(page, "composer-focus");
   await emitEvent(page, "composer-focus", 1);
-  await page.locator("#blocks textarea").first().waitFor();
+  await page.locator("#blocks .md-lines, #blocks textarea").first().waitFor();
 }
 
 export async function openPinned(page: Page, noteId: string, seed: HarnessSeed = {}): Promise<void> {
@@ -34,8 +34,14 @@ export async function openPinTabs(page: Page, seed: HarnessSeed = {}): Promise<v
   await page.locator("#strip").waitFor();
 }
 
-export async function composerTextarea(page: Page) {
-  return page.locator("#blocks textarea").first();
+export function composerTextarea(page: Page) {
+  return page.locator("#blocks .md-lines, #blocks textarea").first();
+}
+
+export async function editorText(locator: Locator): Promise<string> {
+  return locator.evaluate((el: HTMLElement & { value?: unknown }) =>
+    typeof el.value === "string" ? el.value : (el.textContent ?? ""),
+  );
 }
 
 export async function revealEditorButton(page: Page, locator: Locator): Promise<void> {

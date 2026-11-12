@@ -5,7 +5,7 @@ use tauri::{
     Emitter, LogicalSize, Manager, PhysicalPosition, PhysicalSize, WebviewWindow, WindowEvent,
 };
 
-use super::drag::{schedule_settle, slide_back, slide_into_view_sized};
+use super::drag::{publish_screen_edges, schedule_settle, slide_back, slide_into_view_sized};
 use super::pin::{hide_pinned, open_pinned_windows};
 use super::{
     clamp_position, contains, hide_pin_tabs, schedule_resign, snap_enabled, snap_screen_edges,
@@ -34,8 +34,18 @@ pub fn attach(app: &tauri::AppHandle) {
             slide_back(&handle, WINDOW);
             schedule_resign(&handle);
         }
-        WindowEvent::Moved(_) => schedule_settle(&handle, WINDOW, None, false),
-        WindowEvent::Resized(_) => schedule_settle(&handle, WINDOW, None, true),
+        WindowEvent::Moved(_) => {
+            if let Some(window) = handle.get_webview_window(WINDOW) {
+                publish_screen_edges(&handle, &window);
+            }
+            schedule_settle(&handle, WINDOW, None, false);
+        }
+        WindowEvent::Resized(_) => {
+            if let Some(window) = handle.get_webview_window(WINDOW) {
+                publish_screen_edges(&handle, &window);
+            }
+            schedule_settle(&handle, WINDOW, None, true);
+        }
         _ => {}
     });
 }

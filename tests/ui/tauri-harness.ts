@@ -21,6 +21,9 @@ export type NoteSeed = {
   stackHost?: string | null;
   theme?: string | null;
   coder?: boolean | null;
+  lineWrap?: boolean;
+  folds?: number[][];
+  marks?: number[][];
   serverContent?: string | null;
 };
 
@@ -36,6 +39,10 @@ export type HarnessSettings = {
   coderEditor?: boolean;
   markdownHighlight?: boolean;
   markdownScheme?: string;
+  indentWidth?: number;
+  pinTabBarEnabled?: boolean;
+  pinTabScreen?: string;
+  pinTabEdge?: string;
 };
 
 export type PinTabSeed = {
@@ -118,6 +125,9 @@ function installBrowserHarness(seed: BrowserSeed) {
       stackHost: partial.stackHost ?? null,
       theme: partial.theme ?? null,
       coder: partial.coder ?? null,
+      lineWrap: partial.lineWrap === true,
+      folds: Array.isArray(partial.folds) ? partial.folds : [],
+      marks: Array.isArray(partial.marks) ? partial.marks : [],
       serverContent: partial.serverContent ?? null,
     };
   }
@@ -160,6 +170,20 @@ function installBrowserHarness(seed: BrowserSeed) {
       seed.settings?.markdownScheme === "cool" || seed.settings?.markdownScheme === "mono"
         ? seed.settings.markdownScheme
         : "paper",
+    indentWidth:
+      seed.settings?.indentWidth != null && seed.settings.indentWidth >= 1 && seed.settings.indentWidth <= 8
+        ? Math.round(seed.settings.indentWidth)
+        : 2,
+    pinTabBarEnabled: seed.settings?.pinTabBarEnabled !== false,
+    pinTabScreen: seed.settings?.pinTabScreen === "all" || seed.settings?.pinTabScreen?.startsWith("display:")
+      ? seed.settings.pinTabScreen
+      : "cursor",
+    pinTabEdge:
+      seed.settings?.pinTabEdge === "bottom" ||
+      seed.settings?.pinTabEdge === "left" ||
+      seed.settings?.pinTabEdge === "right"
+        ? seed.settings.pinTabEdge
+        : "top",
   };
   const shortcuts = {
     newMemo: `${command}+Alt+N`,
@@ -587,6 +611,17 @@ function installBrowserHarness(seed: BrowserSeed) {
       }
       case "set_pin_tab_hits":
         return null;
+      case "list_displays":
+        return [{ id: "display:Main", label: "Main" }];
+      case "set_pin_tab_place":
+        state.settings.pinTabScreen = String(a.screen || "cursor");
+        state.settings.pinTabEdge = String(a.edge || "top");
+        return null;
+      case "set_pin_tab_bar_enabled":
+        state.settings.pinTabBarEnabled = Boolean(a.enabled);
+        return null;
+      case "pin_strip_edge":
+        return state.settings.pinTabEdge || "top";
       case "hide_memos":
       case "hide_composer":
         return null;
@@ -609,14 +644,27 @@ function installBrowserHarness(seed: BrowserSeed) {
           coderEditor: state.settings.coderEditor,
           markdownHighlight: state.settings.markdownHighlight,
           markdownScheme: state.settings.markdownScheme,
+          indentWidth: state.settings.indentWidth,
         });
         return null;
+      case "set_indent_width": {
+        const width = Math.round(Number(a.width));
+        state.settings.indentWidth = width >= 1 && width <= 8 ? width : 2;
+        emit("editor-prefs-changed", {
+          coderEditor: state.settings.coderEditor,
+          markdownHighlight: state.settings.markdownHighlight,
+          markdownScheme: state.settings.markdownScheme,
+          indentWidth: state.settings.indentWidth,
+        });
+        return null;
+      }
       case "set_markdown_highlight":
         state.settings.markdownHighlight = Boolean(a.enabled);
         emit("editor-prefs-changed", {
           coderEditor: state.settings.coderEditor,
           markdownHighlight: state.settings.markdownHighlight,
           markdownScheme: state.settings.markdownScheme,
+          indentWidth: state.settings.indentWidth,
         });
         return null;
       case "set_markdown_scheme":
@@ -626,6 +674,7 @@ function installBrowserHarness(seed: BrowserSeed) {
           coderEditor: state.settings.coderEditor,
           markdownHighlight: state.settings.markdownHighlight,
           markdownScheme: state.settings.markdownScheme,
+          indentWidth: state.settings.indentWidth,
         });
         return null;
       case "set_collapsed": {
@@ -645,6 +694,15 @@ function installBrowserHarness(seed: BrowserSeed) {
         if (note) {
           note.winW = Number(a.width);
           note.winH = Number(a.height);
+        }
+        return null;
+      }
+      case "save_editor_view": {
+        const note = noteById(a.id);
+        if (note) {
+          note.lineWrap = a.lineWrap === true;
+          note.folds = Array.isArray(a.folds) ? a.folds : [];
+          note.marks = Array.isArray(a.marks) ? a.marks : [];
         }
         return null;
       }

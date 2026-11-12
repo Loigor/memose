@@ -1,6 +1,6 @@
 import { expect, test } from "@playwright/test";
 
-import { invokedCmds, openPinned } from "./helpers";
+import { editorText, invokedCmds, openPinned } from "./helpers";
 import { emitEvent, harnessSeedNotes, type NoteSeed } from "./tauri-harness";
 
 function stackNotes(): { host: NoteSeed; guests: NoteSeed[] } {
@@ -20,7 +20,7 @@ function stackNotes(): { host: NoteSeed; guests: NoteSeed[] } {
 test("pinned window loads host content from the pin query", async ({ page }) => {
   const { host, guests } = stackNotes();
   await openPinned(page, "host-1", { notes: [host, ...guests] });
-  await expect(page.locator("#blocks textarea").first()).toHaveValue(/Host memo/);
+  await expect.poll(() => editorText(page.locator("#blocks .md-lines, #blocks textarea").first())).toMatch(/Host memo/);
   await expect(page.locator("#note-title")).toContainText("Host memo");
 });
 
@@ -38,6 +38,11 @@ test("fold toggle collapses the host memo", async ({ page }) => {
   await page.locator("#fold-toggle").click();
   await expect.poll(async () => invokedCmds(page)).toContain("set_collapsed");
   await expect(page.locator("#fold-toggle")).toHaveAttribute("aria-pressed", "true");
+  await page.mouse.move(0, 0);
+  await page.locator("#fold-toggle").hover();
+  await page.locator("#fold-toggle").click();
+  await expect(page.locator("#fold-toggle")).toHaveAttribute("aria-pressed", "false");
+  await expect(page.locator("html")).not.toHaveClass(/collapsed/);
 });
 
 test("joining a third guest auto-folds the stack", async ({ page }) => {

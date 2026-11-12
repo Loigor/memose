@@ -1,5 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
-import { getCurrentWindow, LogicalSize } from "@tauri-apps/api/window";
+import { getCurrentWindow, LogicalPosition, LogicalSize } from "@tauri-apps/api/window";
 import { listen } from "@tauri-apps/api/event";
 
 import { requireEl } from "./dom.ts";
@@ -10,6 +10,7 @@ import { inTauri } from "./platform.ts";
 import type { PinTab, PinTabHit, PinTabs } from "./types.ts";
 
 const HEIGHT = { collapsed: 12, open: 28, menu: 148 };
+const SIDE_MENU = 256;
 const TWEEN = { show: 140, hide: 400 };
 const COLLAPSE_WAIT = 1000;
 
@@ -27,6 +28,7 @@ let collapseTimer: ReturnType<typeof setTimeout> | undefined;
 let menuTimer: ReturnType<typeof setTimeout> | undefined;
 let heightTween = 0;
 let liveHeight = HEIGHT.collapsed;
+let stripEdge: "top" | "bottom" | "left" | "right" = "top";
 let lastAim: { id: string; mode: string } | null = null;
 
 function currentTab(): PinTab | undefined {
@@ -137,10 +139,9 @@ function openMenu(tab: PinTab, button: HTMLButtonElement) {
   document.documentElement.classList.remove("is-hiding");
   nameEl.value = tab.name;
   nameEl.placeholder = tabLabel(tab);
-  const left = Math.max(8, Math.min(button.offsetLeft, stripEl.clientWidth - 228));
-  menuEl.style.left = `${left}px`;
+  placeMenu(button);
   paintHue();
-  void tweenHeight(HEIGHT.menu, TWEEN.show);
+  void tweenHeight(goalThickness(), TWEEN.show);
   nameEl.focus();
   nameEl.select();
 }
@@ -159,6 +160,51 @@ function closeMenu() {
   }, TWEEN.hide);
 }
 
+function sideStrip(): boolean {
+  return stripEdge === "left" || stripEdge === "right";
+}
+
+function goalThickness(): number {
+  const menuOpen = !menuEl.hidden && !menuEl.classList.contains("is-closing");
+  if (menuOpen) {
+    return sideStrip() ? SIDE_MENU : HEIGHT.menu;
+  }
+  if (document.documentElement.classList.contains("is-open")) {
+    return HEIGHT.open;
+  }
+  return HEIGHT.collapsed;
+}
+
+function placeMenu(button: HTMLButtonElement) {
+  if (sideStrip()) {
+    const top = Math.max(8, Math.min(button.offsetTop, Math.max(8, stripEl.clientHeight - 160)));
+    menuEl.style.top = `${top}px`;
+    menuEl.style.left = "";
+    menuEl.style.right = "";
+    menuEl.style.bottom = "";
+    return;
+  }
+  const left = Math.max(8, Math.min(button.offsetLeft, Math.max(8, stripEl.clientWidth - 228)));
+  menuEl.style.left = `${left}px`;
+  menuEl.style.top = "";
+  menuEl.style.right = "";
+  menuEl.style.bottom = "";
+}
+
+function applyEdge(value: string) {
+  const next = value === "bottom" || value === "left" || value === "right" ? value : "top";
+  if (next === stripEdge) {
+    document.documentElement.dataset.edge = stripEdge;
+    return;
+  }
+  stripEdge = next;
+  document.documentElement.dataset.edge = stripEdge;
+  liveHeight = HEIGHT.collapsed;
+  heightTween += 1;
+  document.documentElement.classList.remove("is-open", "is-menu", "is-hiding");
+  menuEl.hidden = true;
+}
+
 function tweenHeight(to: number, ms: number): Promise<void> {
   const ticket = ++heightTween;
   if (!inTauri()) {
@@ -169,15 +215,32 @@ function tweenHeight(to: number, ms: number): Promise<void> {
     try {
       const win = getCurrentWindow();
       const size = await win.outerSize();
+      const pos = await win.outerPosition();
       const scale = await win.scaleFactor();
-      const width = size.width / scale;
-      const from = liveHeight;
       if (ticket !== heightTween) {
         return;
       }
+      const factor = scale || 1;
+      const vertical = sideStrip();
+      const long = (vertical ? size.height : size.width) / factor;
+      const originX = pos.x / factor;
+      const originY = pos.y / factor;
+      const fixedRight = (pos.x + size.width) / factor;
+      const fixedBottom = (pos.y + size.height) / factor;
+      const paint = (thickness: number) => {
+        const x = stripEdge === "right" ? fixedRight - thickness : originX;
+        const y = stripEdge === "bottom" ? fixedBottom - thickness : originY;
+        const width = vertical ? thickness : long;
+        const height = vertical ? long : thickness;
+        if (stripEdge === "bottom" || stripEdge === "right") {
+          void win.setPosition(new LogicalPosition(x, y));
+        }
+        void win.setSize(new LogicalSize(width, height));
+      };
+      const from = liveHeight;
       if (from === to || ms <= 0) {
         liveHeight = to;
-        await win.setSize(new LogicalSize(width, to));
+        paint(to);
         return;
       }
       const started = performance.now();
@@ -189,7 +252,7 @@ function tweenHeight(to: number, ms: number): Promise<void> {
           }
           const t = Math.min(1, (performance.now() - started) / ms);
           liveHeight = from + (to - from) * easeOutCubic(t);
-          void win.setSize(new LogicalSize(width, liveHeight));
+          paint(liveHeight);
           if (t < 1) {
             requestAnimationFrame(step);
           } else {
@@ -210,7 +273,7 @@ function expand() {
   clearTimeout(collapseTimer);
   document.documentElement.classList.add("is-open");
   document.documentElement.classList.remove("is-hiding");
-  void tweenHeight(menuEl.hidden ? HEIGHT.open : HEIGHT.menu, TWEEN.show);
+  void tweenHeight(goalThickness(), TWEEN.show);
 }
 
 function scheduleCollapse() {
@@ -292,6 +355,10 @@ if (inTauri()) {
   void listen("pin-tabs-changed", () => {
     void load();
   });
+  void listen<string>("pin-strip-edge", (event) => {
+    applyEdge(event.payload);
+  });
+  void invoke<string>("pin_strip_edge").then(applyEdge).catch(() => applyEdge("top"));
   void listen<[string, string]>("pin-tab-aim", (event) => {
     const [id, mode] = event.payload ?? [];
     lastAim = id && mode && mode !== "off" ? { id, mode } : null;

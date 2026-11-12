@@ -111,21 +111,27 @@ export function huePopHtml(): string {
 }
 
 export function markdownToolbarHtml(): string {
-  return `<div class="md-toolbar" hidden>
-    <button type="button" data-markdown="bold" aria-label="Bold">B</button>
-    <button type="button" data-markdown="italic" aria-label="Italic">I</button>
-    <button type="button" data-markdown="title" aria-label="Title">T</button>
-    <button type="button" data-markdown="task" aria-label="Task list">[ ]</button>
-    <button type="button" data-markdown="code" aria-label="Code">&lt;&gt;</button>
-  </div>`;
+  return `<div class="md-toolbar" hidden>${markdownButtonsHtml()}</div>`;
+}
+
+function markdownButtonsHtml(): string {
+  return `
+    <button type="button" data-markdown="bold" aria-label="Bold">Bold</button>
+    <button type="button" data-markdown="italic" aria-label="Italic">Italic</button>
+    <button type="button" data-markdown="title" aria-label="Title">Title</button>
+    <button type="button" data-markdown="list" aria-label="Bullet list">List</button>
+    <button type="button" data-markdown="ordered" aria-label="Numbered list">Numbered</button>
+    <button type="button" data-markdown="task" aria-label="Task list">Task</button>
+    <button type="button" data-markdown="quote" aria-label="Quote">Quote</button>
+    <button type="button" data-markdown="code" aria-label="Code block">Code block</button>`;
 }
 
 export function formatMenuHtml(): string {
   return `<div class="format-anchor">
-    <button class="format-toggle coder-tool icon-button" type="button" aria-label="Format" aria-expanded="false" title="Format">Format</button>
+    <button class="format-toggle icon-button" type="button" aria-label="Format" aria-expanded="false" title="Format">Format</button>
     <div class="format-pop" hidden>
       <button type="button" data-format="document">Format document</button>
-      <button type="button" data-format="wrap" aria-pressed="false">Line wrap</button>
+      <button type="button" data-format="wrap" aria-pressed="false"><span class="format-check" aria-hidden="true"></span>Line wrap</button>
     </div>
   </div>`;
 }
@@ -189,7 +195,7 @@ export function stackHeaderHtml(): string {
             <button class="markdown-toggle icon-button" type="button" aria-label="Markdown toolbar" aria-pressed="false" title="Markdown toolbar">
               <span class="markdown-glyph" aria-hidden="true"></span>
             </button>
-            <button class="coder-toggle coder-tool icon-button" type="button" aria-label="Coder editor" aria-pressed="false" title="Coder editor">
+            <button class="coder-toggle icon-button" type="button" aria-label="Coder editor" aria-pressed="false" title="Coder editor">
               { }
             </button>
             ${formatMenuHtml()}

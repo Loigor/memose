@@ -420,6 +420,23 @@ impl Db {
         })
     }
 
+    pub fn save_editor_view(
+        &self,
+        id: &str,
+        line_wrap: bool,
+        folds: &[Vec<u32>],
+        marks: &[Vec<u32>],
+    ) -> Result<(), AppError> {
+        let stored = encode_editor_view(line_wrap, folds, marks);
+        self.with(|conn| {
+            conn.execute(
+                "UPDATE notes SET editor_view = ?1 WHERE id = ?2",
+                params![stored, id],
+            )?;
+            Ok(())
+        })
+    }
+
     pub fn set_pinned_opacity(&self, opacity: u8) -> Result<(), AppError> {
         let opacity = opacity.min(100);
         self.with(|conn| {
@@ -565,9 +582,13 @@ pub const MEMO_VISIBILITY: &str = "memo_visibility";
 pub const MEMO_SPACE: &str = "memo_space";
 pub const SPACE_CATALOG: &str = "space_catalog";
 pub const SNAP_MEMOS: &str = "snap_memos";
+pub const PIN_TAB_BAR_ENABLED: &str = "pin_tab_bar_enabled";
+pub const PIN_TAB_SCREEN: &str = "pin_tab_screen";
+pub const PIN_TAB_EDGE: &str = "pin_tab_edge";
 pub const SHOW_IN_SWITCHER: &str = "show_in_switcher";
 pub const PINNED_ALWAYS_ON_TOP: &str = "pinned_always_on_top";
 pub const CODER_EDITOR: &str = "coder_editor";
+pub const INDENT_WIDTH: &str = "indent_width";
 pub const MARKDOWN_HIGHLIGHT: &str = "markdown_highlight";
 pub const MARKDOWN_SCHEME: &str = "markdown_scheme";
 pub const HUE_SWATCHES: &str = "hue_swatches";
@@ -629,7 +650,7 @@ fn get_meta(conn: &Connection, key: &str) -> Result<Option<String>, AppError> {
 macro_rules! note_sql {
     ($tail:literal) => {
         concat!(
-            "SELECT id, content, created_at, updated_at, sync_state, remote_name, last_error, pinned, win_x, win_y, win_w, win_h, opacity, hue_light, hue_dark, swatches, visibility, remote_space, collapsed, stack_host, theme, coder ",
+            "SELECT id, content, created_at, updated_at, sync_state, remote_name, last_error, pinned, win_x, win_y, win_w, win_h, opacity, hue_light, hue_dark, swatches, visibility, remote_space, collapsed, stack_host, theme, coder, editor_view ",
             $tail
         )
     };
@@ -703,6 +724,10 @@ fn ensure_note_columns(conn: &Connection) -> Result<(), AppError> {
         ("swatches", "ALTER TABLE notes ADD COLUMN swatches TEXT"),
         ("theme", "ALTER TABLE notes ADD COLUMN theme TEXT"),
         ("coder", "ALTER TABLE notes ADD COLUMN coder INTEGER"),
+        (
+            "editor_view",
+            "ALTER TABLE notes ADD COLUMN editor_view TEXT",
+        ),
         ("visibility", "ALTER TABLE notes ADD COLUMN visibility TEXT"),
         (
             "remote_space",
@@ -760,6 +785,7 @@ fn hue_column(value: Option<i64>) -> Option<u16> {
 fn map_note(row: &rusqlite::Row<'_>) -> rusqlite::Result<Note> {
     let pinned: i64 = row.get(7)?;
     let opacity: i64 = row.get(12)?;
+    let editor_view = map_editor_view(row)?;
     Ok(Note {
         id: row.get(0)?,
         content: row.get(1)?,
@@ -783,7 +809,66 @@ fn map_note(row: &rusqlite::Row<'_>) -> rusqlite::Result<Note> {
         stack_host: row.get(19)?,
         theme: theme_column(row.get(20)?),
         coder: row.get::<_, Option<i64>>(21)?.map(|value| value != 0),
+        line_wrap: editor_view.0,
+        folds: editor_view.1,
+        marks: editor_view.2,
     })
+}
+
+type EditorViewTuple = (bool, Vec<Vec<u32>>, Vec<Vec<u32>>);
+
+fn map_editor_view(row: &rusqlite::Row<'_>) -> rusqlite::Result<EditorViewTuple> {
+    Ok(parse_editor_view(row.get(22)?))
+}
+
+#[derive(serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct EditorView {
+    #[serde(default)]
+    line_wrap: bool,
+    #[serde(default)]
+    folds: Vec<Vec<u32>>,
+    #[serde(default)]
+    marks: Vec<Vec<u32>>,
+}
+
+fn parse_editor_view(raw: Option<String>) -> EditorViewTuple {
+    let Some(raw) = raw.filter(|value| value.len() <= 32_000) else {
+        return (false, Vec::new(), Vec::new());
+    };
+    let Ok(view) = serde_json::from_str::<EditorView>(&raw) else {
+        return (false, Vec::new(), Vec::new());
+    };
+    (
+        view.line_wrap,
+        bound_lines(view.folds),
+        bound_lines(view.marks),
+    )
+}
+
+fn bound_lines(rows: Vec<Vec<u32>>) -> Vec<Vec<u32>> {
+    let mut out = Vec::new();
+    let mut used = 0usize;
+    for row in rows.into_iter().take(40) {
+        let mut lines: Vec<u32> = row.into_iter().filter(|n| *n < 100_000).take(80).collect();
+        lines.sort_unstable();
+        lines.dedup();
+        used += lines.len() * 6 + 2;
+        if used > 16_000 {
+            break;
+        }
+        out.push(lines);
+    }
+    out
+}
+
+fn encode_editor_view(line_wrap: bool, folds: &[Vec<u32>], marks: &[Vec<u32>]) -> String {
+    serde_json::to_string(&EditorView {
+        line_wrap,
+        folds: bound_lines(folds.to_vec()),
+        marks: bound_lines(marks.to_vec()),
+    })
+    .unwrap_or_else(|_| "{}".into())
 }
 
 fn theme_column(value: Option<String>) -> Option<String> {
@@ -951,6 +1036,27 @@ mod tests {
         assert_eq!(note.swatches, vec![12, 200]);
         assert_eq!(note.theme.as_deref(), Some("dark"));
         assert_eq!(note.coder, Some(true));
+    }
+
+    #[test]
+    fn editor_view_stays_on_the_note() {
+        let db = db();
+        let draft = db.upsert_draft("{\n  \"a\": 1\n}").unwrap().unwrap();
+        assert!(!draft.line_wrap);
+        assert!(draft.folds.is_empty());
+        assert!(draft.marks.is_empty());
+        db.save_editor_view(&draft.id, true, &[vec![0]], &[vec![1, 1, 3]])
+            .unwrap();
+        db.save_edit(&draft.id, "{\n  \"a\": 1\n}").unwrap();
+        let note = db.get(&draft.id).unwrap().unwrap();
+        assert!(note.line_wrap);
+        assert_eq!(note.folds, vec![vec![0]]);
+        assert_eq!(note.marks, vec![vec![1, 3]]);
+        assert_eq!(note.content, "{\n  \"a\": 1\n}");
+        let (wrap, folds, marks) = parse_editor_view(Some("nope".into()));
+        assert!(!wrap);
+        assert!(folds.is_empty());
+        assert!(marks.is_empty());
     }
 
     #[test]

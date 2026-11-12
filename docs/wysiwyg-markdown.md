@@ -1,81 +1,51 @@
-# WYSIWYG markdown (possible future)
+# WYSIWYG markdown
 
-Status: not scheduled. Plain markdown stays the default editor.
+Status: this is the normal editor. Preview and the coder editor stay as they are.
 
-A formatted editing mode is possible later. The mode that fits memose is a live preview over the markdown string already stored and synced. A rich-text document that exports markdown on save does not fit, because sync and conflict handling compare that string.
+The typing surface is the markdown string already stored and synced. A rich-text document that exports markdown on save does not fit, because sync compares that string.
 
-## What the app stores today
+## What the app stores
 
 A note is a markdown string in SQLite. Drafts, edits, and publish all send that string (`scheduleDraft` in `src/main.ts`, `content` in `src-tauri/src/notes`). When a useMemos server is configured, the same string is the memo body. A push longer than 8,192 characters is rejected.
 
-The card editor splits that string into textareas around `![](memose-media/…)` blocks. Cmd+Enter (Ctrl+Enter elsewhere) switches to a read-only preview rendered with `marked` (GFM, breaks) and sanitized with DOMPurify. Frontend dependencies are `@tauri-apps/api`, `marked`, and `dompurify`.
+Each pinned memo is its own Tauri webview. JavaScript heaps are not shared across those windows. Media paths `![](memose-media/…)` stay in the string.
 
-Each pinned memo is its own Tauri webview (`pin-` plus the note id in `src-tauri/src/window_ctl.rs`). JavaScript heaps are not shared across those windows.
+The saved string must stay equal to what was typed, including markers and blank lines. Nothing in this editor rewrites `*` versus `-` or `**` versus `__`.
 
-Any future editor has to:
+## The normal editor
 
-- Leave the saved string equal to what the user typed, including list markers and blank lines.
-- Keep working for notes that contain memose media paths.
-- Stay off the startup path of a window that is still in plain mode.
-- Stay small. The webview is already the expensive part. Diagram, math, and syntax-highlighter runtimes are not.
+One editing surface. Each line is a row. The row’s class comes from the line prefix, and the characters stay in the row:
 
-## Assessment
+- `# Title` through `######`, with a space after the hashes, is a heading. While the caret is on that line the hashes stay visible. After the caret leaves, the editor shows the title and keeps the hashes in the stored string.
+- A quote, bullet, task, and rule do the same. The caret line shows the markdown, so the caret stays on a real character. When the caret leaves, a quote shows a bar, a bullet shows a dot, a task shows a checkbox, and a rule shows a line. An ordered item keeps its number. A checked task strikes the rest of the line.
+- Anything else is body text. On the caret line, bold, italic, code, and link markers stay visible. On the other lines they show the rendered span. A `#tag` stays visible, including inside bold or italic. On a heading line the `#` stays part of the heading.
 
-### Marko
+A fence line stays in the text until Enter, so `` ```json `` can be finished before it becomes a block. Enter lifts that line into a code block, shows the language at the top right, and highlights the code. A brace block in a code block or the coder editor folds from the gutter; the hidden lines stay in the stored text. Closing a fence or inserting a `memose-media` token still splits the note into those blocks.
 
-[Marko](https://github.com/SeanPedersen/Marko) is a SvelteKit Tauri markdown app. Its “WYSIWYG” is CodeMirror 6. The buffer stays markdown. `src/lib/components/codemirror/livePreview.ts` (2,890 lines) hides syntax on quiet lines and paints headings, emphasis, links, images, tables, and task checkboxes. Clicking a checkbox replaces the `[ ]` / `[x]` span in the source. The line being edited stays raw. That is the same idea as Obsidian live preview, and it is the right document model for memose.
+The coder editor is the raw textarea, gutter, and overlay. A fenced block inside it stays a coder field: the note’s line numbers continue through that block, and the block adds its own gutter in the code color, indented beside them, with a line between the two columns. The language name floats on the block’s top line and does not widen the gap between the columns. Double-click a line number to mark that line; click it again, or clear the line, to remove the mark. Line wrap, a fold, and a line mark are saved on the memo, like its color and window size, and stay out of the markdown string. Enter in a code block or the coder editor keeps the previous line’s indent. Whitespace size in settings is how many characters one indent is. Preview is still the read-only `marked` view. The normal editor is the default. “Coder editor default” in settings still chooses the textarea instead. Turning coder mode on or off rebuilds the surface once. A color change does not.
 
-Marko itself should not be ported. The app pulls Svelte, wiki links, kanban, and editable tables. `livePreview.ts` statically imports KaTeX (about 77 KB gzip) and Mermaid (published chunks of 109 KB and 134 KB gzip before cytoscape and the diagram parser). Bundle figures are from bundlephobia for the versions in Marko’s `package.json` (CodeMirror view 6.39, lang-markdown 6.5, mermaid 11.12, KaTeX 0.16). The stock `@codemirror/lang-markdown` bundle, including its dependency tree, is about 165 KB gzip. That number already includes the view and the parser.
+### Why rows
 
-`LICENSE` is BSD-3-Clause (Alec Ames, Sean Pedersen). `package.json` says MIT. The license file is the one that would apply if source were copied. A short decoration plugin written for memose avoids carrying that license for a file that would mostly be deleted.
+One textarea cannot paint two font sizes on one grid, which is why the caret sat off the character: the overlay and the textarea were different boxes. One textarea per line makes a selection across lines impossible and turns every Enter into a block split. A row inside one `contenteditable` is still one selection. The caret is in the text it is editing, because that text is the row.
 
-One detail is worth keeping: Marko calls `drawSelection()` because WKWebView can freeze the native caret. Tauri on macOS uses that webview.
+### Long notes
 
-### StackEdit
+A memo with more than a thousand lines must not slow the editor or the app.
 
-[StackEdit](https://stackedit.io/) is a different product from the one its homepage still describes.
+- A keystroke updates the edited row’s class and, when the marks on a row no longer match its text, that row’s spans. It does not rebuild the note, and it does not run `highlightMarkdown`.
+- Reading the rows back into the stored string on each edit is fine.
+- The first paint of about a thousand simple rows is fine. Windowing waits until that paint is actually slow.
+- Paste, or a row list the browser broke, is repaired from the plain text of that edit. Enter that continues a task list, Tab, a closed fence, and the format toolbar still replace the string in one step.
 
-The site (copyright 2013–2019) presents PageDown formatting buttons, a live preview with scroll sync, GitHub-flavored markdown, LaTeX, UML diagrams, ABC musical scores, and emoji. PageDown, the editor used by Stack Overflow, inserts markdown from a toolbar. It does not hide syntax in the typing surface.
+### Keys
 
-The current source ([benweet/stackedit](https://github.com/benweet/stackedit) v5.15.4, Apache-2.0) matches that split layout and goes further:
+Enter at the end of a task line continues the list, and that finished line renders as a checkbox. Tab still indents markdown. Arrow keys move inside the rows, and at the edge of the block they move to the previous or next text or code field. Backspace at the start of a line joins it with the line above. Backspace in an empty code block removes that block and leaves the caret where the block started. Backspace at the start of a nonempty text or code field moves the caret to the end of the previous field. Backspace before a media block still removes that media.
 
-- The typing surface is [cledit](https://github.com/benweet/stackedit/tree/master/src/services/editor/cledit), a contenteditable whose text is still markdown, highlighted with Prism per section (`editorSvc.js`).
-- PageDown is still wired in, as the toolbar and shortcuts that insert markdown into that contenteditable.
-- A second pane renders HTML with markdown-it. Section diffs use diff-match-patch so only changed sections refresh, and section heights drive scroll sync.
-- Dependencies include Vue 2, Vuex, markdown-it and a pile of plugins, Prism, KaTeX, Mermaid, and abcjs. `turndown` is present for HTML-to-markdown conversion, which is the lossy direction.
+Bold and Italic wrap the selection. Title, List, Numbered, Task, Quote, and Code block set the line, replacing a marker that is already there. The caret line shows those characters. The other lines hide them and show the rendered span. A keystroke paints after the browser has applied the character, so the style sticks on the first memo.
 
-That is a desktop writing app with two scrolling columns. Memose already has the cheap version of the preview half: one card, `marked`, and a shortcut. A scroll-synced second pane does not fit a note, and the Vue 2 stack is the wrong runtime to adopt. StackEdit confirms the toolbar idea (buttons that wrap the selection in `**` or insert `- [ ]`) and does not offer a lighter single-surface editor.
+## Not in this pass
 
-### Editors that own a rich-text document
+- CodeMirror, TipTap, ProseMirror, Milkdown, Lexical, or any editor that serializes its own document.
+- Mermaid, KaTeX, Shiki, Highlight.js, or a second preview column.
 
-TipTap, ProseMirror, Milkdown, Lexical, MDXEditor, Toast UI, and Vditor parse markdown into their own model and serialize on save. Serialization rewrites markers (`*` versus `-`, `**` versus `__`) and blank lines. The stored note then differs from what was typed, and sync can treat that as a local edit against the server. Several of them also require React or another framework. A `contenteditable` filled from `marked` has the same trip back to markdown, plus caret and sanitizing bugs.
-
-## If this is built later
-
-Two slices, in order. Either can ship alone.
-
-### 1. Task gutter
-
-Keep the textarea. Lines that are `- [ ]` or `- [x]` get a checkbox. Clicking it rewrites the marker and goes through the existing draft timer. Inserting a task can be a shortcut or a small button. No new dependency. This is the whole request if the goal is “easier task lists.”
-
-### 2. Optional live preview
-
-One CodeMirror 6 view per memo window, loaded with a dynamic import only when the mode is on. `onchange` writes `noteContent` and calls `scheduleDraft`. External updates (open note, conflict resolution) patch the changed range so the caret stays put.
-
-Include:
-
-- Task checkbox widget.
-- Heading and emphasis marks. Bullet markers hidden off the active line.
-- Image widget for `![](memose-media/…)`, using the existing `media_path` command and `convertFileSrc`, so this mode does not need the split textareas.
-- `drawSelection()` for the WKWebView caret.
-
-Leave out: Mermaid, KaTeX, highlight.js, `@codemirror/language-data`, editable tables, wiki links, a search panel, and HTML blocks. Those are most of Marko’s plugin and the source of its decoration bugs during drag and table-cell edits.
-
-Plain typing stays the default. Live preview is a setting, or another state beside the existing preview shortcut. The read-only preview can stay for glancing at a note without a caret.
-
-## Out of scope
-
-- Replacing the textarea for everyone.
-- Vendoring Marko or StackEdit, or adding Svelte or Vue.
-- Math, diagrams, scores, or a second preview column.
-- Any editor whose save path normalizes markdown.
+CodeMirror’s live preview hides syntax and is a large runtime. The rich-text editors rewrite markers on save, so a sync would see an edit the user did not type.

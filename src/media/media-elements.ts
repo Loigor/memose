@@ -10,6 +10,7 @@ import {
   mediaPrefix,
   parseMediaMeta,
 } from "../editor/markdown-edit";
+import { highlightCode } from "../editor/code-highlight";
 import { linkTagsIn } from "../editor/md-tags";
 import { inTauri } from "../platform";
 
@@ -328,6 +329,31 @@ export async function hydratePreviewContent(
   onPreview?: (name: string) => void,
 ) {
   linkTagsIn(container);
+  for (const code of container.querySelectorAll("pre > code")) {
+    const named = /language-([^\s]+)/.exec(code.className)?.[1] ?? "";
+    const label = named.trim().split(/\s+/)[0] ?? "";
+    const pre = code.parentElement;
+    if (pre instanceof HTMLElement) {
+      if (label) {
+        pre.dataset.lang = label;
+      } else {
+        delete pre.dataset.lang;
+      }
+      let badge = pre.querySelector(":scope > .md-lang");
+      if (!label) {
+        badge?.remove();
+      } else if (!(badge instanceof HTMLElement)) {
+        badge = document.createElement("span");
+        badge.className = "md-lang";
+        badge.setAttribute("aria-hidden", "true");
+        badge.textContent = label;
+        pre.append(badge);
+      } else if (badge.textContent !== label) {
+        badge.textContent = label;
+      }
+    }
+    code.innerHTML = highlightCode(code.textContent ?? "", named);
+  }
   for (const box of container.querySelectorAll("input[type='checkbox']")) {
     if (box instanceof HTMLInputElement) {
       box.disabled = false;

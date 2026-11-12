@@ -5,15 +5,22 @@ import test from "node:test";
 import { fileURLToPath } from "node:url";
 
 import { moveBlockMedia } from "../src/editor/editor-blocks.ts";
+import { backspaceEdit, inlinePieces, renderParts, rowClass, snapOffset, stepOffset } from "../src/editor/line-style.ts";
+import { highlightCode } from "../src/editor/code-highlight.ts";
+import { braceFolds, displayToSource, expandFolds, foldView, foldsAfterEdit, sourceToDisplay } from "../src/editor/code-fold.ts";
 import { highlightMarkdown } from "../src/editor/md-highlight.ts";
 import { tagAtOffset } from "../src/editor/md-tags.ts";
 import { uniqueFiles } from "../src/media/files.ts";
-import { BlockHistory, cloneBlocks, restorePlace } from "../src/editor/history.ts";
+import { BlockHistory, cloneBlocks, remapBlockLines, restorePlace } from "../src/editor/history.ts";
 import { withKeptScroll } from "../src/editor/textarea.ts";
 import { defaultLook, lookFromNote, namedTheme } from "../src/look/look.ts";
 import {
   applyCode,
+  applyList,
+  applyOrdered,
+  applyQuote,
   applyTask,
+  dropCodeBlock,
   applyTitle,
   completeOpenFence,
   liftedCodeIndex,
@@ -31,6 +38,10 @@ import {
   parseMediaMeta,
   renumberOrderedLists,
   serializeBlocks,
+  copyIndentAfterBreak,
+  indentCode,
+  remapLineMarks,
+  setIndentWidth,
   tabOnMarkdown,
   taskListOnEnter,
   toggleTask,
@@ -85,6 +96,30 @@ test("wrapText wraps selection and places cursor inside empty markers", () => {
   assert.equal(empty.end, 6);
 });
 
+test("dropCodeBlock removes an empty code block and keeps the join", () => {
+  const between = parseBlocks("hello\n```\n\n```\nworld");
+  const code = between.findIndex((block) => block.kind === "code");
+  const dropped = dropCodeBlock(between, code);
+  assert.equal(serializeBlocks(dropped.blocks), "hello\nworld");
+  assert.equal(dropped.offset, "hello".length);
+  assert.equal(dropped.blocks[dropped.index]?.kind, "text");
+
+  const only = parseBlocks("```\n\n```\n");
+  const lone = dropCodeBlock(only, only.findIndex((block) => block.kind === "code"));
+  assert.equal(serializeBlocks(lone.blocks), "");
+  assert.equal(lone.offset, 0);
+
+  const around = parseBlocks("a\n![x](memose-media/a.png)\nb\n```\n\n```\nc");
+  const at = around.findIndex((block) => block.kind === "code");
+  const kept = dropCodeBlock(around, at);
+  const target = kept.blocks[kept.index];
+  assert.equal(target?.kind, "text");
+  if (target?.kind === "text") {
+    assert.equal(target.text, "b\nc");
+  }
+  assert.equal(kept.offset, 1);
+});
+
 test("applyCode inserts a fenced code block and places the caret inside", () => {
   const empty = applyCode("", 0, 0);
   assert.equal(empty.value, "```\n\n```");
@@ -106,15 +141,21 @@ test("applyCode inserts a fenced code block and places the caret inside", () => 
   assert.equal(multi.end, 17);
 });
 
-test("completeOpenFence closes a ticks-only fence and liftedCodeIndex finds the new block", () => {
-  const closed = completeOpenFence("```", 3);
-  assert.equal(closed?.value, "```\n```");
-  assert.equal(closed?.start, 4);
-  assert.equal(completeOpenFence("```js", 5), null);
-  assert.equal(completeOpenFence("```\n```", 3), null);
-  const blocks = parseBlocks("hello\n```\n```");
-  assert.equal(liftedCodeIndex(blocks, 0), 1);
-  assert.equal(blocks[1]?.kind, "code");
+test("completeOpenFence waits for the line break so the language can be typed", () => {
+  assert.equal(completeOpenFence("```", 3), null);
+  assert.equal(completeOpenFence("```json", 7), null);
+  const json = completeOpenFence("```json\n", 8);
+  assert.equal(json?.value, "```json\n\n```");
+  assert.equal(json?.start, 8);
+  const blocks = parseBlocks(json?.value ?? "");
+  const code = blocks.find((block) => block.kind === "code");
+  assert.equal(code?.kind, "code");
+  if (code?.kind === "code") {
+    assert.equal(code.lang, "json");
+    assert.equal(code.text, "");
+  }
+  assert.equal(completeOpenFence("```\n```", 4), null);
+  assert.equal(liftedCodeIndex(parseBlocks("hello\n```\n```"), 0), 1);
 });
 
 test("applyTitle prefixes a line with heading and leaves existing headings intact", () => {
@@ -125,6 +166,25 @@ test("applyTitle prefixes a line with heading and leaves existing headings intac
 
   const unchanged = applyTitle(h1.value, h1.start, h1.end);
   assert.equal(unchanged.value, "# Title");
+});
+
+test("block buttons replace the current marker and keep list indent", () => {
+  assert.equal(applyList("hello", 0, 5).value, "- hello");
+  assert.equal(applyList("- [ ] milk", 0, 10).value, "- milk");
+  assert.equal(applyTask("- item", 0, 6).value, "- [ ] item");
+  assert.equal(applyTitle("  - item", 2, 8).value, "# item");
+  assert.equal(applyQuote("note", 0, 4).value, "> note");
+  assert.equal(applyList("  > note", 0, 8).value, "  - note");
+  const numbered = applyOrdered("a\nb", 0, 3);
+  assert.equal(numbered.value, "1. a\n2. b");
+  assert.equal(applyList("```\ncode\n```", 4, 8).value, "```\ncode\n```");
+});
+
+test("block buttons adjust a multi-line selection once per original endpoint", () => {
+  const task = applyTask("abc\ndef", 2, 5);
+  assert.equal(task.value, "- [ ] abc\n- [ ] def");
+  assert.equal(task.start, 8);
+  assert.equal(task.end, 17);
 });
 
 test("applyTask and toggleTask manage markdown task lists and ignore code fences", () => {
@@ -158,6 +218,22 @@ test("taskListOnEnter continues lists, exits empty items, and renumbers ordered 
 
   const renumbered = renumberOrderedLists("1. a\n5. b\n9. c", 0, 0);
   assert.equal(renumbered.value, "1. a\n2. b\n3. c");
+});
+
+test("code enter keeps indent and a line mark follows the line", () => {
+  assert.equal(copyIndentAfterBreak("{\n", 2)?.value, "{\n  ");
+  const kept = "  \"a\": 1\n";
+  assert.equal(copyIndentAfterBreak(kept, kept.length)?.value, "  \"a\": 1\n  ");
+  assert.equal(copyIndentAfterBreak("a\n", 2), null);
+  assert.equal(indentCode("hello", 5, 5, false).value, "hello  ");
+  const before = "alpha\nbeta";
+  const after = "\nalpha\nbeta";
+  assert.deepEqual([...remapLineMarks(before, after, new Set([0]))], [1]);
+  assert.equal(remapLineMarks("alpha\nbeta", "\nbeta", new Set([0])).size, 0);
+  assert.deepEqual([...remapLineMarks("alpha\nbeta", "alpha!\nbeta", new Set([0]))], [0]);
+  setIndentWidth(4);
+  assert.equal(copyIndentAfterBreak("{\n", 2)?.value, "{\n    ");
+  setIndentWidth(2);
 });
 
 test("tabOnMarkdown indents and outdents lists and plain text", () => {
@@ -314,7 +390,7 @@ test("shortcuts module formats and matches keyboard and mouse chords", () => {
   assert.equal(mouseChordToBind(4, true, false, true, false), "Shift+Alt+Mouse4");
 });
 
-test("settings window html has Visibility, Shortcuts, and Sync (useMemos) tabs with Default memo visibility and Window snap", () => {
+test("settings window separates visibility, window, editor, shortcuts, and sync", () => {
   const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
   const html = fs.readFileSync(path.join(root, "settings.html"), "utf8");
   const tabs = [...html.matchAll(/data-tab="([^"]+)"[\s\S]*?>\s*([^<]+?)\s*<\/button>/g)].map((m) => ({
@@ -323,16 +399,23 @@ test("settings window html has Visibility, Shortcuts, and Sync (useMemos) tabs w
   }));
   assert.deepEqual(tabs, [
     { id: "visibility", label: "Visibility" },
+    { id: "window", label: "Window" },
+    { id: "editor", label: "Editor" },
     { id: "shortcuts", label: "Shortcuts" },
-    { id: "sync", label: "Sync (useMemos)" },
+    { id: "sync", label: "Sync" },
   ]);
   assert.match(html, /id="tab-visibility"[\s\S]*?aria-selected="true"/);
   assert.match(html, /Default memo visibility/);
   assert.match(html, /Window snap/);
   assert.match(html, /id="snap-memos"/);
+  assert.match(html, /id="pin-tab-screen"/);
+  assert.match(html, /id="pin-tab-edge"/);
+  assert.match(html, /id="pin-tab-bar-enabled"/);
   assert.match(html, /id="show-in-switcher"/);
   assert.match(html, /id="pinned-always-on-top"/);
   assert.match(html, /id="coder-editor"/);
+  assert.match(html, /id="indent-width"/);
+  assert.match(html, /How many characters one whitespace is/);
   assert.match(html, /id="markdown-highlight"/);
   assert.match(html, /id="markdown-schemes"/);
   assert.match(html, /id="space-choices"/);
@@ -455,6 +538,32 @@ test("BlockHistory clones blocks and undoes to the previous snapshot", () => {
   assert.deepEqual(redone?.blocks, cloneBlocks(second));
 });
 
+test("BlockHistory keeps a line mark as its own undo step", () => {
+  const history = new BlockHistory();
+  const text = [{ kind: "text" as const, text: "alpha\nbeta" }];
+  const caret = { index: 0, start: 0, end: 0 };
+  history.push(text, caret, true, [[]]);
+  history.push(text, caret, true, [[1]]);
+  const undone = history.takeUndo(text, caret, [[1]]);
+  assert.deepEqual(undone?.marks, [[]]);
+  assert.deepEqual(undone?.blocks, cloneBlocks(text));
+  const redone = history.takeRedo(text, caret, [[]]);
+  assert.deepEqual(redone?.marks, [[1]]);
+});
+
+test("block line state follows an unchanged block when earlier blocks are inserted", () => {
+  const before = [
+    { kind: "text" as const, text: "intro" },
+    { kind: "code" as const, lang: "", text: "const x = 1;" },
+  ];
+  const after = [
+    { kind: "text" as const, text: "intro" },
+    { kind: "code" as const, lang: "json", text: "" },
+    { kind: "code" as const, lang: "", text: "const x = 1;" },
+  ];
+  assert.deepEqual(remapBlockLines(before, after, [[], [0]]), [[], [], [0]]);
+});
+
 test("syncIcon and platform helpers cover common states", () => {
   assert.equal(syncIcon("synced").label, "Synced");
   assert.equal(syncIcon("conflict").label, "Choose a version");
@@ -513,6 +622,46 @@ test("overlay editor keeps selected textarea glyphs invisible", () => {
   assert.match(css, /scrollbar-width: thin/);
 });
 
+test("highlightCode colors a language and keeps every source character", () => {
+  const source = '{\n  "a": 1,\n  "ok": true\n}';
+  const html = highlightCode(source, "json");
+  assert.match(html, /tok-key/);
+  assert.match(html, /tok-num/);
+  assert.match(html, /tok-kw/);
+  assert.equal(
+    html.replace(/<[^>]+>/g, "").replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&amp;/g, "&"),
+    source,
+  );
+  assert.match(highlightCode("const x = 1; // note", "js"), /tok-kw[\s\S]*const/);
+  assert.match(highlightCode("const x = 1; // note", "javascript"), /tok-cmt/);
+  assert.match(highlightCode("a < b & c", "js"), /a &lt; b &amp; c/);
+});
+
+test("braceFolds finds a json block and round-trips the hidden lines", () => {
+  const source = '{\n  "b": {\n    "c": 1\n  }\n}';
+  const ranges = braceFolds(source);
+  assert.deepEqual(ranges, [
+    { start: 1, end: 3 },
+    { start: 0, end: 4 },
+  ]);
+  assert.deepEqual(braceFolds('{ "a": 1 }'), []);
+  assert.deepEqual(braceFolds('{\n  "a": "{"\n}'), [{ start: 0, end: 2 }]);
+  const folded = foldView(source, new Set([0]));
+  assert.equal(folded.display, "{\u200b");
+  assert.deepEqual(folded.holes, ['\n  "b": {\n    "c": 1\n  }\n}']);
+  assert.equal(expandFolds(folded.display, folded.holes), source);
+  const edited = `{\u200b`.replace("{", "{ ");
+  assert.equal(expandFolds(edited, folded.holes).includes('"c": 1'), true);
+  const moved = `x\n  "b": {\n    "c": 1\n  }\n}`;
+  assert.equal(foldsAfterEdit(moved, folded.holes).size, 0);
+  const withRest = '{\n  "a": 1\n}\nrest';
+  const view = foldView(withRest, new Set([0]));
+  assert.equal(view.display, "{\u200b\nrest");
+  assert.equal(displayToSource(view.display, view.holes, view.display.length), withRest.length);
+  assert.equal(sourceToDisplay(view.display, view.holes, 1), 1);
+  assert.equal(sourceToDisplay(view.display, view.holes, 4), 1);
+});
+
 test("highlightMarkdown colors markers without changing the source text", () => {
   const html = highlightMarkdown("# Title\nhello **bold** and `code`\n> quote\n- item\n<script>");
   assert.match(html, /md-line-text/);
@@ -537,6 +686,126 @@ test("highlightMarkdown colors markers without changing the source text", () => 
   assert.equal(tagAtOffset("a\n#finance", 10), "#finance");
   assert.equal(tagAtOffset("# Title", 3), null);
   assert.equal(tagAtOffset("```\n#finance\n```", 6), null);
+});
+
+test("line rows keep the markdown and classify the prefix", () => {
+  assert.equal(rowClass("# Title"), "md-row is-h1");
+  assert.equal(rowClass("###### Small"), "md-row is-h6");
+  assert.equal(rowClass("#Title"), "md-row");
+  assert.equal(rowClass("#"), "md-row");
+  assert.equal(rowClass("> quote"), "md-row is-quote");
+  assert.equal(rowClass("- [ ] task"), "md-row is-task");
+  assert.equal(rowClass("- [x] done"), "md-row is-task is-done");
+  assert.equal(rowClass("- [X] done"), "md-row is-task is-done");
+  assert.equal(rowClass("1. [ ] numbered"), "md-row is-task");
+  assert.equal(rowClass("---"), "md-row is-hr");
+  assert.equal(rowClass("* * *"), "md-row is-hr");
+  assert.equal(rowClass("___"), "md-row is-hr");
+  assert.equal(rowClass("--- extra"), "md-row");
+  assert.equal(rowClass("- item"), "md-row is-ul");
+  assert.equal(rowClass("  * nested"), "md-row is-ul");
+  assert.equal(rowClass("2. item"), "md-row is-ol");
+  assert.equal(rowClass("plain"), "md-row");
+  const lines = Array.from({ length: 4000 }, (_, i) => (i % 7 === 0 ? `# item ${i}` : `- [ ] item ${i}`));
+  const start = performance.now();
+  let headings = 0;
+  for (const line of lines) {
+    if (rowClass(line) === "md-row is-h1") {
+      headings += 1;
+    }
+  }
+  assert.equal(headings, 572);
+  assert.ok(performance.now() - start < 50);
+});
+
+test("inline marks keep the source characters", () => {
+  const sample = "hello **bold** and *em* and __also__ and _word_ and `code` and [a](b) and ![x](y) snake_case **open";
+  const pieces = inlinePieces(sample);
+  assert.equal(pieces.map((piece) => piece.text).join(""), sample);
+  assert.deepEqual(
+    pieces.filter((piece) => piece.mark !== "plain").map((piece) => [piece.mark, piece.text]),
+    [
+      ["strong", "**bold**"],
+      ["em", "*em*"],
+      ["strong", "__also__"],
+      ["em", "_word_"],
+      ["code", "`code`"],
+      ["link", "[a](b)"],
+      ["link", "![x](y)"],
+    ],
+  );
+  assert.equal(inlinePieces("**bold**").length, 1);
+  assert.equal(inlinePieces("**bold**")[0]?.mark, "strong");
+  assert.equal(inlinePieces("# Title").map((piece) => piece.text).join(""), "# Title");
+  assert.equal(inlinePieces("# Title")[0]?.mark, "plain");
+  assert.deepEqual(inlinePieces("- [x] **milk**"), [
+    { text: "- [x] ", mark: "marker" },
+    { text: "**milk**", mark: "strong" },
+  ]);
+  assert.deepEqual(inlinePieces("- [x]"), [{ text: "- [x]", mark: "marker" }]);
+  assert.deepEqual(inlinePieces("**see #ship**"), [
+    {
+      text: "**see #ship**",
+      mark: "strong",
+      inner: [
+        { text: "**see ", mark: "plain" },
+        { text: "#ship", mark: "tag" },
+        { text: "**", mark: "plain" },
+      ],
+    },
+  ]);
+  assert.equal(
+    inlinePieces("**see #ship**")
+      .map((piece) => piece.text)
+      .join(""),
+    "**see #ship**",
+  );
+  assert.equal(inlinePieces("*see #ship*")[0]?.inner?.some((piece) => piece.mark === "tag"), true);
+  assert.deepEqual(inlinePieces("pay #finance now"), [
+    { text: "pay ", mark: "plain" },
+    { text: "#finance", mark: "tag" },
+    { text: " now", mark: "plain" },
+  ]);
+  assert.ok(inlinePieces("# Title #finance").every((piece) => piece.mark === "plain"));
+  assert.equal(inlinePieces("`#code`")[0]?.mark, "code");
+  assert.equal(inlinePieces("item#finance")[0]?.mark, "plain");
+  assert.deepEqual(inlinePieces("---"), [{ text: "---", mark: "plain" }]);
+  assert.deepEqual(inlinePieces("* * *"), [{ text: "* * *", mark: "plain" }]);
+  assert.deepEqual(
+    inlinePieces("> quote").map((piece) => piece.text),
+    ["> ", "quote"],
+  );
+  assert.equal(inlinePieces("*em*")[0]?.mark, "em");
+  assert.deepEqual(renderParts("# Title").map((part) => [part.syntax === true, part.text]), [
+    [true, "# "],
+    [false, "Title"],
+  ]);
+  assert.deepEqual(renderParts("**bold**").map((part) => part.text), ["**", "bold", "**"]);
+  assert.equal(renderParts("**bold**")[1]?.cls, "md-strong");
+  assert.equal(renderParts("- [x] milk").some((part) => part.check && part.checked), true);
+  assert.equal(renderParts("- [x] milk").filter((part) => part.syntax).map((part) => part.text).join(""), "- [x] ");
+  assert.equal(
+    renderParts("hello **bold** #ship")
+      .map((part) => part.text)
+      .join(""),
+    "hello **bold** #ship",
+  );
+  assert.equal(snapOffset("# Title", 0), 2);
+  assert.equal(snapOffset("# Title\n# Next", 8), 10);
+  assert.equal(stepOffset("hello **bold**", 8, -1), 5);
+  assert.deepEqual(backspaceEdit("# Title", 2), { text: "Title", offset: 0 });
+  assert.deepEqual(backspaceEdit("hello **bold**", 8), { text: "hello**bold**", offset: 5 });
+  assert.deepEqual(backspaceEdit("hello\n# Title", 8), { text: "hello\nTitle", offset: 6 });
+  assert.deepEqual(
+    inlinePieces("2. item").map((piece) => piece.text),
+    ["2. ", "item"],
+  );
+  const lines = Array.from({ length: 2000 }, (_, i) => `line ${i} plain`);
+  const marked = performance.now();
+  for (const line of lines) {
+    inlinePieces(line);
+  }
+  assert.ok(performance.now() - marked < 50);
 });
 
 test("formatJsonDocument pretty-prints objects and json fences", () => {

@@ -55,16 +55,16 @@
             </button>
             <div id="editor-tools" class="editor-tools">
               <div class="format-anchor">
-                <button id="format-toggle" class="format-toggle coder-tool icon-button" type="button" aria-label="Format" aria-expanded="false" title="Format">Format</button>
+                <button id="format-toggle" class="format-toggle icon-button" type="button" aria-label="Format" aria-expanded="false" title="Format">Format</button>
                 <div id="format-pop" class="format-pop" hidden>
                   <button type="button" data-format="document">Format document</button>
-                  <button type="button" data-format="wrap" aria-pressed="false">Line wrap</button>
+                  <button type="button" data-format="wrap" aria-pressed="false"><span class="format-check" aria-hidden="true"></span>Line wrap</button>
                 </div>
               </div>
               <button id="markdown-toggle" class="markdown-toggle icon-button" type="button" aria-label="Markdown toolbar" aria-pressed="false" title="Markdown toolbar">
                 <span class="markdown-glyph" aria-hidden="true"></span>
               </button>
-              <button id="coder-toggle" class="coder-toggle coder-tool icon-button" type="button" aria-label="Coder editor" aria-pressed="false" title="Coder editor">
+              <button id="coder-toggle" class="coder-toggle icon-button" type="button" aria-label="Coder editor" aria-pressed="false" title="Coder editor">
                 { }
               </button>
               <button id="mode-toggle" class="mode-toggle icon-button" type="button" aria-label="Preview" aria-pressed="false" title="Preview">
@@ -110,11 +110,14 @@
             </div>
           </div>
           <div id="md-toolbar" class="md-toolbar" hidden>
-            <button type="button" data-markdown="bold" aria-label="Bold">B</button>
-            <button type="button" data-markdown="italic" aria-label="Italic">I</button>
-            <button type="button" data-markdown="title" aria-label="Title">T</button>
-            <button type="button" data-markdown="task" aria-label="Task list">[ ]</button>
-            <button type="button" data-markdown="code" aria-label="Code">&lt;&gt;</button>
+            <button type="button" data-markdown="bold" aria-label="Bold">Bold</button>
+            <button type="button" data-markdown="italic" aria-label="Italic">Italic</button>
+            <button type="button" data-markdown="title" aria-label="Title">Title</button>
+            <button type="button" data-markdown="list" aria-label="Bullet list">List</button>
+            <button type="button" data-markdown="ordered" aria-label="Numbered list">Numbered</button>
+            <button type="button" data-markdown="task" aria-label="Task list">Task</button>
+            <button type="button" data-markdown="quote" aria-label="Quote">Quote</button>
+            <button type="button" data-markdown="code" aria-label="Code block">Code block</button>
           </div>
           <div id="blocks"></div>
           <div id="preview" hidden></div>
@@ -137,6 +140,12 @@
     <div id="resize-s" class="resize-handle" data-resize="s" aria-hidden="true"></div>
     <div id="resize-sw" class="resize-handle" data-resize="sw" aria-hidden="true"></div>
     <div id="resize-grip" class="resize-handle" data-resize="se" aria-hidden="true"></div>
+    <div id="screen-edges" hidden>
+      <div class="edge left" data-edge="left" hidden></div>
+      <div class="edge right" data-edge="right" hidden></div>
+      <div class="edge top" data-edge="top" hidden></div>
+      <div class="edge bottom" data-edge="bottom" hidden></div>
+    </div>
     <div id="lightbox">
       <img id="lightbox-image" alt="" />
     </div>

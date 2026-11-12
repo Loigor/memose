@@ -42,7 +42,7 @@ h2 {
 
 .settings-tabs {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(5, minmax(0, 1fr));
   gap: 4px;
   padding: 4px;
   border: 1px solid #e0d9cc;
@@ -133,9 +133,20 @@ select {
 
 input[type="url"]:focus,
 input[type="password"]:focus,
-input[type="text"]:focus {
+input[type="text"]:focus,
+select:focus {
   outline: 2px solid #8a795d;
   outline-offset: 1px;
+}
+
+.pin-place {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+}
+
+.pin-place.is-disabled {
+  opacity: 0.55;
 }
 
 .toggle-row {
@@ -161,6 +172,19 @@ input[type="text"]:focus {
   font-size: 13px;
   font-weight: 600;
   color: #241f16;
+}
+
+.toggle-row input[type="number"] {
+  width: 64px;
+  margin-top: 0;
+  padding: 4px 6px;
+  border: 1px solid #e8e2d6;
+  border-radius: 8px;
+  background: #fff;
+  color: #241f16;
+  font: inherit;
+  font-size: 13px;
+  flex-shrink: 0;
 }
 
 .toggle-row input[type="checkbox"] {

@@ -41,6 +41,12 @@ pub struct Note {
     pub theme: Option<String>,
     /// Coder layout for this memo. Empty follows the settings default.
     pub coder: Option<bool>,
+    /// Soft line wrap in the coder editor. Display only.
+    pub line_wrap: bool,
+    /// Folded opener lines per block. Not part of the markdown.
+    pub folds: Vec<Vec<u32>>,
+    /// Marked source lines per block. Not part of the markdown.
+    pub marks: Vec<Vec<u32>>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]

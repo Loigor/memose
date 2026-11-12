@@ -23,14 +23,18 @@ type Settings = {
   visibility: string;
   space: string;
   snapMemos: boolean;
+  pinTabBarEnabled: boolean;
+  pinTabScreen: string;
+  pinTabEdge: string;
   coderEditor: boolean;
   markdownHighlight: boolean;
   markdownScheme: string;
+  indentWidth: number;
   showInSwitcher: boolean;
   pinnedAlwaysOnTop: boolean;
 };
 
-type TabId = "visibility" | "shortcuts" | "sync";
+type TabId = "visibility" | "window" | "editor" | "shortcuts" | "sync";
 
 const baseUrl = document.querySelector<HTMLInputElement>("#base-url");
 const token = document.querySelector<HTMLInputElement>("#token");
@@ -40,7 +44,12 @@ const autostart = document.querySelector<HTMLInputElement>("#autostart");
 const showInSwitcher = document.querySelector<HTMLInputElement>("#show-in-switcher");
 const pinnedAlwaysOnTop = document.querySelector<HTMLInputElement>("#pinned-always-on-top");
 const snapMemos = document.querySelector<HTMLInputElement>("#snap-memos");
+const pinTabBarEnabled = document.querySelector<HTMLInputElement>("#pin-tab-bar-enabled");
+const pinTabPlace = document.querySelector<HTMLDivElement>("#pin-tab-place");
+const pinTabScreen = document.querySelector<HTMLSelectElement>("#pin-tab-screen");
+const pinTabEdge = document.querySelector<HTMLSelectElement>("#pin-tab-edge");
 const coderEditor = document.querySelector<HTMLInputElement>("#coder-editor");
+const indentWidth = document.querySelector<HTMLInputElement>("#indent-width");
 const markdownHighlight = document.querySelector<HTMLInputElement>("#markdown-highlight");
 const markdownSchemes = document.querySelector<HTMLDivElement>("#markdown-schemes");
 const audience = document.querySelector<HTMLDivElement>("#memos-audience");
@@ -65,7 +74,12 @@ if (
   !showInSwitcher ||
   !pinnedAlwaysOnTop ||
   !snapMemos ||
+  !pinTabBarEnabled ||
+  !pinTabPlace ||
+  !pinTabScreen ||
+  !pinTabEdge ||
   !coderEditor ||
+  !indentWidth ||
   !markdownHighlight ||
   !markdownSchemes ||
   !shortcuts ||
@@ -92,7 +106,12 @@ const autostartEl = autostart;
 const showInSwitcherEl = showInSwitcher;
 const pinnedAlwaysOnTopEl = pinnedAlwaysOnTop;
 const snapMemosEl = snapMemos;
+const pinTabBarEnabledEl = pinTabBarEnabled;
+const pinTabPlaceEl = pinTabPlace;
+const pinTabScreenEl = pinTabScreen;
+const pinTabEdgeEl = pinTabEdge;
 const coderEditorEl = coderEditor;
+const indentWidthEl = indentWidth;
 const markdownHighlightEl = markdownHighlight;
 const markdownSchemesEl = markdownSchemes;
 let chosenScheme = "paper";
@@ -279,7 +298,10 @@ async function loadSettings() {
   autostartEl.checked = settings.launchAtLogin;
   paintDesktopPrefs(settings);
   snapMemosEl.checked = settings.snapMemos;
+  paintPinTabBar(settings.pinTabBarEnabled !== false);
+  await loadPinPlace(settings);
   coderEditorEl.checked = settings.coderEditor;
+  indentWidthEl.value = String(settings.indentWidth >= 1 && settings.indentWidth <= 8 ? settings.indentWidth : 2);
   markdownHighlightEl.checked = settings.markdownHighlight !== false;
   chosenScheme = settings.markdownScheme === "cool" || settings.markdownScheme === "mono"
     ? settings.markdownScheme
@@ -634,6 +656,72 @@ pinnedAlwaysOnTopEl.addEventListener("change", () => {
     });
 });
 
+function option(value: string, label: string): HTMLOptionElement {
+  const el = document.createElement("option");
+  el.value = value;
+  el.textContent = label;
+  return el;
+}
+
+function paintPinTabBar(enabled: boolean) {
+  pinTabBarEnabledEl.checked = enabled;
+  pinTabScreenEl.disabled = !enabled;
+  pinTabEdgeEl.disabled = !enabled;
+  pinTabPlaceEl.classList.toggle("is-disabled", !enabled);
+}
+
+async function loadPinPlace(settings: Settings) {
+  const displays = await invoke<{ id: string; label: string }[]>("list_displays").catch(() => []);
+  const screen =
+    settings.pinTabScreen === "all" || settings.pinTabScreen?.startsWith("display:")
+      ? settings.pinTabScreen
+      : "cursor";
+  const edge =
+    settings.pinTabEdge === "bottom" || settings.pinTabEdge === "left" || settings.pinTabEdge === "right"
+      ? settings.pinTabEdge
+      : "top";
+  pinTabScreenEl.replaceChildren(
+    option("cursor", "Follow the cursor"),
+    option("all", "Every display"),
+    ...displays.map((display) => option(display.id, display.label)),
+  );
+  if (![...pinTabScreenEl.options].some((item) => item.value === screen)) {
+    pinTabScreenEl.append(option(screen, "Saved display"));
+  }
+  pinTabScreenEl.value = screen;
+  pinTabEdgeEl.value = edge;
+}
+
+function savePinPlace() {
+  void invoke("set_pin_tab_place", {
+    screen: pinTabScreenEl.value || "cursor",
+    edge: pinTabEdgeEl.value || "top",
+  })
+    .then(() => {
+      statusEl.textContent = "Pinned tab bar updated.";
+    })
+    .catch((error: unknown) => {
+      statusEl.textContent = String(error);
+    });
+}
+
+pinTabScreenEl.addEventListener("change", savePinPlace);
+pinTabEdgeEl.addEventListener("change", savePinPlace);
+pinTabBarEnabledEl.addEventListener("change", () => {
+  const enabled = pinTabBarEnabledEl.checked;
+  paintPinTabBar(enabled);
+  void invoke("set_pin_tab_bar_enabled", { enabled })
+    .then(() => {
+      statusEl.textContent = enabled
+        ? "Pinned tab bar enabled."
+        : "Pinned tab bar hidden. Tabs are available from the tray menu.";
+    })
+    .catch((error: unknown) => {
+      statusEl.textContent = String(error);
+      paintPinTabBar(!enabled);
+    });
+});
+
 snapMemosEl.addEventListener("change", () => {
   const enabled = snapMemosEl.checked;
   void invoke("set_snap_memos", { enabled })
@@ -667,6 +755,19 @@ function paintSchemes() {
     markdownSchemesEl.append(button);
   }
 }
+
+indentWidthEl.addEventListener("change", () => {
+  const width = Math.round(Number(indentWidthEl.value));
+  const next = width >= 1 && width <= 8 ? width : 2;
+  indentWidthEl.value = String(next);
+  void invoke("set_indent_width", { width: next })
+    .then(() => {
+      statusEl.textContent = `One whitespace is ${next} characters.`;
+    })
+    .catch((error: unknown) => {
+      statusEl.textContent = String(error);
+    });
+});
 
 coderEditorEl.addEventListener("change", () => {
   const enabled = coderEditorEl.checked;

@@ -5,15 +5,15 @@ use std::time::{Duration, Instant};
 
 use tauri::{AppHandle, Emitter, Manager, PhysicalPosition, PhysicalSize, WebviewWindow};
 
-use super::geom::{closer_snap, closer_snap_x};
+use super::geom::{closer_snap, closer_snap_x, fit_side_snap_height, screen_edge_cue};
 use super::{
-    apply_pin_tab, contains, pin_label, place_at, resize_frame, save_pin_frame,
+    apply_pin_tab, contains, is_pin_strip, pin_label, place_at, resize_frame, save_pin_frame,
     slide_card_into_view, snap_enabled, snap_memo_edges, snap_screen_edges, ResizeEdge,
-    CARD_HEIGHT, CARD_PAD_BOTTOM, CARD_PAD_TOP, CARD_PAD_X, EDGE_CATCH, PIN_TABS, PREVIEW,
-    SETTINGS,
+    CARD_HEIGHT, CARD_PAD_BOTTOM, CARD_PAD_TOP, CARD_PAD_X, EDGE_CATCH, PREVIEW, SETTINGS,
 };
 use crate::notes::{tab_at, PinTabHit};
 use crate::state::AppState;
+use crate::tray;
 
 const MEMO_CATCH: i32 = 36;
 const STACK_LIMIT: usize = 8;
@@ -22,6 +22,12 @@ fn height_sizing() -> &'static Mutex<HashMap<String, Instant>> {
     static SIZING: LazyLock<Mutex<HashMap<String, Instant>>> =
         LazyLock::new(|| Mutex::new(HashMap::new()));
     &SIZING
+}
+
+fn side_snap_heights() -> &'static Mutex<HashMap<String, i32>> {
+    static HEIGHTS: LazyLock<Mutex<HashMap<String, i32>>> =
+        LazyLock::new(|| Mutex::new(HashMap::new()));
+    &HEIGHTS
 }
 
 pub(super) fn suppress_settle(label: &str, duration: Duration) {
@@ -114,6 +120,7 @@ fn settle_window(app: &AppHandle, label: &str, note_id: Option<&str>, resize: bo
             save_pin_frame(app, id, &window);
         }
     }
+    publish_screen_edges(app, &window);
 }
 
 fn neighbor_cards(app: &AppHandle, window: &WebviewWindow) -> Vec<(i32, i32, i32, i32)> {
@@ -197,13 +204,24 @@ fn snap_moved_corner(app: &AppHandle, window: &WebviewWindow) {
     let Ok(position) = window.outer_position() else {
         return;
     };
-    let Some((x, y)) = snap_target_for_origin(app, window, position.x, position.y) else {
+    let Ok(size) = window.outer_size() else {
         return;
     };
-    if (x - position.x).abs() <= 2 && (y - position.y).abs() <= 2 {
-        return;
+    let mut x = position.x;
+    let mut y = position.y;
+    if let Some((sx, sy)) = snap_target_for_origin(app, window, position.x, position.y) {
+        if (sx - position.x).abs() > 2 || (sy - position.y).abs() > 2 {
+            x = sx;
+            y = sy;
+        }
     }
-    let _ = window.set_position(PhysicalPosition::new(x, y));
+    let height = side_snap_height(app, window, x, y, size.width as i32, size.height as i32);
+    if x != position.x || y != position.y {
+        let _ = window.set_position(PhysicalPosition::new(x, y));
+    }
+    if height != size.height as i32 {
+        let _ = window.set_size(PhysicalSize::new(size.width.max(1), height.max(1) as u32));
+    }
 }
 
 fn snap_resized_edges(app: &AppHandle, window: &WebviewWindow) {
@@ -270,6 +288,10 @@ fn snap_resized_edges(app: &AppHandle, window: &WebviewWindow) {
             height = next;
         }
     }
+    if let Ok(mut heights) = side_snap_heights().lock() {
+        heights.insert(window.label().to_string(), height);
+    }
+    height = side_snap_height(app, window, x, y, width, height);
     if x == position.x
         && y == position.y
         && width == size.width as i32
@@ -514,11 +536,24 @@ pub fn set_window_height(app: &AppHandle, label: &str, logical_height: i32) {
         );
     }
     let scale = window.scale_factor().unwrap_or(1.0).max(0.5);
-    let height = ((f64::from(logical_height.max(96))) * scale)
+    let mut height = ((f64::from(logical_height.max(96))) * scale)
         .round()
-        .max(1.0) as u32;
+        .max(1.0) as i32;
+    if let Ok(mut heights) = side_snap_heights().lock() {
+        heights.insert(label.to_string(), height);
+    }
+    if let Ok(position) = window.outer_position() {
+        height = side_snap_height(
+            app,
+            &window,
+            position.x,
+            position.y,
+            size.width as i32,
+            height,
+        );
+    }
     let width = size.width.max(1);
-    let _ = window.set_size(PhysicalSize::new(width, height));
+    let _ = window.set_size(PhysicalSize::new(width, height.max(1) as u32));
     if let Some(id) = label.strip_prefix("pin-") {
         if parks()
             .lock()
@@ -663,7 +698,9 @@ fn finish_memo_drag(app: &AppHandle, label: &str) {
     if was_dragging {
         settle_window(app, label, note_id, false);
     }
-    emit_strip_cursor(app, None);
+    for window in pin_strips(app) {
+        emit_strip_cursor(&window, None);
+    }
 }
 
 fn show_aim(app: &AppHandle, host_id: &str, mode: &str) {
@@ -739,8 +776,9 @@ struct TabAim {
     ready: bool,
 }
 
-fn tab_hits() -> &'static Mutex<Vec<PinTabHit>> {
-    static HITS: LazyLock<Mutex<Vec<PinTabHit>>> = LazyLock::new(|| Mutex::new(Vec::new()));
+fn tab_hits() -> &'static Mutex<HashMap<String, Vec<PinTabHit>>> {
+    static HITS: LazyLock<Mutex<HashMap<String, Vec<PinTabHit>>>> =
+        LazyLock::new(|| Mutex::new(HashMap::new()));
     &HITS
 }
 
@@ -750,68 +788,83 @@ fn tab_aims() -> &'static Mutex<HashMap<String, TabAim>> {
     &AIMS
 }
 
-pub fn set_pin_tab_hits(hits: Vec<PinTabHit>) {
+pub fn set_pin_tab_hits(label: String, hits: Vec<PinTabHit>) {
     if let Ok(mut stored) = tab_hits().lock() {
-        *stored = hits;
+        stored.insert(label, hits);
     }
 }
 
-fn emit_strip_cursor(app: &AppHandle, local: Option<(i32, i32)>) {
-    if let Some(window) = app.get_webview_window(PIN_TABS) {
-        let _ = window.emit("window-cursor", local);
-    }
+fn pin_strips(app: &AppHandle) -> Vec<WebviewWindow> {
+    app.webview_windows()
+        .into_iter()
+        .filter(|(label, _)| is_pin_strip(label))
+        .map(|(_, window)| window)
+        .collect()
+}
+
+fn emit_strip_cursor(window: &WebviewWindow, local: Option<(i32, i32)>) {
+    let _ = window.emit_to(window.label(), "window-cursor", local);
 }
 
 fn pulse_strip_cursor(app: &AppHandle) {
-    let Some(window) = app.get_webview_window(PIN_TABS) else {
+    let Ok(cursor) = app.cursor_position() else {
         return;
     };
-    if !window.is_visible().unwrap_or(false) {
-        emit_strip_cursor(app, None);
-        return;
-    }
-    let (Ok(cursor), Ok(position), Ok(size)) = (
-        app.cursor_position(),
-        window.outer_position(),
-        window.outer_size(),
-    ) else {
-        return;
-    };
-    let over = cursor.x >= f64::from(position.x)
-        && cursor.y >= f64::from(position.y)
-        && cursor.x < f64::from(position.x) + f64::from(size.width)
-        && cursor.y < f64::from(position.y) + f64::from(size.height);
-    if over {
-        let scale = window.scale_factor().unwrap_or(1.0).max(0.01);
-        emit_strip_cursor(
-            app,
-            Some((
-                ((cursor.x - f64::from(position.x)) / scale).round() as i32,
-                ((cursor.y - f64::from(position.y)) / scale).round() as i32,
-            )),
-        );
-    } else {
-        emit_strip_cursor(app, None);
+    for window in pin_strips(app) {
+        if !window.is_visible().unwrap_or(false) {
+            emit_strip_cursor(&window, None);
+            continue;
+        }
+        let (Ok(position), Ok(size)) = (window.outer_position(), window.outer_size()) else {
+            continue;
+        };
+        let over = cursor.x >= f64::from(position.x)
+            && cursor.y >= f64::from(position.y)
+            && cursor.x < f64::from(position.x) + f64::from(size.width)
+            && cursor.y < f64::from(position.y) + f64::from(size.height);
+        if over {
+            let scale = window.scale_factor().unwrap_or(1.0).max(0.01);
+            emit_strip_cursor(
+                &window,
+                Some((
+                    ((cursor.x - f64::from(position.x)) / scale).round() as i32,
+                    ((cursor.y - f64::from(position.y)) / scale).round() as i32,
+                )),
+            );
+        } else {
+            emit_strip_cursor(&window, None);
+        }
     }
 }
 
 fn tab_under_cursor(app: &AppHandle) -> Option<String> {
-    let window = app.get_webview_window(PIN_TABS)?;
-    if !window.is_visible().unwrap_or(false) {
-        return None;
-    }
     let cursor = app.cursor_position().ok()?;
-    let position = window.outer_position().ok()?;
-    let scale = window.scale_factor().unwrap_or(1.0).max(0.01);
-    let x = (cursor.x - f64::from(position.x)) / scale;
-    let y = (cursor.y - f64::from(position.y)) / scale;
+    let locals: Vec<(String, f64, f64)> = app
+        .webview_windows()
+        .into_iter()
+        .filter(|(label, window)| is_pin_strip(label) && window.is_visible().unwrap_or(false))
+        .filter_map(|(label, window)| {
+            let position = window.outer_position().ok()?;
+            let scale = window.scale_factor().unwrap_or(1.0).max(0.01);
+            Some((
+                label,
+                (cursor.x - f64::from(position.x)) / scale,
+                (cursor.y - f64::from(position.y)) / scale,
+            ))
+        })
+        .collect();
     let hits = tab_hits().lock().ok()?;
-    tab_at(&hits, x, y).map(str::to_string)
+    for (label, x, y) in locals {
+        if let Some(id) = hits.get(&label).and_then(|list| tab_at(list, x, y)) {
+            return Some(id.to_string());
+        }
+    }
+    None
 }
 
 fn show_tab_aim(app: &AppHandle, tab_id: &str, mode: &str) {
-    if let Some(window) = app.get_webview_window(PIN_TABS) {
-        let _ = window.emit("pin-tab-aim", (tab_id, mode));
+    for window in pin_strips(app) {
+        let _ = window.emit_to(window.label(), "pin-tab-aim", (tab_id, mode));
     }
 }
 
@@ -851,6 +904,7 @@ fn commit_tab_move(app: &AppHandle, note_id: &str, tab_id: &str) {
     }
     apply_pin_tab(app);
     let _ = app.emit("pin-tabs-changed", ());
+    tray::refresh(app);
     show_tab_aim(app, tab_id, "ready");
 }
 
@@ -1435,6 +1489,37 @@ fn park_quiet(label: &str) -> bool {
         .unwrap_or(false)
 }
 
+fn gliding() -> &'static Mutex<HashMap<String, u64>> {
+    static GLIDING: LazyLock<Mutex<HashMap<String, u64>>> =
+        LazyLock::new(|| Mutex::new(HashMap::new()));
+    &GLIDING
+}
+
+fn begin_glide(app: &AppHandle, label: &str, ticket: u64) {
+    if let Ok(mut gliding) = gliding().lock() {
+        gliding.insert(label.to_string(), ticket);
+    }
+    if let Some(window) = app.get_webview_window(label) {
+        hide_screen_edges(&window);
+    }
+}
+
+fn end_glide(app: &AppHandle, label: &str, ticket: u64) {
+    let ended = gliding().lock().ok().is_some_and(|mut gliding| {
+        if gliding.get(label) != Some(&ticket) {
+            return false;
+        }
+        gliding.remove(label);
+        true
+    });
+    if !ended {
+        return;
+    }
+    if let Some(window) = app.get_webview_window(label) {
+        publish_screen_edges(app, &window);
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 fn glide_window(
     app: AppHandle,
@@ -1446,6 +1531,7 @@ fn glide_window(
     to_y: i32,
     clear: bool,
 ) {
+    begin_glide(&app, &label, ticket);
     tauri::async_runtime::spawn(async move {
         let steps = 8;
         for step in 1..=steps {
@@ -1465,6 +1551,7 @@ fn glide_window(
                         .map(|_| ())
                 });
                 if current.is_none() || drag_active(&label2) {
+                    end_glide(&app2, &label2, ticket);
                     return;
                 }
                 if let Some(window) = app2.get_webview_window(&label2) {
@@ -1479,6 +1566,9 @@ fn glide_window(
                             parked.remove(&label2);
                         }
                     }
+                }
+                if done {
+                    end_glide(&app2, &label2, ticket);
                 }
             });
         }
@@ -1721,7 +1811,7 @@ fn tick_offscreen_hover(app: &AppHandle) {
             None
         };
         cursor_hits.insert(label.clone(), local);
-        if label != PIN_TABS {
+        if !is_pin_strip(&label) {
             hits.push((label, over_window, window.is_focused().unwrap_or(false)));
         }
     }
@@ -1828,6 +1918,197 @@ pub fn watch_offscreen_hover(app: AppHandle) {
         }
         let _ = rx.recv_timeout(Duration::from_millis(120));
     });
+}
+
+fn side_snap_height(
+    app: &AppHandle,
+    window: &WebviewWindow,
+    x: i32,
+    y: i32,
+    width: i32,
+    height: i32,
+) -> i32 {
+    let label = window.label();
+    if !snap_enabled(app) {
+        if let Ok(mut heights) = side_snap_heights().lock() {
+            heights.remove(label);
+        }
+        return height;
+    }
+    let Ok(scale) = window.scale_factor() else {
+        return height;
+    };
+    let Ok(monitors) = app.available_monitors() else {
+        return height;
+    };
+    let pad_x = (CARD_PAD_X * scale).round() as i32;
+    let pad_bottom = (CARD_PAD_BOTTOM * scale).round() as i32;
+    let min_h = (140.0 * scale).round() as i32;
+    let desired = side_snap_heights()
+        .lock()
+        .ok()
+        .and_then(|heights| heights.get(label).copied())
+        .unwrap_or(height)
+        .max(height);
+    let mut fitted = desired;
+    for monitor in monitors {
+        let area = monitor.work_area();
+        let next = fit_side_snap_height(
+            x,
+            y,
+            width,
+            desired,
+            pad_x,
+            pad_bottom,
+            area.position.x,
+            area.size.width as i32,
+            area.position.y.saturating_add(area.size.height as i32),
+            min_h,
+        );
+        if next < fitted {
+            fitted = next;
+        }
+    }
+    if let Ok(mut heights) = side_snap_heights().lock() {
+        if fitted < desired {
+            heights.insert(label.to_string(), desired);
+        } else {
+            heights.remove(label);
+        }
+    }
+    fitted
+}
+
+#[derive(Clone, Copy, PartialEq, serde::Serialize)]
+struct ScreenEdgeEvent {
+    left: Option<f64>,
+    right: Option<f64>,
+    top: Option<f64>,
+    bottom: Option<f64>,
+    /// Window origin when `left`/`top` were measured, in CSS pixels.
+    origin_x: f64,
+    origin_y: f64,
+}
+
+fn screen_edge_events() -> &'static Mutex<HashMap<String, ScreenEdgeEvent>> {
+    static LAST: LazyLock<Mutex<HashMap<String, ScreenEdgeEvent>>> =
+        LazyLock::new(|| Mutex::new(HashMap::new()));
+    &LAST
+}
+
+pub fn sync_screen_edges(app: &AppHandle, label: &str) {
+    if let Ok(mut last) = screen_edge_events().lock() {
+        last.remove(label);
+    }
+    let Some(window) = app.get_webview_window(label) else {
+        return;
+    };
+    publish_screen_edges(app, &window);
+}
+
+pub(super) fn publish_screen_edges(app: &AppHandle, window: &WebviewWindow) {
+    // Updating the cue on each hover-slide step makes the gradient ride with the memo.
+    if gliding()
+        .lock()
+        .ok()
+        .is_some_and(|gliding| gliding.contains_key(window.label()))
+    {
+        return;
+    }
+    let (Ok(position), Ok(size), Ok(scale)) = (
+        window.outer_position(),
+        window.outer_size(),
+        window.scale_factor(),
+    ) else {
+        return;
+    };
+    let cue = monitor_overlapping(
+        app,
+        position.x,
+        position.y,
+        size.width as i32,
+        size.height as i32,
+    )
+    .map(|monitor| {
+        let pad_x = (CARD_PAD_X * scale).round() as i32;
+        let pad_top = (CARD_PAD_TOP * scale).round() as i32;
+        let pad_bottom = (CARD_PAD_BOTTOM * scale).round() as i32;
+        let bounds = monitor.position();
+        let screen = monitor.size();
+        let raw = screen_edge_cue(
+            position.x,
+            position.y,
+            size.width as i32,
+            size.height as i32,
+            pad_x,
+            pad_top,
+            pad_bottom,
+            bounds.x,
+            bounds.y,
+            screen.width as i32,
+            screen.height as i32,
+            scale,
+        );
+        ScreenEdgeEvent {
+            left: raw.left,
+            right: raw.right,
+            top: raw.top,
+            bottom: raw.bottom,
+            origin_x: f64::from(position.x) / scale,
+            origin_y: f64::from(position.y) / scale,
+        }
+    })
+    .unwrap_or(ScreenEdgeEvent {
+        left: None,
+        right: None,
+        top: None,
+        bottom: None,
+        origin_x: f64::from(position.x) / scale,
+        origin_y: f64::from(position.y) / scale,
+    });
+    let label = window.label().to_string();
+    if let Ok(mut last) = screen_edge_events().lock() {
+        if last.get(&label) == Some(&cue) {
+            return;
+        }
+        last.insert(label, cue);
+    }
+    let _ = window.emit_to(window.label(), "screen-edges", cue);
+}
+
+fn hide_screen_edges(window: &WebviewWindow) {
+    let cue = ScreenEdgeEvent {
+        left: None,
+        right: None,
+        top: None,
+        bottom: None,
+        origin_x: 0.0,
+        origin_y: 0.0,
+    };
+    if let Ok(mut last) = screen_edge_events().lock() {
+        last.insert(window.label().to_string(), cue);
+    }
+    let _ = window.emit_to(window.label(), "screen-edges", cue);
+}
+
+fn monitor_overlapping(app: &AppHandle, x: i32, y: i32, w: i32, h: i32) -> Option<tauri::Monitor> {
+    let monitors = app.available_monitors().ok()?;
+    let mut best_area = 0i64;
+    let mut best = None;
+    for monitor in monitors {
+        let origin = monitor.position();
+        let size = monitor.size();
+        let right = origin.x.saturating_add(size.width as i32);
+        let bottom = origin.y.saturating_add(size.height as i32);
+        let overlap_w = (x.saturating_add(w).min(right) - x.max(origin.x)).max(0);
+        let overlap_h = (y.saturating_add(h).min(bottom) - y.max(origin.y)).max(0);
+        let area = i64::from(overlap_w) * i64::from(overlap_h);
+        if area > best_area {
+            best_area = area;
+            best = Some(monitor);
+        }
+    }
+    best
 }
 
 fn monitor_containing(app: &AppHandle, x: i32, y: i32) -> Option<tauri::Monitor> {

@@ -453,6 +453,174 @@ pub fn clamp_position(
     (x, y)
 }
 
+/// Where a screen edge crosses this window, in CSS pixels from the window origin.
+/// The shadow gutter can leave the screen without the card doing so; that is not a cue.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct ScreenEdgeCue {
+    pub left: Option<f64>,
+    pub right: Option<f64>,
+    pub top: Option<f64>,
+    pub bottom: Option<f64>,
+}
+
+#[allow(clippy::too_many_arguments)]
+pub fn screen_edge_cue(
+    origin_x: i32,
+    origin_y: i32,
+    width: i32,
+    height: i32,
+    pad_x: i32,
+    pad_top: i32,
+    pad_bottom: i32,
+    screen_x: i32,
+    screen_y: i32,
+    screen_w: i32,
+    screen_h: i32,
+    scale: f64,
+) -> ScreenEdgeCue {
+    let scale = if scale.is_finite() && scale > 0.0 {
+        scale
+    } else {
+        1.0
+    };
+    let card_left = origin_x.saturating_add(pad_x);
+    let card_top = origin_y.saturating_add(pad_top);
+    let card_right = origin_x.saturating_add(width).saturating_sub(pad_x);
+    let card_bottom = origin_y.saturating_add(height).saturating_sub(pad_bottom);
+    let screen_right = screen_x.saturating_add(screen_w);
+    let screen_bottom = screen_y.saturating_add(screen_h);
+    let mark = |edge: i32, origin: i32, span: i32, card_start: i32, card_end: i32| -> Option<f64> {
+        if card_start >= edge || card_end <= edge {
+            return None;
+        }
+        let window_end = origin.saturating_add(span);
+        if edge <= origin || edge >= window_end {
+            return None;
+        }
+        Some(((f64::from(edge.saturating_sub(origin)) / scale) * 10.0).round() / 10.0)
+    };
+    ScreenEdgeCue {
+        left: mark(screen_x, origin_x, width, card_left, card_right),
+        right: mark(screen_right, origin_x, width, card_left, card_right),
+        top: mark(screen_y, origin_y, height, card_top, card_bottom),
+        bottom: mark(screen_bottom, origin_y, height, card_top, card_bottom),
+    }
+}
+
+/// When the card sits on the left or right of the work area and its bottom
+/// hangs past that area, shorten the window so the bottom meets the area.
+#[allow(clippy::too_many_arguments)]
+pub fn fit_side_snap_height(
+    origin_x: i32,
+    origin_y: i32,
+    width: i32,
+    height: i32,
+    pad_x: i32,
+    pad_bottom: i32,
+    area_x: i32,
+    area_w: i32,
+    area_bottom: i32,
+    min_h: i32,
+) -> i32 {
+    let left = origin_x.saturating_add(pad_x);
+    let right = origin_x.saturating_add(width).saturating_sub(pad_x);
+    let area_right = area_x.saturating_add(area_w);
+    let on_side = (left - area_x).abs() <= 2 || (right - area_right).abs() <= 2;
+    if !on_side {
+        return height;
+    }
+    let bottom = origin_y.saturating_add(height).saturating_sub(pad_bottom);
+    if bottom <= area_bottom {
+        return height;
+    }
+    let fitted = area_bottom
+        .saturating_add(pad_bottom)
+        .saturating_sub(origin_y);
+    if fitted < min_h {
+        return height;
+    }
+    fitted
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(super) enum StripEdge {
+    Top,
+    Bottom,
+    Left,
+    Right,
+}
+
+pub(super) fn strip_edge(value: &str) -> StripEdge {
+    match value.trim() {
+        "bottom" => StripEdge::Bottom,
+        "left" => StripEdge::Left,
+        "right" => StripEdge::Right,
+        _ => StripEdge::Top,
+    }
+}
+
+pub(super) fn strip_edge_name(edge: StripEdge) -> &'static str {
+    match edge {
+        StripEdge::Top => "top",
+        StripEdge::Bottom => "bottom",
+        StripEdge::Left => "left",
+        StripEdge::Right => "right",
+    }
+}
+
+pub(crate) fn normalize_pin_edge(value: &str) -> &'static str {
+    strip_edge_name(strip_edge(value))
+}
+
+pub(crate) fn normalize_pin_screen(value: &str) -> String {
+    let value = value.trim();
+    if value == "all"
+        || (value.starts_with("display:") && value.len() > "display:".len() && value.len() <= 180)
+    {
+        return value.to_string();
+    }
+    "cursor".into()
+}
+
+/// shortcut: two monitors with the same name share one choice; include the position if that shows up.
+pub(super) fn monitor_key(name: Option<&str>, x: i32, y: i32) -> String {
+    match name.map(str::trim).filter(|name| !name.is_empty()) {
+        Some(name) => format!("display:{name}"),
+        None => format!("display:{x},{y}"),
+    }
+}
+
+/// Physical frame of the tab strip along one edge of a work area.
+pub(super) fn strip_frame(
+    area_x: i32,
+    area_y: i32,
+    area_w: u32,
+    area_h: u32,
+    thick: u32,
+    edge: StripEdge,
+) -> (i32, i32, u32, u32) {
+    let area_w = area_w.max(1);
+    let area_h = area_h.max(1);
+    let thick_w = thick.max(1).min(area_w);
+    let thick_h = thick.max(1).min(area_h);
+    match edge {
+        StripEdge::Top => (area_x, area_y, area_w, thick_h),
+        StripEdge::Bottom => (
+            area_x,
+            area_y.saturating_add((area_h - thick_h) as i32),
+            area_w,
+            thick_h,
+        ),
+        StripEdge::Left => (area_x, area_y, thick_w, area_h),
+        StripEdge::Right => (
+            area_x.saturating_add((area_w - thick_w) as i32),
+            area_y,
+            thick_w,
+            area_h,
+        ),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -673,5 +841,97 @@ mod tests {
         let chosen_x = closer_snap_x(first_x, screen_x, memo_x);
         assert_eq!(chosen_x, memo_x);
         assert!(chosen_x > first_x);
+    }
+
+    #[test]
+    fn a_card_inside_the_screen_has_no_edge_cue() {
+        let cue = screen_edge_cue(100, 80, 400, 500, 24, 24, 32, 0, 0, 1920, 1080, 2.0);
+        assert_eq!(cue.left, None);
+        assert_eq!(cue.right, None);
+        assert_eq!(cue.top, None);
+        assert_eq!(cue.bottom, None);
+    }
+
+    #[test]
+    fn shadow_past_the_screen_is_not_an_offscreen_card() {
+        let cue = screen_edge_cue(-24, 40, 400, 500, 24, 24, 32, 0, 0, 1920, 1080, 1.0);
+        assert_eq!(cue.left, None);
+    }
+
+    #[test]
+    fn a_card_past_the_left_edge_marks_that_edge() {
+        let cue = screen_edge_cue(-64, 40, 400, 500, 24, 24, 32, 0, 0, 1920, 1080, 2.0);
+        assert_eq!(cue.left, Some(32.0));
+        assert_eq!(cue.right, None);
+        assert_eq!(cue.top, None);
+        assert_eq!(cue.bottom, None);
+    }
+
+    #[test]
+    fn a_side_snapped_memo_stops_at_the_bottom_of_the_work_area() {
+        assert_eq!(
+            fit_side_snap_height(-24, 100, 400, 1200, 24, 32, 0, 1920, 1080, 140),
+            1012
+        );
+        assert_eq!(
+            fit_side_snap_height(1544, 100, 400, 1200, 24, 32, 0, 1920, 1080, 140),
+            1012
+        );
+    }
+
+    #[test]
+    fn a_memo_that_is_not_on_the_side_keeps_its_height() {
+        assert_eq!(
+            fit_side_snap_height(100, 100, 400, 1200, 24, 32, 0, 1920, 1080, 140),
+            1200
+        );
+    }
+
+    #[test]
+    fn a_side_snapped_memo_that_already_fits_keeps_its_height() {
+        assert_eq!(
+            fit_side_snap_height(-24, 100, 400, 400, 24, 32, 0, 1920, 1080, 140),
+            400
+        );
+    }
+
+    #[test]
+    fn a_side_snap_does_not_shrink_below_the_minimum_height() {
+        assert_eq!(
+            fit_side_snap_height(-24, 1030, 400, 400, 24, 32, 0, 1920, 1080, 140),
+            400
+        );
+    }
+
+    #[test]
+    fn the_strip_sits_on_the_chosen_edge_of_the_work_area() {
+        assert_eq!(
+            strip_frame(10, 20, 1920, 1080, 24, StripEdge::Top),
+            (10, 20, 1920, 24)
+        );
+        assert_eq!(
+            strip_frame(10, 20, 1920, 1080, 24, StripEdge::Bottom),
+            (10, 1076, 1920, 24)
+        );
+        assert_eq!(
+            strip_frame(10, 20, 1920, 1080, 24, StripEdge::Left),
+            (10, 20, 24, 1080)
+        );
+        assert_eq!(
+            strip_frame(10, 20, 1920, 1080, 24, StripEdge::Right),
+            (1906, 20, 24, 1080)
+        );
+    }
+
+    #[test]
+    fn pin_screen_choice_keeps_cursor_every_display_or_a_named_display() {
+        assert_eq!(normalize_pin_screen(""), "cursor");
+        assert_eq!(normalize_pin_screen("nope"), "cursor");
+        assert_eq!(normalize_pin_screen("all"), "all");
+        assert_eq!(normalize_pin_screen("display:Dell"), "display:Dell");
+        assert_eq!(normalize_pin_edge("left"), "left");
+        assert_eq!(normalize_pin_edge("nope"), "top");
+        assert_eq!(monitor_key(Some("Dell"), 0, 0), "display:Dell");
+        assert_eq!(monitor_key(None, 1920, 0), "display:1920,0");
     }
 }

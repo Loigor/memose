@@ -1,5 +1,7 @@
+import type { Editable } from "./editable.ts";
+import { fieldsIn } from "./editable.ts";
 import { ensureTextSlots, liftedCodeIndex, type Block } from "./markdown-edit.ts";
-import { editorShell, estimateCharOffsetInLine, measureTextareaLines } from "./textarea.ts";
+import { editorShell, estimateCharOffsetInLine, measureTextareaLines, type TextLineMetric } from "./textarea.ts";
 
 export function focusLiftedCode(
   container: ParentNode,
@@ -21,9 +23,15 @@ export function focusLiftedCode(
   return true;
 }
 
+function focusEdge(field: Editable, at: number) {
+  field.focus();
+  const clamped = Math.max(0, Math.min(at, field.value.length));
+  field.setSelectionRange(clamped, clamped);
+}
+
 export function handleBlockMediaDeletion(
   container: HTMLElement,
-  area: HTMLTextAreaElement,
+  area: Editable,
   event: KeyboardEvent,
   getBlocks: () => Block[],
   removeMediaByIndex: (mediaIndex: number, focusBlockIndex: number, caretOffset: number) => void,
@@ -31,12 +39,14 @@ export function handleBlockMediaDeletion(
   if (event.shiftKey || event.altKey || event.metaKey || event.ctrlKey || event.isComposing) {
     return false;
   }
-  if (area.selectionStart !== area.selectionEnd) {
+  const start = area.selectionStart ?? 0;
+  const end = area.selectionEnd ?? start;
+  if (start !== end) {
     return false;
   }
   const index = Number(area.dataset.index);
   const items = getBlocks();
-  if (event.key === "Backspace" && area.selectionStart === 0) {
+  if (event.key === "Backspace" && start === 0) {
     const prevBlock = items[index - 1];
     if (prevBlock?.kind === "media") {
       event.preventDefault();
@@ -47,8 +57,16 @@ export function handleBlockMediaDeletion(
       removeMediaByIndex(index - 1, targetTextIndex, caretOffset);
       return true;
     }
+    const fields = fieldsIn(container);
+    const pos = fields.indexOf(area);
+    if (pos > 0) {
+      event.preventDefault();
+      const prev = fields[pos - 1];
+      focusEdge(prev, prev.value.length);
+      return true;
+    }
   }
-  if (event.key === "Delete" && area.selectionEnd === area.value.length) {
+  if (event.key === "Delete" && end === area.value.length) {
     const nextBlock = items[index + 1];
     if (nextBlock?.kind === "media") {
       event.preventDefault();
@@ -57,25 +75,22 @@ export function handleBlockMediaDeletion(
       return true;
     }
   }
-  if (event.key === "ArrowLeft" && area.selectionStart === 0) {
-    const areas = [...container.querySelectorAll<HTMLTextAreaElement>("textarea")];
-    const pos = areas.indexOf(area);
+  if (event.key === "ArrowLeft" && start === 0) {
+    const fields = fieldsIn(container);
+    const pos = fields.indexOf(area);
     if (pos > 0) {
       event.preventDefault();
-      const prev = areas[pos - 1];
-      prev.focus();
-      prev.setSelectionRange(prev.value.length, prev.value.length);
+      const prev = fields[pos - 1];
+      focusEdge(prev, prev.value.length);
       return true;
     }
   }
-  if (event.key === "ArrowRight" && area.selectionEnd === area.value.length) {
-    const areas = [...container.querySelectorAll<HTMLTextAreaElement>("textarea")];
-    const pos = areas.indexOf(area);
-    if (pos >= 0 && pos < areas.length - 1) {
+  if (event.key === "ArrowRight" && end === area.value.length) {
+    const fields = fieldsIn(container);
+    const pos = fields.indexOf(area);
+    if (pos >= 0 && pos < fields.length - 1) {
       event.preventDefault();
-      const next = areas[pos + 1];
-      next.focus();
-      next.setSelectionRange(0, 0);
+      focusEdge(fields[pos + 1], 0);
       return true;
     }
   }
@@ -84,36 +99,35 @@ export function handleBlockMediaDeletion(
 
 export function handleBlockAreaNavigation(
   container: HTMLElement,
-  area: HTMLTextAreaElement,
+  area: Editable,
   event: KeyboardEvent,
 ): boolean {
   if (event.shiftKey || event.altKey || event.metaKey || event.ctrlKey || event.isComposing) {
     return false;
   }
-  if (event.key === "ArrowUp" && area.selectionStart === area.selectionEnd) {
-    const before = area.value.slice(0, area.selectionStart);
+  const start = area.selectionStart ?? 0;
+  const end = area.selectionEnd ?? start;
+  if (event.key === "ArrowUp" && start === end) {
+    const before = area.value.slice(0, start);
     if (!before.includes("\n")) {
-      const areas = [...container.querySelectorAll<HTMLTextAreaElement>("textarea")];
-      const pos = areas.indexOf(area);
+      const fields = fieldsIn(container);
+      const pos = fields.indexOf(area);
       if (pos > 0) {
         event.preventDefault();
-        const prev = areas[pos - 1];
-        prev.focus();
-        prev.setSelectionRange(prev.value.length, prev.value.length);
+        const prev = fields[pos - 1];
+        focusEdge(prev, prev.value.length);
         return true;
       }
     }
   }
-  if (event.key === "ArrowDown" && area.selectionStart === area.selectionEnd) {
-    const after = area.value.slice(area.selectionEnd);
+  if (event.key === "ArrowDown" && start === end) {
+    const after = area.value.slice(end);
     if (!after.includes("\n")) {
-      const areas = [...container.querySelectorAll<HTMLTextAreaElement>("textarea")];
-      const pos = areas.indexOf(area);
-      if (pos >= 0 && pos < areas.length - 1) {
+      const fields = fieldsIn(container);
+      const pos = fields.indexOf(area);
+      if (pos >= 0 && pos < fields.length - 1) {
         event.preventDefault();
-        const next = areas[pos + 1];
-        next.focus();
-        next.setSelectionRange(0, 0);
+        focusEdge(fields[pos + 1], 0);
         return true;
       }
     }
@@ -122,7 +136,7 @@ export function handleBlockAreaNavigation(
 }
 
 export function syncInlineLineSlot(
-  area: HTMLTextAreaElement,
+  area: HTMLElement & { value: string },
   prevBlock: Block | undefined,
   row: HTMLElement | null,
   container: HTMLElement,
@@ -172,6 +186,88 @@ export type MediaDropTarget =
       height: number;
     };
 
+function measureRowLines(host: HTMLElement): TextLineMetric[] {
+  const rows = [...host.querySelectorAll<HTMLElement>(":scope > .md-row")];
+  const hostRect = host.getBoundingClientRect();
+  if (rows.length === 0) {
+    return [
+      {
+        text: "",
+        startOffset: 0,
+        endOffset: 0,
+        top: hostRect.top,
+        bottom: hostRect.top + 16,
+        left: hostRect.left,
+        right: hostRect.left,
+      },
+    ];
+  }
+  let offset = 0;
+  return rows.map((row) => {
+    const rect = row.getBoundingClientRect();
+    const text = row.textContent ?? "";
+    const textNode = [...row.childNodes].find(
+      (node) => node.nodeType === Node.TEXT_NODE && (node.textContent ?? "").length > 0,
+    );
+    let left = rect.left;
+    let right = rect.left;
+    if (textNode) {
+      const range = host.ownerDocument.createRange();
+      range.selectNodeContents(textNode);
+      const box = range.getBoundingClientRect();
+      if (box.width > 0) {
+        left = box.left;
+        right = box.right;
+      }
+    }
+    const start = offset;
+    offset += text.length + 1;
+    return {
+      text,
+      startOffset: start,
+      endOffset: start + text.length,
+      top: rect.top,
+      bottom: Math.max(rect.bottom, rect.top + 16),
+      left,
+      right,
+    };
+  });
+}
+
+function editorSurfaces(container: HTMLElement): Array<{
+  index: number;
+  value: string;
+  rect: DOMRect;
+  lines: TextLineMetric[];
+  probe: HTMLElement;
+}> {
+  const out: Array<{ index: number; value: string; rect: DOMRect; lines: TextLineMetric[]; probe: HTMLElement }> = [];
+  for (const area of container.querySelectorAll<HTMLTextAreaElement>("textarea[data-index]")) {
+    out.push({
+      index: Number(area.dataset.index),
+      value: area.value,
+      rect: area.getBoundingClientRect(),
+      lines: measureTextareaLines(area),
+      probe: area,
+    });
+  }
+  for (const host of container.querySelectorAll<HTMLElement>(".md-lines[data-index]")) {
+    const withValue = host as HTMLElement & { value?: unknown };
+    const value =
+      typeof withValue.value === "string"
+        ? withValue.value
+        : [...host.querySelectorAll(":scope > .md-row")].map((row) => row.textContent ?? "").join("\n");
+    out.push({
+      index: Number(host.dataset.index),
+      value,
+      rect: host.getBoundingClientRect(),
+      lines: measureRowLines(host),
+      probe: host,
+    });
+  }
+  return out;
+}
+
 export function findMediaDropTarget(
   container: HTMLElement,
   figure: HTMLElement,
@@ -179,9 +275,9 @@ export function findMediaDropTarget(
   clientX: number,
   clientY: number,
 ): MediaDropTarget | null {
-  const areas = [...container.querySelectorAll<HTMLTextAreaElement>("textarea[data-index]")];
+  const areas = editorSurfaces(container);
   for (const area of areas) {
-    const aRect = area.getBoundingClientRect();
+    const aRect = area.rect;
     if (
       area.value.length > 0 &&
       clientY >= aRect.top + 2 &&
@@ -189,8 +285,8 @@ export function findMediaDropTarget(
       clientX >= aRect.left &&
       clientX <= aRect.right
     ) {
-      const blockIndex = Number(area.dataset.index);
-      const lines = measureTextareaLines(area);
+      const blockIndex = area.index;
+      const lines = area.lines;
       for (let lineIdx = 0; lineIdx < lines.length; lineIdx += 1) {
         const lm = lines[lineIdx];
         const lineHeight = Math.max(16, lm.bottom - lm.top);
@@ -198,7 +294,7 @@ export function findMediaDropTarget(
         const distBottom = lm.bottom - clientY;
         const inMiddleBand = distTop >= 5 && distBottom >= 5;
         if (inMiddleBand && lm.text.length > 0) {
-          const charOffset = estimateCharOffsetInLine(area, lm, clientX);
+          const charOffset = estimateCharOffsetInLine(area.probe, lm, clientX);
           let caretX = lm.left;
           if (charOffset > lm.startOffset) {
             const ratio = (charOffset - lm.startOffset) / Math.max(1, lm.text.length);
@@ -219,8 +315,8 @@ export function findMediaDropTarget(
 
   const candidates: Extract<MediaDropTarget, { mode: "line" }>[] = [];
   for (const area of areas) {
-    const blockIndex = Number(area.dataset.index);
-    const lines = measureTextareaLines(area);
+    const blockIndex = area.index;
+    const lines = area.lines;
     const boundaries =
       area.value.length === 0 ? [lines[0].top] : [lines[0].top, ...lines.map((l) => l.bottom)];
     const maxLineIndex = boundaries.length - 1;
