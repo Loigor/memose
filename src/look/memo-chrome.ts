@@ -131,7 +131,7 @@ export function formatMenuHtml(): string {
     <button class="format-toggle coder-tool icon-button" type="button" aria-label="Format" aria-expanded="false" title="Format">Format</button>
     <div class="format-pop" hidden>
       <button type="button" data-format="document">Format document</button>
-      <button type="button" data-format="wrap" aria-pressed="false">Line wrap</button>
+      <button type="button" data-format="wrap" aria-pressed="false"><span class="format-check" aria-hidden="true"></span>Line wrap</button>
     </div>
   </div>`;
 }

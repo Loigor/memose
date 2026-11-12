@@ -426,9 +426,36 @@ test("coder toggle shows a line gutter on that memo", async ({ page }) => {
   await expect(page.locator(".md-line-text.is-long")).toHaveCount(1);
   await expect(page.locator(".md-overflow-dot")).toHaveCount(1);
   await format.click();
-  await page.locator('#format-pop button[data-format="wrap"]').click();
+  const wrap = page.locator('#format-pop button[data-format="wrap"]');
+  await expect(wrap.locator(".format-check")).toBeVisible();
+  await wrap.click();
   await expect(page.locator("#card")).toHaveAttribute("data-wrap", "");
+  await expect(wrap).toHaveAttribute("aria-pressed", "true");
   await expect(page.locator(".md-overflow-dot")).toHaveCount(0);
+});
+
+test("line wrap shows a long line and enter still adds one break", async ({ page }) => {
+  await openComposer(page);
+  const coder = page.locator("#coder-toggle");
+  await revealEditorButton(page, coder);
+  await coder.click();
+  const format = page.locator("#format-toggle");
+  await revealEditorButton(page, format);
+  await format.click();
+  await page.locator('#format-pop button[data-format="wrap"]').click();
+  const area = await composerTextarea(page);
+  await area.click();
+  const long = "w".repeat(120);
+  await area.pressSequentially(long, { delay: 1 });
+  await expect.poll(() => area.evaluate((el) => (el as HTMLTextAreaElement).value)).toBe(long);
+  await expect(page.locator(".md-gutter-n")).toHaveText(["1"]);
+  await page.keyboard.press("Enter");
+  await expect.poll(() => area.evaluate((el) => (el as HTMLTextAreaElement).value)).toBe(`${long}\n`);
+  await expect(page.locator(".md-gutter-n")).toHaveText(["1", "2"]);
+  await expect.poll(() => page.evaluate(() => {
+    const rows = [...document.querySelectorAll<HTMLElement>(".md-gutter-n")];
+    return rows.length > 1 ? rows[1].offsetTop - rows[0].offsetTop : 0;
+  })).toBeGreaterThan(24);
 });
 
 test("format json pretty-prints the memo", async ({ page }) => {

@@ -38,6 +38,11 @@
   align-self: flex-end;
 }
 
+.md-gutter-n {
+  display: block;
+  overflow: hidden;
+}
+
 .md-gutter {
   display: none;
   flex: none;

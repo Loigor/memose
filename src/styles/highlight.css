@@ -435,6 +435,8 @@ html[data-theme="dark"][data-mdhl-scheme="mono"] {
   white-space: pre-wrap;
   word-wrap: break-word;
   overflow-wrap: break-word;
+  /* hidden makes the textarea store a real break when a line wraps */
+  overflow-x: clip;
 }
 
 .md-field[data-coder][data-wrap] .md-overflow {

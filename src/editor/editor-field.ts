@@ -10,7 +10,7 @@ import {
   sourceToDisplay,
   type FoldView,
 } from "./code-fold.ts";
-import { copyIndentAfterBreak, indentWidthCols, remapLineMarks, setIndentWidth } from "./markdown-edit.ts";
+import { copyIndentAfterBreak, indentWidthCols, remapLineMarks, setIndentWidth, taskListOnEnter } from "./markdown-edit.ts";
 import { highlightMarkdown } from "./md-highlight.ts";
 
 export type HighlightScheme = "paper" | "cool" | "mono";
@@ -78,6 +78,9 @@ export function wrapEditorField(area: HTMLTextAreaElement): HTMLElement {
   attachLineMarks(field, area);
   folds.addEventListener("mousedown", (event) => toggleFold(area, event));
   area.addEventListener("scroll", () => syncEditorScroll(area));
+  area.addEventListener("keydown", (event) => {
+    keepWrapEnter(area, event);
+  });
   let resizeFrame = 0;
   new ResizeObserver(() => {
     if (resizeFrame) {
@@ -85,7 +88,11 @@ export function wrapEditorField(area: HTMLTextAreaElement): HTMLElement {
     }
     resizeFrame = requestAnimationFrame(() => {
       resizeFrame = 0;
-      markLongLines(highlight, fieldUsesCoder(area));
+      if (area.closest(".md-field")?.hasAttribute("data-wrap")) {
+        paintEditorField(area);
+      } else {
+        markLongLines(highlight, fieldUsesCoder(area));
+      }
     });
   }).observe(surface);
   paintEditorField(area);
@@ -107,6 +114,7 @@ export function paintEditorField(area: HTMLTextAreaElement) {
   const note = area.closest("#card, .stack-note");
   const wrap = Boolean(note?.hasAttribute("data-wrap"));
   field.toggleAttribute("data-wrap", coder && wrap);
+  area.wrap = field.hasAttribute("data-wrap") ? "soft" : "off";
   const shown = readNative(area);
   if (area.dataset.kind === "code") {
     highlight.innerHTML = showFoldMarks(highlightCode(shown, area.dataset.lang ?? ""));
@@ -132,6 +140,62 @@ export function paintEditorField(area: HTMLTextAreaElement) {
   syncEditorScroll(area);
   markLongLines(highlight, coder);
   placeLangBadge(field);
+  if (field.hasAttribute("data-wrap") && !relayingWrap) {
+    relayWrap(area);
+  }
+}
+
+let relayingWrap = false;
+
+function relayWrap(area: HTMLTextAreaElement) {
+  requestAnimationFrame(() => {
+    if (!area.isConnected || !area.closest(".md-field")?.hasAttribute("data-wrap")) {
+      return;
+    }
+    relayingWrap = true;
+    paintEditorField(area);
+    relayingWrap = false;
+  });
+}
+
+function keepWrapEnter(area: HTMLTextAreaElement, event: KeyboardEvent) {
+  if (
+    event.key !== "Enter" ||
+    event.shiftKey ||
+    event.altKey ||
+    event.metaKey ||
+    event.ctrlKey ||
+    event.isComposing ||
+    !area.closest(".md-field")?.hasAttribute("data-wrap")
+  ) {
+    return;
+  }
+  const value = readNative(area);
+  const start = nativeStart(area);
+  const end = nativeEnd(area);
+  if (area.dataset.kind !== "code" && taskListOnEnter(value, start, end)) {
+    return;
+  }
+  event.preventDefault();
+  foldWrite = true;
+  writeNative(area, value.slice(0, start) + "\n" + value.slice(end));
+  setNativeRange(area, start + 1, start + 1);
+  foldWrite = false;
+  area.dataset.indentBreak = "1";
+  area.dispatchEvent(new InputEvent("input", { bubbles: true, inputType: "insertLineBreak" }));
+}
+
+function rowHeights(area: HTMLTextAreaElement, count: number, lineHeight: number): number[] {
+  const plain = Array.from({ length: count }, () => lineHeight);
+  const field = area.closest(".md-field");
+  if (!(field instanceof HTMLElement) || !field.hasAttribute("data-wrap")) {
+    return plain;
+  }
+  const texts = field.querySelectorAll(".md-hl .md-line-text");
+  if (texts.length !== count) {
+    return plain;
+  }
+  return [...texts].map((text) => Math.max(1, text.getClientRects().length) * lineHeight);
 }
 
 export function refreshEditorFields(root: ParentNode = document) {
@@ -647,22 +711,25 @@ function paintMarkBars(area: HTMLTextAreaElement, field: HTMLElement) {
   const extend = codeGutter
     ? codeGutter.offsetWidth + (Number.parseFloat(getComputedStyle(codeGutter).marginLeft) || 0)
     : 0;
-  const key = `${sources.map((line) => (marks.lines.has(line) ? "1" : "0")).join("")}|${extend}`;
+  const heights = rowHeights(area, sources.length, lineHeight);
+  const key = `${sources.map((line) => (marks.lines.has(line) ? "1" : "0")).join("")}|${extend}|${heights.join(",")}`;
   if (layer.dataset.key === key && layer.childElementCount > 0) {
     return;
   }
   layer.dataset.key = key;
   layer.style.left = extend > 0 ? `${-extend}px` : "";
   layer.replaceChildren();
+  let top = padTop;
   sources.forEach((line, index) => {
-    if (!marks.lines.has(line)) {
-      return;
+    const height = heights[index] ?? lineHeight;
+    if (marks.lines.has(line)) {
+      const bar = document.createElement("div");
+      bar.className = "md-mark-bar";
+      bar.style.top = `${top}px`;
+      bar.style.height = `${height}px`;
+      layer.append(bar);
     }
-    const bar = document.createElement("div");
-    bar.className = "md-mark-bar";
-    bar.style.top = `${padTop + index * lineHeight}px`;
-    bar.style.height = `${lineHeight}px`;
-    layer.append(bar);
+    top += height;
   });
   layer.style.transform = `translateY(${-area.scrollTop}px)`;
 }
@@ -686,28 +753,31 @@ function paintFoldMarks(area: HTMLTextAreaElement, field: HTMLElement) {
   const style = getComputedStyle(area);
   const padTop = Number.parseFloat(style.paddingTop) || 0;
   const lineHeight = Number.parseFloat(style.lineHeight) || 18;
-  const key = `${padTop}:${lineHeight}:${markers.join(",")}`;
+  const heights = rowHeights(area, markers.length, lineHeight);
+  const key = `${padTop}:${lineHeight}:${markers.join(",")}:${heights.join(",")}`;
   if (host.dataset.key === key) {
     return;
   }
   host.dataset.key = key;
   const spacer = document.createElement("div");
   spacer.className = "md-fold-spacer";
-  spacer.style.height = `${padTop + markers.length * lineHeight}px`;
+  spacer.style.height = `${padTop + heights.reduce((sum, height) => sum + height, 0)}px`;
+  let top = padTop;
   markers.forEach((mark, index) => {
-    if (!mark) {
-      return;
+    const height = heights[index] ?? lineHeight;
+    if (mark) {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.className = "md-fold";
+      button.dataset.line = String((numbers[index] ?? 1) - 1);
+      button.textContent = mark === "shut" ? "▸" : "▾";
+      button.setAttribute("aria-expanded", mark === "open" ? "true" : "false");
+      button.setAttribute("aria-label", mark === "shut" ? "Unfold" : "Fold");
+      button.style.top = `${top}px`;
+      button.style.height = `${lineHeight}px`;
+      spacer.append(button);
     }
-    const button = document.createElement("button");
-    button.type = "button";
-    button.className = "md-fold";
-    button.dataset.line = String((numbers[index] ?? 1) - 1);
-    button.textContent = mark === "shut" ? "▸" : "▾";
-    button.setAttribute("aria-expanded", mark === "open" ? "true" : "false");
-    button.setAttribute("aria-label", mark === "shut" ? "Unfold" : "Fold");
-    button.style.top = `${padTop + index * lineHeight}px`;
-    button.style.height = `${lineHeight}px`;
-    spacer.append(button);
+    top += height;
   });
   host.replaceChildren(spacer);
 }
@@ -752,24 +822,45 @@ function paintNumbers(
     : undefined;
   const markKey = showBalls && marked && marked.size > 0 ? [...marked].sort((a, b) => a - b).join(",") : "";
   const lineHeight = Number.parseFloat(getComputedStyle(area).lineHeight) || 18;
-  const key = `${numbers.join("\n")}|${origin}|${markKey}|${lineHeight}`;
+  const heights = rowHeights(area, numbers.length, lineHeight);
+  const wrapped = area.closest(".md-field")?.hasAttribute("data-wrap") ?? false;
+  const key = `${numbers.join("\n")}|${origin}|${markKey}|${lineHeight}|${wrapped ? heights.join(",") : ""}`;
   if (gutter.dataset.lines === key) {
     return;
   }
   gutter.dataset.lines = key;
   const body = gutterBody(gutter);
-  body.textContent = numbers.join("\n");
-  if (!showBalls || !marked) {
-    return;
-  }
-  sources.forEach((line, index) => {
-    if (!marked.has(line)) {
+  if (!wrapped) {
+    body.textContent = numbers.join("\n");
+    if (!showBalls || !marked) {
       return;
     }
-    const ball = document.createElement("span");
-    ball.className = "md-line-ball";
-    ball.style.top = `${index * lineHeight + (lineHeight - 4) / 2}px`;
-    body.append(ball);
+    sources.forEach((line, index) => {
+      if (!marked.has(line)) {
+        return;
+      }
+      const ball = document.createElement("span");
+      ball.className = "md-line-ball";
+      ball.style.top = `${index * lineHeight + (lineHeight - 4) / 2}px`;
+      body.append(ball);
+    });
+    return;
+  }
+  body.replaceChildren();
+  let top = 0;
+  numbers.forEach((number, index) => {
+    const row = document.createElement("span");
+    row.className = "md-gutter-n";
+    row.style.height = `${heights[index] ?? lineHeight}px`;
+    row.textContent = String(number);
+    body.append(row);
+    if (showBalls && marked?.has(sources[index] ?? -1)) {
+      const ball = document.createElement("span");
+      ball.className = "md-line-ball";
+      ball.style.top = `${top + (lineHeight - 4) / 2}px`;
+      body.append(ball);
+    }
+    top += heights[index] ?? lineHeight;
   });
 }
 
