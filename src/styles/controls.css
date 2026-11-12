@@ -129,48 +129,16 @@ html.collapsed.hover-open #card > header .collapsed-chevron,
   background: var(--button-hover);
 }
 
-#coder-toggle.coder-tool,
-.coder-toggle.coder-tool,
-#format-toggle.coder-tool,
-.format-toggle.coder-tool {
-  color: color-mix(in srgb, var(--ink) 55%, #0f766e);
-  background: color-mix(in srgb, #0f766e 16%, var(--button));
-}
-
-html[data-theme="dark"] #coder-toggle.coder-tool,
-html[data-theme="dark"] .coder-toggle.coder-tool,
-html[data-theme="dark"] #format-toggle.coder-tool,
-html[data-theme="dark"] .format-toggle.coder-tool {
-  color: color-mix(in srgb, var(--ink) 55%, #5eead4);
-  background: color-mix(in srgb, #5eead4 18%, var(--button));
-}
-
-#coder-toggle.coder-tool[aria-pressed="true"],
-.coder-toggle.coder-tool[aria-pressed="true"],
-#format-toggle.coder-tool[aria-expanded="true"],
-.format-toggle.coder-tool[aria-expanded="true"] {
-  background: color-mix(in srgb, #0f766e 28%, var(--button));
-}
-
-html[data-theme="dark"] #coder-toggle.coder-tool[aria-pressed="true"],
-html[data-theme="dark"] .coder-toggle.coder-tool[aria-pressed="true"],
-html[data-theme="dark"] #format-toggle.coder-tool[aria-expanded="true"],
-html[data-theme="dark"] .format-toggle.coder-tool[aria-expanded="true"] {
-  background: color-mix(in srgb, #5eead4 30%, var(--button));
-}
-
-.coder-toggle {
-  font-size: 11px;
-  font-weight: 700;
-  letter-spacing: -0.04em;
+.coder-toggle,
+.format-toggle {
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0;
 }
 
 .format-toggle {
   width: auto;
-  padding: 0 7px;
-  font-size: 10px;
-  font-weight: 700;
-  letter-spacing: 0.02em;
+  padding: 0 8px;
 }
 
 #pin-toggle,

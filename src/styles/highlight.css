@@ -369,6 +369,8 @@ html[data-theme="dark"][data-mdhl-scheme="mono"] {
   font-size: inherit;
   line-height: inherit;
   letter-spacing: inherit;
+  font-kerning: none;
+  font-variant-ligatures: none;
   tab-size: inherit;
   white-space: pre;
   word-wrap: normal;
@@ -394,6 +396,8 @@ html[data-theme="dark"][data-mdhl-scheme="mono"] {
   font: inherit;
   line-height: inherit;
   letter-spacing: inherit;
+  font-kerning: none;
+  font-variant-ligatures: none;
   tab-size: inherit;
   white-space: inherit;
 }
@@ -435,8 +439,17 @@ html[data-theme="dark"][data-mdhl-scheme="mono"] {
   white-space: pre-wrap;
   word-wrap: break-word;
   overflow-wrap: break-word;
-  /* hidden makes the textarea store a real break when a line wraps */
-  overflow-x: clip;
+  /* hidden makes the textarea store a real break; clip paints the caret off the glyphs */
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: none;
+}
+
+#blocks .md-field[data-coder][data-wrap] .md-hl::-webkit-scrollbar,
+#blocks .md-field[data-coder][data-wrap] textarea::-webkit-scrollbar,
+.stack-blocks .md-field[data-coder][data-wrap] .md-hl::-webkit-scrollbar,
+.stack-blocks .md-field[data-coder][data-wrap] textarea::-webkit-scrollbar {
+  display: none;
 }
 
 .md-field[data-coder][data-wrap] .md-overflow {

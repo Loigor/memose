@@ -128,7 +128,7 @@ function markdownButtonsHtml(): string {
 
 export function formatMenuHtml(): string {
   return `<div class="format-anchor">
-    <button class="format-toggle coder-tool icon-button" type="button" aria-label="Format" aria-expanded="false" title="Format">Format</button>
+    <button class="format-toggle icon-button" type="button" aria-label="Format" aria-expanded="false" title="Format">Format</button>
     <div class="format-pop" hidden>
       <button type="button" data-format="document">Format document</button>
       <button type="button" data-format="wrap" aria-pressed="false"><span class="format-check" aria-hidden="true"></span>Line wrap</button>
@@ -195,7 +195,7 @@ export function stackHeaderHtml(): string {
             <button class="markdown-toggle icon-button" type="button" aria-label="Markdown toolbar" aria-pressed="false" title="Markdown toolbar">
               <span class="markdown-glyph" aria-hidden="true"></span>
             </button>
-            <button class="coder-toggle coder-tool icon-button" type="button" aria-label="Coder editor" aria-pressed="false" title="Coder editor">
+            <button class="coder-toggle icon-button" type="button" aria-label="Coder editor" aria-pressed="false" title="Coder editor">
               { }
             </button>
             ${formatMenuHtml()}

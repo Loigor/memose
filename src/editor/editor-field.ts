@@ -114,7 +114,7 @@ export function paintEditorField(area: HTMLTextAreaElement) {
   const note = area.closest("#card, .stack-note");
   const wrap = Boolean(note?.hasAttribute("data-wrap"));
   field.toggleAttribute("data-wrap", coder && wrap);
-  area.wrap = field.hasAttribute("data-wrap") ? "soft" : "off";
+  area.wrap = "soft";
   const shown = readNative(area);
   if (area.dataset.kind === "code") {
     highlight.innerHTML = showFoldMarks(highlightCode(shown, area.dataset.lang ?? ""));
