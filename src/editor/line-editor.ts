@@ -284,8 +284,8 @@ export function mountLineEditor(options: LineEditorOptions): { shell: HTMLElemen
     });
   };
 
-  const publish = (value: string, caret: { start: number; end: number }) => {
-    const closed = completeOpenFence(value, caret.start);
+  const publish = (value: string, caret: { start: number; end: number }, completeFence = false) => {
+    const closed = completeFence ? completeOpenFence(value, caret.start) : null;
     if (closed) {
       writeAll(closed.value);
       place(closed.start, closed.end);
@@ -325,7 +325,7 @@ export function mountLineEditor(options: LineEditorOptions): { shell: HTMLElemen
     const at = caret.start + 1;
     writeAll(next);
     place(at, at);
-    publish(next, { start: at, end: at });
+    publish(next, { start: at, end: at }, true);
   };
 
   const remember = () => {

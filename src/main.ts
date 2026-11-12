@@ -13,6 +13,7 @@ import {
   BlockHistory,
   cloneBlocks,
   readPlace,
+  remapBlockLines,
   restoreCaret,
   restorePlace,
   type Caret,
@@ -264,7 +265,10 @@ async function applyMemoSize(width?: number | null, height?: number | null) {
 const hostHistory = new BlockHistory();
 
 function pushHostUndo(force = true) {
-  hostHistory.push(noteBlocks, caret, force, readLineMarks(blocksEl), readFolds(blocksEl));
+  if (!hostHistory.shouldCapture(force)) {
+    return;
+  }
+  hostHistory.push(noteBlocks, caret, force, readLineMarks(blocksEl, hostMarks), readFolds(blocksEl, hostFolds));
 }
 
 function resetHostHistory() {
@@ -272,7 +276,12 @@ function resetHostHistory() {
 }
 
 function undoHost(): boolean {
-  const entry = hostHistory.takeUndo(noteBlocks, caret, readLineMarks(blocksEl), readFolds(blocksEl));
+  const entry = hostHistory.takeUndo(
+    noteBlocks,
+    caret,
+    readLineMarks(blocksEl, hostMarks),
+    readFolds(blocksEl, hostFolds),
+  );
   if (!entry) {
     return false;
   }
@@ -286,7 +295,12 @@ function undoHost(): boolean {
 }
 
 function redoHost(): boolean {
-  const entry = hostHistory.takeRedo(noteBlocks, caret, readLineMarks(blocksEl), readFolds(blocksEl));
+  const entry = hostHistory.takeRedo(
+    noteBlocks,
+    caret,
+    readLineMarks(blocksEl, hostMarks),
+    readFolds(blocksEl, hostFolds),
+  );
   if (!entry) {
     return false;
   }
@@ -314,8 +328,8 @@ blocksEl.addEventListener("memose-undo", () => {
   pushHostUndo(true);
 });
 blocksEl.addEventListener("memose-editor-view", () => {
-  hostFolds = readFolds(blocksEl);
-  hostMarks = readLineMarks(blocksEl);
+  hostFolds = readFolds(blocksEl, hostFolds);
+  hostMarks = readLineMarks(blocksEl, hostMarks);
   scheduleEditorView();
 });
 blocksEl.addEventListener("scroll", rememberPlace);
@@ -499,9 +513,14 @@ function togglePreview() {
 }
 
 function renderBlocks(focusName?: string) {
-  if (!skipEditorCapture && blocksEl.querySelector("textarea")) {
-    hostFolds = readFolds(blocksEl);
-    hostMarks = readLineMarks(blocksEl);
+  const captureView = !skipEditorCapture;
+  if (captureView && blocksEl.querySelector("textarea")) {
+    hostFolds = readFolds(blocksEl, hostFolds);
+    hostMarks = readLineMarks(blocksEl, hostMarks);
+  }
+  if (captureView && hostViewBlocks.length > 0) {
+    hostFolds = remapBlockLines(hostViewBlocks, noteBlocks, hostFolds);
+    hostMarks = remapBlockLines(hostViewBlocks, noteBlocks, hostMarks);
   }
   skipEditorCapture = false;
   const reuse = new Map<string, HTMLElement[]>();
@@ -847,11 +866,15 @@ function renderBlocks(focusName?: string) {
       area.addEventListener("beforeinput", () => {
         pushHostUndo(false);
       });
-      area.addEventListener("input", () => {
+      area.addEventListener("input", (event) => {
         block.text = area.value;
         syncInlineLineSlot(area, prevBlock, assignedRow, blocksEl, index === lastText);
         noteContent = serializeBlocks(noteBlocks);
-        if (block.kind === "text") {
+        if (
+          block.kind === "text" &&
+          event instanceof InputEvent &&
+          (event.inputType === "insertLineBreak" || event.inputType === "insertParagraph")
+        ) {
           const closed = completeOpenFence(area.value, area.selectionStart);
           if (closed) {
             area.value = closed.value;
@@ -903,10 +926,8 @@ function renderBlocks(focusName?: string) {
   if (blocksEl.querySelector("textarea")) {
     writeFolds(blocksEl, hostFolds);
     writeLineMarks(blocksEl, hostMarks);
-  } else {
-    hostFolds = [];
-    hostMarks = [];
   }
+  hostViewBlocks = cloneBlocks(noteBlocks);
   if (!focusName) {
     return;
   }
@@ -1205,8 +1226,8 @@ async function saveHostEditorView(id: string) {
   clearTimeout(editorViewTimer);
   editorViewTimer = undefined;
   if (blocksEl.querySelector("textarea")) {
-    hostFolds = readFolds(blocksEl);
-    hostMarks = readLineMarks(blocksEl);
+    hostFolds = readFolds(blocksEl, hostFolds);
+    hostMarks = readLineMarks(blocksEl, hostMarks);
   }
   const payload = {
     id,
@@ -1714,6 +1735,7 @@ let look: Look = { opacity: 100, hueLight: null, hueDark: null, swatches: [], th
 let coderWrap = false;
 let hostFolds: number[][] = [];
 let hostMarks: number[][] = [];
+let hostViewBlocks: Block[] = [];
 let editorViewTimer: ReturnType<typeof setTimeout> | undefined;
 let editorViewUnsaved = false;
 let skipEditorCapture = false;
@@ -2279,6 +2301,7 @@ notePaneEl.addEventListener("mousedown", () => {
 const notesRoot = document.querySelector<HTMLElement>("#notes") ?? cardEl;
 let tagCursorFrame = 0;
 let tagPress: { tag: string; x: number; y: number } | null = null;
+let tagClickHandled = false;
 notesRoot.addEventListener("mousedown", (event) => {
   tagPress = null;
   if (event.button !== 0) {
@@ -2302,6 +2325,10 @@ document.addEventListener("mouseup", (event) => {
   }
   const keep =
     area ?? (event.target instanceof Element ? event.target.closest<HTMLElement>(".md-tag") : null);
+  tagClickHandled = true;
+  window.setTimeout(() => {
+    tagClickHandled = false;
+  });
   openTagSearch(pressed.tag, keep);
 });
 notesRoot.addEventListener("click", (event) => {
@@ -2311,6 +2338,10 @@ notesRoot.addEventListener("click", (event) => {
   }
   event.preventDefault();
   event.stopPropagation();
+  if (tagClickHandled) {
+    tagClickHandled = false;
+    return;
+  }
   const area = editorTagArea(event.target);
   const keep =
     area ?? (event.target instanceof Element ? event.target.closest<HTMLElement>(".md-tag") : null);
@@ -3428,11 +3459,11 @@ if (isPreviewWindow()) {
       .then(async () => {
         clearTimeout(draftTimer);
         await flushEditorView();
-        coderWrap = false;
-        hostFolds = [];
-        hostMarks = [];
-        editorViewUnsaved = false;
         if (generation === openGen) {
+          coderWrap = false;
+          hostFolds = [];
+          hostMarks = [];
+          editorViewUnsaved = false;
           showStored("");
           paintCoder();
           editingId = null;

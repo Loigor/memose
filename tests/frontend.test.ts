@@ -11,7 +11,7 @@ import { braceFolds, displayToSource, expandFolds, foldView, foldsAfterEdit, sou
 import { highlightMarkdown } from "../src/editor/md-highlight.ts";
 import { tagAtOffset } from "../src/editor/md-tags.ts";
 import { uniqueFiles } from "../src/media/files.ts";
-import { BlockHistory, cloneBlocks, restorePlace } from "../src/editor/history.ts";
+import { BlockHistory, cloneBlocks, remapBlockLines, restorePlace } from "../src/editor/history.ts";
 import { withKeptScroll } from "../src/editor/textarea.ts";
 import { defaultLook, lookFromNote, namedTheme } from "../src/look/look.ts";
 import {
@@ -178,6 +178,13 @@ test("block buttons replace the current marker and keep list indent", () => {
   const numbered = applyOrdered("a\nb", 0, 3);
   assert.equal(numbered.value, "1. a\n2. b");
   assert.equal(applyList("```\ncode\n```", 4, 8).value, "```\ncode\n```");
+});
+
+test("block buttons adjust a multi-line selection once per original endpoint", () => {
+  const task = applyTask("abc\ndef", 2, 5);
+  assert.equal(task.value, "- [ ] abc\n- [ ] def");
+  assert.equal(task.start, 8);
+  assert.equal(task.end, 17);
 });
 
 test("applyTask and toggleTask manage markdown task lists and ignore code fences", () => {
@@ -539,6 +546,19 @@ test("BlockHistory keeps a line mark as its own undo step", () => {
   assert.deepEqual(undone?.blocks, cloneBlocks(text));
   const redone = history.takeRedo(text, caret, [[]]);
   assert.deepEqual(redone?.marks, [[1]]);
+});
+
+test("block line state follows an unchanged block when earlier blocks are inserted", () => {
+  const before = [
+    { kind: "text" as const, text: "intro" },
+    { kind: "code" as const, lang: "", text: "const x = 1;" },
+  ];
+  const after = [
+    { kind: "text" as const, text: "intro" },
+    { kind: "code" as const, lang: "json", text: "" },
+    { kind: "code" as const, lang: "", text: "const x = 1;" },
+  ];
+  assert.deepEqual(remapBlockLines(before, after, [[], [0]]), [[], [], [0]]);
 });
 
 test("syncIcon and platform helpers cover common states", () => {

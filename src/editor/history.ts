@@ -118,16 +118,48 @@ export function cloneBlocks(items: Block[]): Block[] {
   );
 }
 
+function blockKey(block: Block): string {
+  if (block.kind === "text") {
+    return `text:${block.text}`;
+  }
+  if (block.kind === "code") {
+    return `code:${block.lang}\n${block.text}`;
+  }
+  return `media:${block.name}:${block.label}:${block.width ?? ""}:${block.inline ?? ""}`;
+}
+
+export function remapBlockLines(before: Block[], after: Block[], rows: LineMarks): LineMarks {
+  const targets = new Map<string, number[]>();
+  after.forEach((block, index) => {
+    const key = blockKey(block);
+    const indexes = targets.get(key) ?? [];
+    indexes.push(index);
+    targets.set(key, indexes);
+  });
+  const mapped = Array.from({ length: after.length }, () => [] as number[]);
+  before.forEach((block, index) => {
+    const target = targets.get(blockKey(block))?.shift();
+    if (target !== undefined) {
+      mapped[target] = [...(rows[index] ?? [])];
+    }
+  });
+  return mapped;
+}
+
 export class BlockHistory {
   undoStack: NoteHistoryEntry[] = [];
   redoStack: NoteHistoryEntry[] = [];
   lastInputSnapAt = 0;
 
+  shouldCapture(force = true): boolean {
+    return force || this.undoStack.length === 0 || performance.now() - this.lastInputSnapAt >= 900;
+  }
+
   push(blocks: Block[], caret: Caret | null, force = true, marks: LineMarks = [], folds: LineMarks = []) {
-    const now = performance.now();
-    if (!force && now - this.lastInputSnapAt < 900 && this.undoStack.length > 0) {
+    if (!this.shouldCapture(force)) {
       return;
     }
+    const now = performance.now();
     const top = this.undoStack[this.undoStack.length - 1];
     if (top && sameSnapshot(blocks, marks, folds, top)) {
       top.caret = caret ? { ...caret } : null;

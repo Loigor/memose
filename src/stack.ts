@@ -8,7 +8,7 @@ import { activeField, editingHost, fieldAt, fieldsIn, type Editable } from "./ed
 import { applyMediaFigureSize, focusLiftedCode, handleBlockAreaNavigation, handleBlockMediaDeletion, syncInlineLineSlot } from "./editor/editor-blocks";
 import { codeSurface, denseLines, memoUsesCoder, readFolds, readLineMarks, refreshEditorFields, wrapEditorField, writeFolds, writeLineMarks } from "./editor/editor-field";
 import { filesFromTransfer } from "./media/files";
-import { BlockHistory, cloneBlocks, restoreCaret, type Caret } from "./editor/history";
+import { BlockHistory, cloneBlocks, remapBlockLines, restoreCaret, type Caret } from "./editor/history";
 import { namedTheme, type Look } from "./look/look";
 import {
   applyCode,
@@ -157,6 +157,8 @@ export type StackState = {
   lastError: string | null;
 };
 
+const renderedViewBlocks = new WeakMap<StackState, Block[]>();
+
 function sectionMarkRoot(state: StackState): ParentNode {
   if (stackEl) {
     for (const section of stackEl.querySelectorAll<HTMLElement>(".stack-note")) {
@@ -170,8 +172,17 @@ function sectionMarkRoot(state: StackState): ParentNode {
 }
 
 function pushSectionUndo(state: StackState, force = true) {
+  if (!state.history.shouldCapture(force)) {
+    return;
+  }
   const root = sectionMarkRoot(state);
-  state.history.push(state.blocks, state.caret, force, readLineMarks(root), readFolds(root));
+  state.history.push(
+    state.blocks,
+    state.caret,
+    force,
+    readLineMarks(root, state.marks),
+    readFolds(root, state.folds),
+  );
 }
 
 export function undoSection(section: HTMLElement, state: StackState): boolean {
@@ -179,8 +190,8 @@ export function undoSection(section: HTMLElement, state: StackState): boolean {
   const entry = state.history.takeUndo(
     state.blocks,
     state.caret,
-    readLineMarks(container ?? section),
-    readFolds(container ?? section),
+    readLineMarks(container ?? section, state.marks),
+    readFolds(container ?? section, state.folds),
   );
   if (!entry) {
     return false;
@@ -206,8 +217,8 @@ export function redoSection(section: HTMLElement, state: StackState): boolean {
   const entry = state.history.takeRedo(
     state.blocks,
     state.caret,
-    readLineMarks(container ?? section),
-    readFolds(container ?? section),
+    readLineMarks(container ?? section, state.marks),
+    readFolds(container ?? section, state.folds),
   );
   if (!entry) {
     return false;
@@ -255,8 +266,8 @@ stackEl?.addEventListener("memose-editor-view", (event) => {
   if (section && held) {
     const container = section.querySelector(".stack-blocks");
     if (container?.querySelector("textarea")) {
-      held.folds = readFolds(container);
-      held.marks = readLineMarks(container);
+      held.folds = readFolds(container, held.folds);
+      held.marks = readLineMarks(container, held.marks);
     }
     scheduleSectionSave(section, held);
   }
@@ -720,8 +731,8 @@ async function saveSectionEditorView(id: string, state: StackState) {
   const section = stackEl?.querySelector<HTMLElement>(`.stack-note[data-id="${CSS.escape(id)}"]`);
   const container = section?.querySelector(".stack-blocks");
   if (container?.querySelector("textarea")) {
-    state.folds = readFolds(container);
-    state.marks = readLineMarks(container);
+    state.folds = readFolds(container, state.folds);
+    state.marks = readLineMarks(container, state.marks);
   }
   await invoke("save_editor_view", {
     id,
@@ -794,10 +805,15 @@ function renderSectionBlocks(section: HTMLElement, state: StackState, focusName?
   }
   paintSectionCoder(section, state);
   if (container.querySelector("textarea")) {
-    state.folds = readFolds(container);
-    state.marks = readLineMarks(container);
+    state.folds = readFolds(container, state.folds);
+    state.marks = readLineMarks(container, state.marks);
   }
   state.blocks = ensureTextSlots(state.blocks);
+  const previousBlocks = renderedViewBlocks.get(state);
+  if (previousBlocks) {
+    state.folds = remapBlockLines(previousBlocks, state.blocks, state.folds);
+    state.marks = remapBlockLines(previousBlocks, state.blocks, state.marks);
+  }
   state.content = serializeBlocks(state.blocks);
   const reuse = new Map<string, HTMLElement[]>();
   for (const node of container.querySelectorAll<HTMLElement>("[data-media]")) {
@@ -1123,10 +1139,14 @@ function renderSectionBlocks(section: HTMLElement, state: StackState, focusName?
       area.addEventListener("beforeinput", () => {
         pushSectionUndo(state, false);
       });
-      area.addEventListener("input", () => {
+      area.addEventListener("input", (event) => {
         block.text = area.value;
         syncInlineLineSlot(area, prevBlock, assignedRow, container, index === lastIndex);
-        if (block.kind === "text") {
+        if (
+          block.kind === "text" &&
+          event instanceof InputEvent &&
+          (event.inputType === "insertLineBreak" || event.inputType === "insertParagraph")
+        ) {
           const closed = completeOpenFence(area.value, area.selectionStart);
           if (closed) {
             area.value = closed.value;
@@ -1173,10 +1193,8 @@ function renderSectionBlocks(section: HTMLElement, state: StackState, focusName?
   if (container.querySelector("textarea")) {
     writeFolds(container, state.folds);
     writeLineMarks(container, state.marks);
-  } else {
-    state.folds = [];
-    state.marks = [];
   }
+  renderedViewBlocks.set(state, cloneBlocks(state.blocks));
   resizeAllBlockTextareas(container);
   if (focusName) {
     const mediaIndex = state.blocks.findIndex((item) => item.kind === "media" && item.name === focusName);

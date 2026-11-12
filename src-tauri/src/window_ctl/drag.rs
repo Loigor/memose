@@ -23,6 +23,12 @@ fn height_sizing() -> &'static Mutex<HashMap<String, Instant>> {
     &SIZING
 }
 
+fn side_snap_heights() -> &'static Mutex<HashMap<String, i32>> {
+    static HEIGHTS: LazyLock<Mutex<HashMap<String, i32>>> =
+        LazyLock::new(|| Mutex::new(HashMap::new()));
+    &HEIGHTS
+}
+
 pub(super) fn suppress_settle(label: &str, duration: Duration) {
     if let Ok(mut map) = height_sizing().lock() {
         map.insert(label.to_string(), Instant::now() + duration);
@@ -281,6 +287,9 @@ fn snap_resized_edges(app: &AppHandle, window: &WebviewWindow) {
             height = next;
         }
     }
+    if let Ok(mut heights) = side_snap_heights().lock() {
+        heights.insert(window.label().to_string(), height);
+    }
     height = side_snap_height(app, window, x, y, width, height);
     if x == position.x
         && y == position.y
@@ -529,6 +538,9 @@ pub fn set_window_height(app: &AppHandle, label: &str, logical_height: i32) {
     let mut height = ((f64::from(logical_height.max(96))) * scale)
         .round()
         .max(1.0) as i32;
+    if let Ok(mut heights) = side_snap_heights().lock() {
+        heights.insert(label.to_string(), height);
+    }
     if let Ok(position) = window.outer_position() {
         height = side_snap_height(
             app,
@@ -1914,7 +1926,11 @@ fn side_snap_height(
     width: i32,
     height: i32,
 ) -> i32 {
+    let label = window.label();
     if !snap_enabled(app) {
+        if let Ok(mut heights) = side_snap_heights().lock() {
+            heights.remove(label);
+        }
         return height;
     }
     let Ok(scale) = window.scale_factor() else {
@@ -1926,14 +1942,20 @@ fn side_snap_height(
     let pad_x = (CARD_PAD_X * scale).round() as i32;
     let pad_bottom = (CARD_PAD_BOTTOM * scale).round() as i32;
     let min_h = (140.0 * scale).round() as i32;
-    let mut fitted = height;
+    let desired = side_snap_heights()
+        .lock()
+        .ok()
+        .and_then(|heights| heights.get(label).copied())
+        .unwrap_or(height)
+        .max(height);
+    let mut fitted = desired;
     for monitor in monitors {
         let area = monitor.work_area();
         let next = fit_side_snap_height(
             x,
             y,
             width,
-            height,
+            desired,
             pad_x,
             pad_bottom,
             area.position.x,
@@ -1943,6 +1965,13 @@ fn side_snap_height(
         );
         if next < fitted {
             fitted = next;
+        }
+    }
+    if let Ok(mut heights) = side_snap_heights().lock() {
+        if fitted < desired {
+            heights.insert(label.to_string(), desired);
+        } else {
+            heights.remove(label);
         }
     }
     fitted

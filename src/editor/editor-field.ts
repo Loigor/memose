@@ -592,8 +592,8 @@ function syncMarks(area: HTMLTextAreaElement) {
   notifyEditorView(area);
 }
 
-export function readLineMarks(root: ParentNode): number[][] {
-  const marks: number[][] = [];
+export function readLineMarks(root: ParentNode, current: number[][] = []): number[][] {
+  const marks = current.map((lines) => [...lines]);
   for (const area of root.querySelectorAll<HTMLTextAreaElement>("textarea")) {
     const index = Number(area.dataset.index);
     if (!Number.isInteger(index) || index < 0) {
@@ -712,8 +712,8 @@ export function denseLines(rows: number[][] | undefined): number[][] {
   });
 }
 
-export function readFolds(root: ParentNode): number[][] {
-  const folds: number[][] = [];
+export function readFolds(root: ParentNode, current: number[][] = []): number[][] {
+  const folds = current.map((lines) => [...lines]);
   for (const area of root.querySelectorAll<HTMLTextAreaElement>("textarea")) {
     const index = Number(area.dataset.index);
     if (!Number.isInteger(index) || index < 0) {
@@ -734,12 +734,14 @@ export function writeFolds(root: ParentNode, folds: number[][] | undefined) {
     if (kept.length === 0) {
       const state = foldState.get(area);
       if (state && state.folds.size > 0) {
+        const caret = area.selectionStart ?? 0;
         state.folds.clear();
-        showFolded(area, nativeStart(area));
+        showFolded(area, caret);
         foldState.delete(area);
       }
       continue;
     }
+    const caret = area.selectionStart ?? 0;
     const source = sourceText(area);
     const state: FoldState = {
       source,
@@ -749,7 +751,7 @@ export function writeFolds(root: ParentNode, folds: number[][] | undefined) {
     };
     foldState.set(area, state);
     installValue(area);
-    showFolded(area, nativeStart(area));
+    showFolded(area, caret);
   }
 }
 

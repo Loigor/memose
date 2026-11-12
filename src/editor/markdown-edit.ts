@@ -100,10 +100,10 @@ function rewriteLines(value: string, start: number, end: number, rewrite: (line:
         changed = true;
         const delta = next.length - line.length;
         lines[i] = next;
-        if (nextStart >= lineStart) {
+        if (from >= lineStart) {
           nextStart += delta;
         }
-        if (nextEnd >= lineStart) {
+        if (to >= lineStart) {
           nextEnd += delta;
         }
       }
