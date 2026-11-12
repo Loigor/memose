@@ -402,7 +402,7 @@ test("settings window separates visibility, window, editor, shortcuts, and sync"
     { id: "window", label: "Window" },
     { id: "editor", label: "Editor" },
     { id: "shortcuts", label: "Shortcuts" },
-    { id: "sync", label: "Sync (useMemos)" },
+    { id: "sync", label: "Sync" },
   ]);
   assert.match(html, /id="tab-visibility"[\s\S]*?aria-selected="true"/);
   assert.match(html, /Default memo visibility/);
