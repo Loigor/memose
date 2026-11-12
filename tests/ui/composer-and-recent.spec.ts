@@ -456,6 +456,12 @@ test("line wrap shows a long line and enter still adds one break", async ({ page
     const rows = [...document.querySelectorAll<HTMLElement>(".md-gutter-n")];
     return rows.length > 1 ? rows[1].offsetTop - rows[0].offsetTop : 0;
   })).toBeGreaterThan(24);
+  const first = page.locator(".md-gutter-n").first();
+  const height = await first.evaluate((el) => el.getBoundingClientRect().height);
+  await first.dblclick({ position: { x: 8, y: height - 4 } });
+  await expect(page.locator(".md-line-ball")).toHaveCount(1);
+  const ballTop = await page.locator(".md-line-ball").evaluate((el) => Number.parseFloat((el as HTMLElement).style.top));
+  expect(ballTop).toBeLessThan(height);
 });
 
 test("format json pretty-prints the memo", async ({ page }) => {

@@ -625,9 +625,16 @@ function gutterHit(area: HTMLTextAreaElement, event: MouseEvent): number | null 
     return null;
   }
   const sources = (gutter.dataset.sources ?? "").split(",").filter((part) => part !== "").map(Number);
-  const pad = Number.parseFloat(getComputedStyle(gutter).paddingTop) || 0;
-  const lineHeight = Number.parseFloat(getComputedStyle(area).lineHeight) || 18;
-  const index = Math.floor((event.clientY - gutter.getBoundingClientRect().top + gutter.scrollTop - pad) / lineHeight);
+  const rows = [...gutter.querySelectorAll<HTMLElement>(".md-gutter-n")];
+  const index = rows.length > 0
+    ? rows.findIndex((row) => {
+        const box = row.getBoundingClientRect();
+        return event.clientY >= box.top && event.clientY < box.bottom;
+      })
+    : Math.floor(
+        (event.clientY - gutter.getBoundingClientRect().top + gutter.scrollTop - (Number.parseFloat(getComputedStyle(gutter).paddingTop) || 0)) /
+          (Number.parseFloat(getComputedStyle(area).lineHeight) || 18),
+      );
   const line = sources[index];
   return Number.isInteger(line) ? line : null;
 }

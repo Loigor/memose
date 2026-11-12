@@ -1,6 +1,6 @@
 # Refinements after 1.0.3
 
-Notes from Windows testing on a multi-display desk. Order is the order to build them. The normal editor is last and is its own task.
+Notes from Windows testing on a multi-display desk. Order is the order they were built.
 
 ## 1. Fold does not unfold — bug
 
@@ -14,7 +14,7 @@ Hover may still peek the memo open. A click on the bar body, or focus in a text 
 
 A resized or snapped memo can end with most of its window outside the work area. The edge that left the screen is then hard to find.
 
-When the memo card crosses a screen edge, a 30px semi-transparent gradient is painted on that window, starting at the screen edge and fading into the window. The shadow gutter can sit past the edge without a cue. The cue follows the window as it moves.
+When the memo card crosses a screen edge, a 20px semi-transparent gradient is painted on that window, starting at the screen edge and fading into the window. The shadow gutter can sit past the edge without a cue. The cue follows the window as it moves.
 
 With window snapping on, a memo whose card sits on the left or right edge of the work area is shortened when its bottom would pass that area. The bottom of the window then meets the bottom of the work area. A memo that is not on a side edge keeps its height, and the window is not shrunk below its minimum height.
 
@@ -24,13 +24,6 @@ The pinned tab bar is a strip along one edge of a display’s work area. The def
 
 Settings, under Window & behavior, choose the display and the edge. The display is follow the cursor, one connected display, or every display. The edge is top, bottom, left, or right. Every display opens one strip window on each display. Left and right are vertical strips: a thin column on that edge that widens on hover, with the tab menu opening inward. Bottom and right stay pinned to that edge while the strip grows. The choice is saved and applied immediately when pinned mode is already on. A chosen display is remembered by its name. If it is unplugged, the strip follows the cursor until that display is back.
 
-## 4. Normal editor — separate task, last
+## 4. Normal editor
 
-The coder editor is usable. The normal editor is not, and it needs a rework rather than another small patch.
-
-Seen so far:
-
-- The caret is not on the character it is editing.
-- Backspace does not remove or leave a code block.
-
-Do this after the fold bug, the off-screen cues, and the tab-bar settings.
+The normal editor is the line editor in wysiwyg-markdown.md. The caret stays in the row it is editing. Backspace in an empty code block removes that block.
