@@ -33,6 +33,7 @@ export function memoUsesCoder(explicit: boolean | null | undefined): boolean {
 }
 
 export function wrapEditorField(area: HTMLTextAreaElement): HTMLElement {
+  area.setAttribute("data-block-field", "");
   const existing = area.closest(".md-field");
   if (existing instanceof HTMLElement) {
     paintEditorField(area);
@@ -71,25 +72,30 @@ export function paintEditorField(area: HTMLTextAreaElement) {
     return;
   }
   const highlight = field.querySelector<HTMLElement>(".md-hl");
-  const gutter = field.querySelector<HTMLElement>(".md-gutter");
+  const gutter = primaryGutter(field);
   if (!highlight || !gutter) {
     return;
   }
   const coder = fieldUsesCoder(area);
   field.toggleAttribute("data-coder", coder);
-  const wrap = Boolean(area.closest("#card, .stack-note")?.hasAttribute("data-wrap"));
+  const note = area.closest("#card, .stack-note");
+  const wrap = Boolean(note?.hasAttribute("data-wrap"));
   field.toggleAttribute("data-wrap", coder && wrap);
   if (prefs.markdownHighlight || coder) {
     highlight.innerHTML = highlightMarkdown(area.value, { tags: !coder });
   } else {
     highlight.replaceChildren();
   }
-  if (coder) {
-    paintGutter(gutter, area.value.split("\n").length);
+  const scope = area.closest("#blocks, .stack-blocks");
+  if (scope) {
+    renumberGutters(scope, Boolean(note?.hasAttribute("data-coder")));
+  } else if (coder) {
+    const count = lineCount(area.value);
+    paintNumbers(gutter, 1, count, Math.max(2, String(count).length));
+    codeGutter(field, false);
   } else {
-    gutter.textContent = "";
-    gutter.style.removeProperty("--gutter-cols");
-    delete gutter.dataset.lines;
+    clearGutter(gutter);
+    codeGutter(field, false);
   }
   syncEditorScroll(area);
   markLongLines(highlight, coder);
@@ -128,14 +134,104 @@ function fieldUsesCoder(area: HTMLTextAreaElement): boolean {
   return Boolean(area.closest("#card, .stack-note")?.hasAttribute("data-coder"));
 }
 
-function paintGutter(gutter: HTMLElement, count: number) {
-  const digits = String(Math.max(1, count)).length;
-  gutter.style.setProperty("--gutter-cols", String(Math.max(2, digits)));
-  if (gutter.dataset.lines === String(count)) {
+function lineCount(value: string): number {
+  return Math.max(1, value.split("\n").length);
+}
+
+function primaryGutter(field: HTMLElement): HTMLElement | null {
+  return field.querySelector<HTMLElement>(":scope > .md-gutter:not(.md-gutter-code)");
+}
+
+function clearGutter(gutter: HTMLElement) {
+  gutter.textContent = "";
+  gutter.style.removeProperty("--gutter-cols");
+  delete gutter.dataset.lines;
+}
+
+function paintNumbers(gutter: HTMLElement, start: number, count: number, cols: number) {
+  gutter.style.setProperty("--gutter-cols", String(cols));
+  const key = `${start}:${count}`;
+  if (gutter.dataset.lines === key) {
     return;
   }
-  gutter.dataset.lines = String(count);
-  gutter.textContent = Array.from({ length: count }, (_, index) => String(index + 1)).join("\n");
+  gutter.dataset.lines = key;
+  gutter.textContent = Array.from({ length: count }, (_, index) => String(start + index)).join("\n");
+}
+
+function codeGutter(field: HTMLElement, on: boolean): HTMLElement | null {
+  const existing = field.querySelector<HTMLElement>(":scope > .md-gutter.md-gutter-code");
+  if (!on) {
+    existing?.remove();
+    return null;
+  }
+  if (existing) {
+    return existing;
+  }
+  const gutter = document.createElement("div");
+  gutter.className = "md-gutter md-gutter-code";
+  gutter.setAttribute("aria-hidden", "true");
+  const surface = field.querySelector(":scope > .md-surface");
+  if (surface) {
+    field.insertBefore(gutter, surface);
+  } else {
+    field.append(gutter);
+  }
+  return gutter;
+}
+
+function renumberGutters(scope: ParentNode, coderNote: boolean) {
+  const areas = [...scope.querySelectorAll<HTMLTextAreaElement>("textarea")];
+  if (!coderNote) {
+    for (const area of areas) {
+      const field = area.closest(".md-field");
+      if (!(field instanceof HTMLElement)) {
+        continue;
+      }
+      const gutter = primaryGutter(field);
+      codeGutter(field, false);
+      if (!gutter) {
+        continue;
+      }
+      if (area.dataset.kind === "code") {
+        const count = lineCount(area.value);
+        paintNumbers(gutter, 1, count, Math.max(2, String(count).length));
+      } else {
+        clearGutter(gutter);
+      }
+    }
+    return;
+  }
+  let nextLine = 1;
+  const rows = areas.map((area) => {
+    const count = lineCount(area.value);
+    const start = nextLine;
+    nextLine += count;
+    return { area, start, count };
+  });
+  const cols = Math.max(2, String(Math.max(1, nextLine - 1)).length);
+  for (const row of rows) {
+    const field = row.area.closest(".md-field");
+    if (!(field instanceof HTMLElement)) {
+      continue;
+    }
+    const gutter = primaryGutter(field);
+    if (!gutter || !field.hasAttribute("data-coder")) {
+      if (gutter) {
+        clearGutter(gutter);
+      }
+      codeGutter(field, false);
+      continue;
+    }
+    paintNumbers(gutter, row.start, row.count, cols);
+    if (row.area.dataset.kind === "code") {
+      const local = codeGutter(field, true);
+      if (local) {
+        paintNumbers(local, 1, row.count, Math.max(2, String(row.count).length));
+      }
+    } else {
+      codeGutter(field, false);
+    }
+  }
 }
 
 function overflowLayer(surface: HTMLElement): HTMLElement {
@@ -244,7 +340,6 @@ function syncEditorScroll(area: HTMLTextAreaElement) {
     return;
   }
   const highlight = field.querySelector<HTMLElement>(".md-hl");
-  const gutter = field.querySelector<HTMLElement>(".md-gutter");
   const shift = field.querySelector<HTMLElement>(".md-overflow-shift");
   if (highlight) {
     highlight.scrollTop = area.scrollTop;
@@ -253,7 +348,7 @@ function syncEditorScroll(area: HTMLTextAreaElement) {
   if (shift) {
     shift.style.transform = `translateY(${-area.scrollTop}px)`;
   }
-  if (gutter) {
+  for (const gutter of field.querySelectorAll<HTMLElement>(":scope > .md-gutter")) {
     gutter.scrollTop = area.scrollTop;
   }
 }

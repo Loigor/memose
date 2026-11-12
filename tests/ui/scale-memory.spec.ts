@@ -75,7 +75,7 @@ test.describe("@scale memory and DOM budgets", () => {
     for (let i = 0; i < 50; i += 1) {
       await mode.click();
     }
-    await expect(page.locator("#preview, #blocks textarea").first()).toBeVisible();
+    await expect(page.locator("#preview:visible, #blocks .md-lines, #blocks textarea").first()).toBeVisible();
     for (let i = 0; i < 70; i += 1) {
       await area.fill(`edit ${i}\n${content.slice(0, 200)}`);
     }

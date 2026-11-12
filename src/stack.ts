@@ -4,6 +4,7 @@ import DOMPurify from "dompurify";
 import { marked } from "marked";
 
 import { audienceChoice, revealPressedChoice } from "./look/audience-ui";
+import { activeField, editingHost, fieldAt, fieldsIn, type Editable } from "./editor/editable";
 import { applyMediaFigureSize, focusLiftedCode, handleBlockAreaNavigation, handleBlockMediaDeletion, syncInlineLineSlot } from "./editor/editor-blocks";
 import { memoUsesCoder, refreshEditorFields, wrapEditorField } from "./editor/editor-field";
 import { filesFromTransfer } from "./media/files";
@@ -16,6 +17,7 @@ import {
   applyTitle,
   closedFenceIn,
   completeOpenFence,
+  dropCodeBlock,
   ensureTextSlots,
   isTypedBlock,
   noteTitle,
@@ -35,6 +37,7 @@ import { markdownToolbarHtml, paintSurface, paintThemeButton, paperAt, stackHead
 import { hueSwatches, onHueSwatches, saveHueSwatches } from "./look/swatches";
 import { pointOnScrollGutter, type ScrollBox } from "./dom";
 import { inTauri, isPreviewWindow } from "./platform";
+import { mountLineEditor } from "./editor/line-editor";
 import { editorShell, resizeAllBlockTextareas, sizeBlockTextarea } from "./editor/textarea";
 import { exactStamp, relativeTime } from "./time";
 import type { MemoSpace, Note } from "./types";
@@ -563,9 +566,10 @@ export function paintSectionAudience(section: HTMLElement, state: StackState) {
   syncHeaderCompact();
 }
 
-export function sectionAreaSelection(area: HTMLTextAreaElement, state: StackState): { start: number; end: number } {
+export function sectionAreaSelection(area: Editable, state: StackState): { start: number; end: number } {
   const index = Number(area.dataset.index ?? 0);
-  if (document.activeElement === area) {
+  const active = document.activeElement;
+  if (active instanceof Node && (active === area || area.contains(active))) {
     return {
       start: area.selectionStart ?? area.value.length,
       end: area.selectionEnd ?? area.value.length,
@@ -579,21 +583,23 @@ export function sectionAreaSelection(area: HTMLTextAreaElement, state: StackStat
   return { start: area.value.length, end: area.value.length };
 }
 
-export function sectionTargetArea(section: HTMLElement, state: StackState): HTMLTextAreaElement | null {
+export function sectionTargetArea(section: HTMLElement, state: StackState): Editable | null {
   const container = section.querySelector<HTMLElement>(".stack-blocks");
   if (!container) {
     return null;
   }
-  if (document.activeElement instanceof HTMLTextAreaElement && container.contains(document.activeElement)) {
-    return document.activeElement;
+  const active = activeField(container);
+  if (active) {
+    return active;
   }
   if (state.caret) {
-    const remembered = container.querySelector<HTMLTextAreaElement>(`textarea[data-index="${state.caret.index}"]`);
+    const remembered = fieldAt(container, state.caret.index);
     if (remembered) {
       return remembered;
     }
   }
-  return container.querySelector<HTMLTextAreaElement>("textarea:last-of-type");
+  const fields = fieldsIn(container);
+  return fields[fields.length - 1] ?? null;
 }
 
 function scheduleSectionSave(section: HTMLElement, state: StackState) {
@@ -636,7 +642,7 @@ function scheduleSectionSave(section: HTMLElement, state: StackState) {
   );
 }
 
-export function applySectionEdit(section: HTMLElement, state: StackState, area: HTMLTextAreaElement, edit: Edit) {
+export function applySectionEdit(section: HTMLElement, state: StackState, area: Editable, edit: Edit) {
   const index = Number(area.dataset.index ?? 0);
   const block = state.blocks[index];
   if (!block || !isTypedBlock(block)) {
@@ -660,7 +666,9 @@ export function applySectionEdit(section: HTMLElement, state: StackState, area: 
     scheduleSectionSave(section, state);
     return;
   }
-  sizeBlockTextarea(area);
+  if (area instanceof HTMLTextAreaElement) {
+    sizeBlockTextarea(area);
+  }
   area.focus();
   const start = Math.min(edit.start, area.value.length);
   const end = Math.min(edit.end, area.value.length);
@@ -709,12 +717,131 @@ function renderSectionBlocks(section: HTMLElement, state: StackState, focusName?
   container.replaceChildren();
   const lastIndex = state.blocks.length - 1;
   let currentRow: HTMLElement | null = null;
-  let currentRowSideArea: HTMLTextAreaElement | null = null;
+  let currentRowSideArea: HTMLElement | null = null;
 
   state.blocks.forEach((block, index) => {
     if (isTypedBlock(block)) {
       const prevBlock = state.blocks[index - 1];
       const isAfterMedia = prevBlock?.kind === "media";
+      const canSitOnMediaLine =
+        block.kind === "text" &&
+        isAfterMedia &&
+        currentRow !== null &&
+        currentRowSideArea === null &&
+        !block.text.includes("\n");
+      if (block.kind === "text" && !memoUsesCoder(state.coder)) {
+        const assignedRow = canSitOnMediaLine ? currentRow : null;
+        let field: Editable | null = null;
+        const mounted = mountLineEditor({
+          text: block.text,
+          index,
+          placeholder: index === 0 && state.blocks.length === 1 ? "Write a memo..." : "",
+          grow: index === lastIndex && !canSitOnMediaLine,
+          inline: canSitOnMediaLine,
+          empty: block.text.length === 0 && state.blocks.length > 1 && !canSitOnMediaLine,
+          container,
+          blocks: () => state.blocks,
+          undo: (force) => {
+            pushSectionUndo(state, force);
+          },
+          change: (value, place) => {
+            if (!field) {
+              return;
+            }
+            block.text = value;
+            syncInlineLineSlot(field, prevBlock, assignedRow, container, index === lastIndex);
+            state.caret = { index, start: place.start, end: place.end };
+            state.content = serializeBlocks(state.blocks);
+            scheduleSectionSave(section, state);
+          },
+          reparse: (value) => {
+            block.text = value;
+            state.content = serializeBlocks(state.blocks);
+            const fromIndex = index;
+            state.blocks = parseBlocks(state.content);
+            renderSectionBlocks(section, state);
+            focusLiftedCode(container, state.blocks, fromIndex, (next) => {
+              state.caret = next;
+            });
+            scheduleSectionSave(section, state);
+          },
+          apply: (edit) => {
+            if (field) {
+              applySectionEdit(section, state, field, edit);
+            }
+          },
+          removeMedia: (mediaIndex, focusIdx, caretPos) => {
+            pushSectionUndo(state, true);
+            state.blocks = ensureTextSlots(state.blocks.filter((_, idx) => idx !== mediaIndex));
+            state.content = serializeBlocks(state.blocks);
+            renderSectionBlocks(section, state);
+            scheduleSectionSave(section, state);
+            const target = fieldAt(container, focusIdx);
+            if (target) {
+              target.focus();
+              const clamped = Math.min(caretPos, target.value.length);
+              target.setSelectionRange(clamped, clamped);
+            }
+          },
+          splitInline: (before, after) => {
+            pushSectionUndo(state, true);
+            if (prevBlock?.kind === "media") {
+              prevBlock.inline = before.length > 0;
+            }
+            state.blocks.splice(index, 1, { kind: "text", text: before }, { kind: "text", text: `\n${after}` });
+            state.blocks = ensureTextSlots(state.blocks);
+            state.content = serializeBlocks(state.blocks);
+            renderSectionBlocks(section, state);
+            scheduleSectionSave(section, state);
+            const target = fieldAt(container, index);
+            if (target) {
+              target.focus();
+              const pos = Math.min(before.length + 1, target.value.length);
+              target.setSelectionRange(pos, pos);
+            }
+          },
+          releaseInline: () => {
+            if (!field) {
+              return;
+            }
+            if (prevBlock?.kind === "media") {
+              prevBlock.inline = false;
+            }
+            field.classList.remove("inline-line-slot");
+            if (index === lastIndex) {
+              field.classList.add("grow");
+            }
+            const host = editorShell(field);
+            if (assignedRow && host.parentElement === assignedRow) {
+              assignedRow.after(host);
+            } else {
+              container.append(host);
+            }
+            field.focus();
+          },
+          allowTab: () => true,
+          onCaret: () => {
+            if (!field) {
+              return;
+            }
+            state.caret = {
+              index,
+              start: field.selectionStart ?? field.value.length,
+              end: field.selectionEnd ?? field.value.length,
+            };
+          },
+        });
+        field = mounted.field;
+        if (canSitOnMediaLine && currentRow) {
+          currentRow.append(mounted.shell);
+          currentRowSideArea = field;
+        } else {
+          currentRow = null;
+          currentRowSideArea = null;
+          container.append(mounted.shell);
+        }
+        return;
+      }
       const area = document.createElement("textarea");
       area.dataset.index = String(index);
       area.dataset.kind = block.kind;
@@ -725,12 +852,6 @@ function renderSectionBlocks(section: HTMLElement, state: StackState, focusName?
       area.autocomplete = "off";
       area.setAttribute("autocorrect", "off");
       area.setAttribute("autocapitalize", "off");
-      const canSitOnMediaLine =
-        block.kind === "text" &&
-        isAfterMedia &&
-        currentRow !== null &&
-        currentRowSideArea === null &&
-        !block.text.includes("\n");
       if (index === 0 && state.blocks.length === 1 && block.kind === "text") {
         area.placeholder = "Write a memo...";
       } else if (canSitOnMediaLine) {
@@ -755,6 +876,33 @@ function renderSectionBlocks(section: HTMLElement, state: StackState, focusName?
       area.addEventListener("focus", rememberCaret);
       area.addEventListener("keydown", (event) => {
         if (
+          block.kind === "code" &&
+          event.key === "Backspace" &&
+          !event.shiftKey &&
+          !event.altKey &&
+          !event.metaKey &&
+          !event.ctrlKey &&
+          !event.isComposing &&
+          area.value.length === 0 &&
+          (area.selectionStart ?? 0) === (area.selectionEnd ?? 0)
+        ) {
+          event.preventDefault();
+          pushSectionUndo(state, true);
+          const dropped = dropCodeBlock(state.blocks, index);
+          state.blocks = dropped.blocks;
+          state.content = serializeBlocks(state.blocks);
+          renderSectionBlocks(section, state);
+          scheduleSectionSave(section, state);
+          const target = fieldAt(container, dropped.index);
+          if (target) {
+            target.focus();
+            const clamped = Math.min(dropped.offset, target.value.length);
+            target.setSelectionRange(clamped, clamped);
+            state.caret = { index: dropped.index, start: clamped, end: clamped };
+          }
+          return;
+        }
+        if (
           handleBlockMediaDeletion(
             container,
             area,
@@ -766,7 +914,7 @@ function renderSectionBlocks(section: HTMLElement, state: StackState, focusName?
               state.content = serializeBlocks(state.blocks);
               renderSectionBlocks(section, state);
               scheduleSectionSave(section, state);
-              const target = container.querySelector<HTMLTextAreaElement>(`textarea[data-index="${focusIdx}"]`);
+              const target = fieldAt(container, focusIdx);
               if (target) {
                 target.focus();
                 const clamped = Math.min(caretPos, target.value.length);
@@ -825,7 +973,7 @@ function renderSectionBlocks(section: HTMLElement, state: StackState, focusName?
           state.content = serializeBlocks(state.blocks);
           renderSectionBlocks(section, state);
           scheduleSectionSave(section, state);
-          const target = container.querySelector<HTMLTextAreaElement>(`textarea[data-index="${index}"]`);
+          const target = fieldAt(container, index);
           if (target) {
             target.focus();
             const pos = Math.min(beforeLine.length + 1, target.value.length);
@@ -911,9 +1059,23 @@ function renderSectionBlocks(section: HTMLElement, state: StackState, focusName?
   resizeAllBlockTextareas(container);
   if (focusName) {
     const mediaIndex = state.blocks.findIndex((item) => item.kind === "media" && item.name === focusName);
-    const target = container.querySelector<HTMLTextAreaElement>(`textarea[data-index="${mediaIndex + 1}"]`);
-    target?.focus();
+    fieldAt(container, mediaIndex + 1)?.focus();
   }
+}
+
+export function rerenderStackEditors() {
+  stackEl?.querySelectorAll<HTMLElement>(".stack-note").forEach((section) => {
+    const id = section.dataset.id;
+    const state = id ? stackState.get(id) : undefined;
+    if (!state) {
+      return;
+    }
+    const preview = section.querySelector<HTMLElement>(".stack-preview");
+    if (preview && !preview.hidden) {
+      return;
+    }
+    renderSectionBlocks(section, state);
+  });
 }
 
 function syncSection(section: HTMLElement, note: Note) {
@@ -1443,6 +1605,10 @@ function buildSection(note: Note): HTMLElement {
     }
     state.coder = !memoUsesCoder(state.coder);
     paintSectionCoder(section, state);
+    const previewOpen = section.querySelector<HTMLElement>(".stack-preview");
+    if (!previewOpen || previewOpen.hidden) {
+      renderSectionBlocks(section, state);
+    }
     refreshEditorFields(section);
     resizeAllBlockTextareas(section);
     saveSectionLook(note.id, state);
@@ -1893,7 +2059,7 @@ export function dragBlocked(target: EventTarget | null): boolean {
     target instanceof Element &&
     Boolean(
       target.closest(
-        "button, a, input, textarea, select, audio, video, .media, .media-audio, .file-attachment, #media-context-menu, #resize-grip, .resize-handle, #color-pop, #audience-pop, #format-pop, #md-toolbar, #editor-tools, .color-pop, .audience-pop, .format-pop, .md-toolbar, .editor-tools, .md-tag",
+        "button, a, input, textarea, .md-lines, select, audio, video, .media, .media-audio, .file-attachment, #media-context-menu, #resize-grip, .resize-handle, #color-pop, #audience-pop, #format-pop, #md-toolbar, #editor-tools, .color-pop, .audience-pop, .format-pop, .md-toolbar, .editor-tools, .md-tag",
       ),
     )
   );
@@ -2069,7 +2235,7 @@ function typingNote(): boolean {
     return false;
   }
   const el = document.activeElement;
-  return el instanceof HTMLTextAreaElement || el instanceof HTMLInputElement;
+  return el instanceof HTMLTextAreaElement || el instanceof HTMLInputElement || editingHost(el) != null;
 }
 
 function slideOut() {
@@ -2245,9 +2411,13 @@ export function wireChrome() {
         lastActiveSection = "host";
       }
     }
-    if (target instanceof HTMLTextAreaElement || (target instanceof HTMLInputElement && target.type !== "range")) {
-      const section = target.closest<HTMLElement>(".stack-note");
-      const nextHold = section?.dataset.id ?? (cardEl.contains(target) ? "host" : null);
+    const field =
+      target instanceof HTMLTextAreaElement || (target instanceof HTMLInputElement && target.type !== "range")
+        ? target
+        : editingHost(target);
+    if (field) {
+      const section = field.closest<HTMLElement>(".stack-note");
+      const nextHold = section?.dataset.id ?? (cardEl.contains(field) ? "host" : null);
       if (nextHold && nextHold !== editingHoldSection) {
         editingHoldSection = nextHold;
         syncCollapsedPeek();
@@ -2439,10 +2609,7 @@ export function insertSectionMedia(section: HTMLElement, name: string, label?: s
     return;
   }
   pushSectionUndo(state, true);
-  const area =
-    document.activeElement instanceof HTMLTextAreaElement && sectionBlocks.contains(document.activeElement)
-      ? document.activeElement
-      : sectionTargetArea(section, state);
+  const area = activeField(sectionBlocks) ?? sectionTargetArea(section, state);
   const index = area ? Number(area.dataset.index) : state.blocks.length - 1;
   const block = state.blocks[index];
   if (!block || block.kind !== "text") {

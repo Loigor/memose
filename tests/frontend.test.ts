@@ -5,6 +5,7 @@ import test from "node:test";
 import { fileURLToPath } from "node:url";
 
 import { moveBlockMedia } from "../src/editor/editor-blocks.ts";
+import { backspaceEdit, inlinePieces, renderParts, rowClass, snapOffset, stepOffset } from "../src/editor/line-style.ts";
 import { highlightMarkdown } from "../src/editor/md-highlight.ts";
 import { tagAtOffset } from "../src/editor/md-tags.ts";
 import { uniqueFiles } from "../src/media/files.ts";
@@ -14,6 +15,7 @@ import { defaultLook, lookFromNote, namedTheme } from "../src/look/look.ts";
 import {
   applyCode,
   applyTask,
+  dropCodeBlock,
   applyTitle,
   completeOpenFence,
   liftedCodeIndex,
@@ -83,6 +85,30 @@ test("wrapText wraps selection and places cursor inside empty markers", () => {
   assert.equal(empty.value, "hello**");
   assert.equal(empty.start, 6);
   assert.equal(empty.end, 6);
+});
+
+test("dropCodeBlock removes an empty code block and keeps the join", () => {
+  const between = parseBlocks("hello\n```\n\n```\nworld");
+  const code = between.findIndex((block) => block.kind === "code");
+  const dropped = dropCodeBlock(between, code);
+  assert.equal(serializeBlocks(dropped.blocks), "hello\nworld");
+  assert.equal(dropped.offset, "hello".length);
+  assert.equal(dropped.blocks[dropped.index]?.kind, "text");
+
+  const only = parseBlocks("```\n\n```\n");
+  const lone = dropCodeBlock(only, only.findIndex((block) => block.kind === "code"));
+  assert.equal(serializeBlocks(lone.blocks), "");
+  assert.equal(lone.offset, 0);
+
+  const around = parseBlocks("a\n![x](memose-media/a.png)\nb\n```\n\n```\nc");
+  const at = around.findIndex((block) => block.kind === "code");
+  const kept = dropCodeBlock(around, at);
+  const target = kept.blocks[kept.index];
+  assert.equal(target?.kind, "text");
+  if (target?.kind === "text") {
+    assert.equal(target.text, "b\nc");
+  }
+  assert.equal(kept.offset, 1);
 });
 
 test("applyCode inserts a fenced code block and places the caret inside", () => {
@@ -539,6 +565,126 @@ test("highlightMarkdown colors markers without changing the source text", () => 
   assert.equal(tagAtOffset("a\n#finance", 10), "#finance");
   assert.equal(tagAtOffset("# Title", 3), null);
   assert.equal(tagAtOffset("```\n#finance\n```", 6), null);
+});
+
+test("line rows keep the markdown and classify the prefix", () => {
+  assert.equal(rowClass("# Title"), "md-row is-h1");
+  assert.equal(rowClass("###### Small"), "md-row is-h6");
+  assert.equal(rowClass("#Title"), "md-row");
+  assert.equal(rowClass("#"), "md-row");
+  assert.equal(rowClass("> quote"), "md-row is-quote");
+  assert.equal(rowClass("- [ ] task"), "md-row is-task");
+  assert.equal(rowClass("- [x] done"), "md-row is-task is-done");
+  assert.equal(rowClass("- [X] done"), "md-row is-task is-done");
+  assert.equal(rowClass("1. [ ] numbered"), "md-row is-task");
+  assert.equal(rowClass("---"), "md-row is-hr");
+  assert.equal(rowClass("* * *"), "md-row is-hr");
+  assert.equal(rowClass("___"), "md-row is-hr");
+  assert.equal(rowClass("--- extra"), "md-row");
+  assert.equal(rowClass("- item"), "md-row is-ul");
+  assert.equal(rowClass("  * nested"), "md-row is-ul");
+  assert.equal(rowClass("2. item"), "md-row is-ol");
+  assert.equal(rowClass("plain"), "md-row");
+  const lines = Array.from({ length: 4000 }, (_, i) => (i % 7 === 0 ? `# item ${i}` : `- [ ] item ${i}`));
+  const start = performance.now();
+  let headings = 0;
+  for (const line of lines) {
+    if (rowClass(line) === "md-row is-h1") {
+      headings += 1;
+    }
+  }
+  assert.equal(headings, 572);
+  assert.ok(performance.now() - start < 50);
+});
+
+test("inline marks keep the source characters", () => {
+  const sample = "hello **bold** and *em* and __also__ and _word_ and `code` and [a](b) and ![x](y) snake_case **open";
+  const pieces = inlinePieces(sample);
+  assert.equal(pieces.map((piece) => piece.text).join(""), sample);
+  assert.deepEqual(
+    pieces.filter((piece) => piece.mark !== "plain").map((piece) => [piece.mark, piece.text]),
+    [
+      ["strong", "**bold**"],
+      ["em", "*em*"],
+      ["strong", "__also__"],
+      ["em", "_word_"],
+      ["code", "`code`"],
+      ["link", "[a](b)"],
+      ["link", "![x](y)"],
+    ],
+  );
+  assert.equal(inlinePieces("**bold**").length, 1);
+  assert.equal(inlinePieces("**bold**")[0]?.mark, "strong");
+  assert.equal(inlinePieces("# Title").map((piece) => piece.text).join(""), "# Title");
+  assert.equal(inlinePieces("# Title")[0]?.mark, "plain");
+  assert.deepEqual(inlinePieces("- [x] **milk**"), [
+    { text: "- [x] ", mark: "marker" },
+    { text: "**milk**", mark: "strong" },
+  ]);
+  assert.deepEqual(inlinePieces("- [x]"), [{ text: "- [x]", mark: "marker" }]);
+  assert.deepEqual(inlinePieces("**see #ship**"), [
+    {
+      text: "**see #ship**",
+      mark: "strong",
+      inner: [
+        { text: "**see ", mark: "plain" },
+        { text: "#ship", mark: "tag" },
+        { text: "**", mark: "plain" },
+      ],
+    },
+  ]);
+  assert.equal(
+    inlinePieces("**see #ship**")
+      .map((piece) => piece.text)
+      .join(""),
+    "**see #ship**",
+  );
+  assert.equal(inlinePieces("*see #ship*")[0]?.inner?.some((piece) => piece.mark === "tag"), true);
+  assert.deepEqual(inlinePieces("pay #finance now"), [
+    { text: "pay ", mark: "plain" },
+    { text: "#finance", mark: "tag" },
+    { text: " now", mark: "plain" },
+  ]);
+  assert.ok(inlinePieces("# Title #finance").every((piece) => piece.mark === "plain"));
+  assert.equal(inlinePieces("`#code`")[0]?.mark, "code");
+  assert.equal(inlinePieces("item#finance")[0]?.mark, "plain");
+  assert.deepEqual(inlinePieces("---"), [{ text: "---", mark: "plain" }]);
+  assert.deepEqual(inlinePieces("* * *"), [{ text: "* * *", mark: "plain" }]);
+  assert.deepEqual(
+    inlinePieces("> quote").map((piece) => piece.text),
+    ["> ", "quote"],
+  );
+  assert.equal(inlinePieces("*em*")[0]?.mark, "em");
+  assert.deepEqual(renderParts("# Title").map((part) => [part.syntax === true, part.text]), [
+    [true, "# "],
+    [false, "Title"],
+  ]);
+  assert.deepEqual(renderParts("**bold**").map((part) => part.text), ["**", "bold", "**"]);
+  assert.equal(renderParts("**bold**")[1]?.cls, "md-strong");
+  assert.equal(renderParts("- [x] milk").some((part) => part.check && part.checked), true);
+  assert.equal(renderParts("- [x] milk").filter((part) => part.syntax).map((part) => part.text).join(""), "- [x] ");
+  assert.equal(
+    renderParts("hello **bold** #ship")
+      .map((part) => part.text)
+      .join(""),
+    "hello **bold** #ship",
+  );
+  assert.equal(snapOffset("# Title", 0), 2);
+  assert.equal(snapOffset("# Title\n# Next", 8), 10);
+  assert.equal(stepOffset("hello **bold**", 8, -1), 5);
+  assert.deepEqual(backspaceEdit("# Title", 2), { text: "Title", offset: 0 });
+  assert.deepEqual(backspaceEdit("hello **bold**", 8), { text: "hello**bold**", offset: 5 });
+  assert.deepEqual(backspaceEdit("hello\n# Title", 8), { text: "hello\nTitle", offset: 6 });
+  assert.deepEqual(
+    inlinePieces("2. item").map((piece) => piece.text),
+    ["2. ", "item"],
+  );
+  const lines = Array.from({ length: 2000 }, (_, i) => `line ${i} plain`);
+  const marked = performance.now();
+  for (const line of lines) {
+    inlinePieces(line);
+  }
+  assert.ok(performance.now() - marked < 50);
 });
 
 test("formatJsonDocument pretty-prints objects and json fences", () => {

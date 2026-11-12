@@ -5,6 +5,7 @@ import DOMPurify from "dompurify";
 import { marked } from "marked";
 
 import { audienceChoice, revealPressedChoice } from "./look/audience-ui";
+import { activeField, editingHost, fieldAt, fieldsIn, isEditable, type Editable } from "./editor/editable";
 import { applyMediaFigureSize, focusLiftedCode, handleBlockAreaNavigation, handleBlockMediaDeletion, syncInlineLineSlot } from "./editor/editor-blocks";
 import { memoUsesCoder, refreshEditorFields, setEditorPrefs, wrapEditorField, type EditorPrefs } from "./editor/editor-field";
 import { filesFromTransfer, uniqueFiles } from "./media/files";
@@ -25,6 +26,7 @@ import {
   applyTitle,
   closedFenceIn,
   completeOpenFence,
+  dropCodeBlock,
   ensureTextSlots,
   isTypedBlock,
   mediaTokenRegex,
@@ -48,6 +50,7 @@ import {
 } from "./media/media-elements";
 import { paintSurface, paintThemeButton, palette, paperAt, type ThemeName } from "./look/memo-chrome";
 import { hueSwatches, loadHueSwatches, onHueSwatches, saveHueSwatches, watchHueSwatches } from "./look/swatches";
+import { lineOffsetAtPoint, mountLineEditor } from "./editor/line-editor";
 import { tagAtOffset } from "./editor/md-tags";
 import { pointIn, requireEl } from "./dom";
 import { inTauri, isPreviewWindow } from "./platform";
@@ -66,6 +69,7 @@ import {
   paintSectionAudience,
   redoSection,
   repaintStackColors,
+  rerenderStackEditors,
   sectionAreaSelection,
   sectionHue,
   sectionTargetArea,
@@ -353,10 +357,23 @@ function showStored(content: string) {
 }
 
 function focusNote() {
-  const areas = blocksEl.querySelectorAll("textarea");
-  const area = areas.item(areas.length - 1);
-  if (area instanceof HTMLTextAreaElement) {
-    area.focus();
+  const fields = fieldsIn(blocksEl);
+  const field = fields[fields.length - 1];
+  if (!field) {
+    return;
+  }
+  field.focus();
+  const start = field.selectionStart ?? 0;
+  const end = field.selectionEnd ?? start;
+  field.setSelectionRange(start, end);
+}
+
+function focusEditing() {
+  if (showingPreview) {
+    return;
+  }
+  if (!restorePlace(blocksEl, editorPlaces.get(placeKey()) ?? null, true)) {
+    focusNote();
   }
 }
 
@@ -477,12 +494,143 @@ function renderBlocks(focusName?: string) {
     }
   });
   let currentRow: HTMLElement | null = null;
-  let currentRowSideArea: HTMLTextAreaElement | null = null;
+  let currentRowSideArea: HTMLElement | null = null;
 
   noteBlocks.forEach((block, index) => {
     if (isTypedBlock(block)) {
       const prevBlock = noteBlocks[index - 1];
       const isAfterMedia = prevBlock?.kind === "media";
+      const canSitOnMediaLine =
+        block.kind === "text" &&
+        isAfterMedia &&
+        currentRow !== null &&
+        currentRowSideArea === null &&
+        !block.text.includes("\n");
+      if (block.kind === "text" && !memoUsesCoder(look.coder)) {
+        const assignedRow = canSitOnMediaLine ? currentRow : null;
+        let field: Editable | null = null;
+        const mounted = mountLineEditor({
+          text: block.text,
+          index,
+          placeholder: noteBlocks.length === 1 ? "Write a note…" : "",
+          grow: index === lastText && !canSitOnMediaLine,
+          inline: canSitOnMediaLine,
+          empty: false,
+          container: blocksEl,
+          blocks: () => noteBlocks,
+          undo: (force) => {
+            pushHostUndo(force);
+          },
+          change: (value, place) => {
+            if (!field) {
+              return;
+            }
+            block.text = value;
+            syncInlineLineSlot(field, prevBlock, assignedRow, blocksEl, index === lastText);
+            noteContent = serializeBlocks(noteBlocks);
+            caret = { index, start: place.start, end: place.end };
+            rememberPlace();
+            followEnd(field);
+            dismissList();
+            syncNoteTitle();
+            scheduleDraft();
+          },
+          reparse: (value) => {
+            block.text = value;
+            noteContent = serializeBlocks(noteBlocks);
+            const fromIndex = index;
+            noteBlocks = parseBlocks(noteContent);
+            renderBlocks();
+            focusLiftedCode(blocksEl, noteBlocks, fromIndex, (next) => {
+              caret = next;
+              rememberPlace();
+            });
+            syncNoteTitle();
+            scheduleDraft();
+          },
+          apply: (edit) => {
+            if (field) {
+              applyEdit(field, edit);
+            }
+          },
+          removeMedia: (mediaIndex, focusIdx, caretPos) => {
+            pushHostUndo(true);
+            noteBlocks.splice(mediaIndex, 1);
+            publishBlocks();
+            scheduleDraft();
+            const target = fieldAt(blocksEl, focusIdx);
+            if (target) {
+              target.focus();
+              const clamped = Math.min(caretPos, target.value.length);
+              target.setSelectionRange(clamped, clamped);
+            }
+          },
+          splitInline: (before, after) => {
+            pushHostUndo(true);
+            if (prevBlock?.kind === "media") {
+              prevBlock.inline = before.length > 0;
+            }
+            noteBlocks.splice(index, 1, { kind: "text", text: before }, { kind: "text", text: `\n${after}` });
+            publishBlocks();
+            scheduleDraft();
+            const target = fieldAt(blocksEl, index);
+            if (target) {
+              target.focus();
+              const pos = Math.min(before.length + 1, target.value.length);
+              target.setSelectionRange(pos, pos);
+            }
+          },
+          releaseInline: () => {
+            if (!field) {
+              return;
+            }
+            if (prevBlock?.kind === "media") {
+              prevBlock.inline = false;
+            }
+            field.classList.remove("inline-line-slot");
+            if (index === lastText) {
+              field.classList.add("grow");
+            }
+            const host = editorShell(field);
+            if (assignedRow && host.parentElement === assignedRow) {
+              assignedRow.after(host);
+            } else {
+              blocksEl.append(host);
+            }
+            field.focus();
+          },
+          allowTab: () => {
+            const emptyNew =
+              !pinnedNoteId &&
+              editingId === null &&
+              noteContent.trim().length === 0 &&
+              noteBlocks.length === 1 &&
+              (field?.value.length ?? 0) === 0;
+            return !emptyNew;
+          },
+          onCaret: () => {
+            if (!field) {
+              return;
+            }
+            caret = {
+              index,
+              start: field.selectionStart ?? field.value.length,
+              end: field.selectionEnd ?? field.value.length,
+            };
+            rememberPlace();
+          },
+        });
+        field = mounted.field;
+        if (canSitOnMediaLine && currentRow) {
+          currentRow.append(mounted.shell);
+          currentRowSideArea = field;
+        } else {
+          currentRow = null;
+          currentRowSideArea = null;
+          blocksEl.append(mounted.shell);
+        }
+        return;
+      }
       const area = document.createElement("textarea");
       area.rows = 1;
       area.spellcheck = false;
@@ -493,12 +641,6 @@ function renderBlocks(focusName?: string) {
       area.dataset.index = String(index);
       area.dataset.kind = block.kind;
       area.value = block.text;
-      const canSitOnMediaLine =
-        block.kind === "text" &&
-        isAfterMedia &&
-        currentRow !== null &&
-        currentRowSideArea === null &&
-        !block.text.includes("\n");
       if (noteBlocks.length === 1 && block.kind === "text") {
         area.placeholder = "Write a note…";
       } else if (canSitOnMediaLine) {
@@ -525,6 +667,33 @@ function renderBlocks(focusName?: string) {
       area.addEventListener("scroll", rememberPlace);
       area.addEventListener("keydown", (event) => {
         if (
+          block.kind === "code" &&
+          event.key === "Backspace" &&
+          !event.shiftKey &&
+          !event.altKey &&
+          !event.metaKey &&
+          !event.ctrlKey &&
+          !event.isComposing &&
+          area.value.length === 0 &&
+          (area.selectionStart ?? 0) === (area.selectionEnd ?? 0)
+        ) {
+          event.preventDefault();
+          pushHostUndo(true);
+          const dropped = dropCodeBlock(noteBlocks, index);
+          noteBlocks = dropped.blocks;
+          publishBlocks();
+          scheduleDraft();
+          const target = fieldAt(blocksEl, dropped.index);
+          if (target) {
+            target.focus();
+            const clamped = Math.min(dropped.offset, target.value.length);
+            target.setSelectionRange(clamped, clamped);
+            caret = { index: dropped.index, start: clamped, end: clamped };
+            rememberPlace();
+          }
+          return;
+        }
+        if (
           handleBlockMediaDeletion(
             blocksEl,
             area,
@@ -535,7 +704,7 @@ function renderBlocks(focusName?: string) {
               noteBlocks.splice(mediaIndex, 1);
               publishBlocks();
               scheduleDraft();
-              const target = blocksEl.querySelector<HTMLTextAreaElement>(`textarea[data-index="${focusIdx}"]`);
+              const target = fieldAt(blocksEl, focusIdx);
               if (target) {
                 target.focus();
                 const clamped = Math.min(caretPos, target.value.length);
@@ -592,7 +761,7 @@ function renderBlocks(focusName?: string) {
           );
           publishBlocks();
           scheduleDraft();
-          const target = blocksEl.querySelector<HTMLTextAreaElement>(`textarea[data-index="${index}"]`);
+          const target = fieldAt(blocksEl, index);
           if (target) {
             target.focus();
             const pos = Math.min(beforeLine.length + 1, target.value.length);
@@ -693,8 +862,9 @@ function renderBlocks(focusName?: string) {
     return;
   }
   const media = blocksEl.querySelector(`[data-media="${CSS.escape(focusName)}"]`);
-  const next = media?.parentElement?.querySelector("textarea") ?? media?.nextElementSibling;
-  if (next instanceof HTMLTextAreaElement) {
+  const row = media?.parentElement;
+  const next = row?.querySelector("[data-block-field]") ?? row?.nextElementSibling?.querySelector("[data-block-field]");
+  if (isEditable(next)) {
     next.focus();
   }
 }
@@ -716,9 +886,7 @@ function removeMediaAt(index: number, name: string) {
 
 function insertMedia(name: string, label?: string) {
   pushHostUndo(true);
-  const area = document.activeElement instanceof HTMLTextAreaElement && blocksEl.contains(document.activeElement)
-    ? document.activeElement
-    : targetArea();
+  const area = activeField(blocksEl) ?? targetArea();
   const index = area ? Number(area.dataset.index) : noteBlocks.length - 1;
   const block = noteBlocks[index];
   if (!block || block.kind !== "text") {
@@ -744,7 +912,7 @@ async function openPreview(name: string) {
   await invoke("open_media_preview", { name });
 }
 
-function applyEdit(area: HTMLTextAreaElement, edit: Edit) {
+function applyEdit(area: Editable, edit: Edit) {
   const index = Number(area.dataset.index);
   const block = noteBlocks[index];
   if (!block || !isTypedBlock(block)) {
@@ -766,7 +934,9 @@ function applyEdit(area: HTMLTextAreaElement, edit: Edit) {
     scheduleDraft();
     return;
   }
-  sizeBlockTextarea(area);
+  if (area instanceof HTMLTextAreaElement) {
+    sizeBlockTextarea(area);
+  }
   const start = Math.min(edit.start, edit.value.length);
   const end = Math.min(edit.end, edit.value.length);
   area.focus();
@@ -778,8 +948,8 @@ function applyEdit(area: HTMLTextAreaElement, edit: Edit) {
   scheduleDraft();
 }
 
-function followEnd(area: HTMLTextAreaElement) {
-  if (area.selectionStart !== area.value.length || area.selectionEnd !== area.value.length) {
+function followEnd(area: Editable) {
+  if ((area.selectionStart ?? 0) !== area.value.length || (area.selectionEnd ?? 0) !== area.value.length) {
     return;
   }
   const container = area.closest<HTMLElement>("#blocks, .stack-blocks");
@@ -796,9 +966,10 @@ function followEnd(area: HTMLTextAreaElement) {
   requestAnimationFrame(pin);
 }
 
-function areaSelection(area: HTMLTextAreaElement): { start: number; end: number } {
-  if (document.activeElement === area) {
-    return { start: area.selectionStart, end: area.selectionEnd };
+function areaSelection(area: Editable): { start: number; end: number } {
+  const active = document.activeElement;
+  if (active instanceof Node && (active === area || area.contains(active))) {
+    return { start: area.selectionStart ?? area.value.length, end: area.selectionEnd ?? area.value.length };
   }
   if (caret && Number(area.dataset.index) === caret.index) {
     return {
@@ -809,20 +980,19 @@ function areaSelection(area: HTMLTextAreaElement): { start: number; end: number 
   return { start: area.value.length, end: area.value.length };
 }
 
-function targetArea(): HTMLTextAreaElement | null {
-  const active = document.activeElement;
-  if (active instanceof HTMLTextAreaElement && blocksEl.contains(active)) {
+function targetArea(): Editable | null {
+  const active = activeField(blocksEl);
+  if (active) {
     return active;
   }
   if (caret) {
-    const found = blocksEl.querySelector<HTMLTextAreaElement>(`textarea[data-index="${caret.index}"]`);
+    const found = fieldAt(blocksEl, caret.index);
     if (found) {
       return found;
     }
   }
-  const areas = blocksEl.querySelectorAll("textarea");
-  const last = areas.item(areas.length - 1);
-  return last instanceof HTMLTextAreaElement ? last : null;
+  const fields = fieldsIn(blocksEl);
+  return fields[fields.length - 1] ?? null;
 }
 
 function applyMarkdown(kind: string) {
@@ -1758,9 +1928,10 @@ async function returnToNewMemo(generation: number) {
   setPinPressed(false);
   setEditedAt(null);
   paintAudience(null);
+  focusEditing();
   await refreshRecent();
-  resumePlace();
   await applyMemoSize();
+  focusEditing();
 }
 
 async function startFresh(generation: number) {
@@ -1793,9 +1964,10 @@ async function startFresh(generation: number) {
   setPinPressed(false);
   setEditedAt(null);
   paintAudience(null);
+  focusEditing();
   await refreshRecent();
-  resumePlace();
   await applyMemoSize();
+  focusEditing();
 }
 
 recentSearchEl.addEventListener("input", () => {
@@ -1843,14 +2015,22 @@ function openTagSearch(raw: string, keep?: HTMLElement | null) {
     });
 }
 
-function editorTagArea(target: EventTarget | null): HTMLTextAreaElement | null {
-  if (!(target instanceof HTMLTextAreaElement)) {
+function editorTagArea(target: EventTarget | null): Editable | null {
+  const field = editingHost(target);
+  if (!field) {
     return null;
   }
-  if (target.closest(".md-field[data-coder]") || target.dataset.kind === "code") {
+  if (field.closest(".md-field[data-coder]") || field.dataset.kind === "code") {
     return null;
   }
-  return target;
+  return field;
+}
+
+function offsetInField(field: Editable, x: number, y: number): number | null {
+  if (field instanceof HTMLTextAreaElement) {
+    return charOffsetAtPoint(field, x, y);
+  }
+  return lineOffsetAtPoint(field, x, y);
 }
 
 function tagFromEvent(event: MouseEvent): string | null {
@@ -1859,7 +2039,7 @@ function tagFromEvent(event: MouseEvent): string | null {
     if (area.selectionStart !== area.selectionEnd) {
       return null;
     }
-    const atPoint = charOffsetAtPoint(area, event.clientX, event.clientY);
+    const atPoint = offsetInField(area, event.clientX, event.clientY);
     if (atPoint != null) {
       return tagAtOffset(area.value, atPoint);
     }
@@ -1872,7 +2052,7 @@ function tagFromEvent(event: MouseEvent): string | null {
     ) {
       return null;
     }
-    return tagAtOffset(area.value, area.selectionStart);
+    return tagAtOffset(area.value, area.selectionStart ?? area.value.length);
   }
   if (!(event.target instanceof Element) || event.target.closest(".md-field[data-coder], pre, code")) {
     return null;
@@ -1885,12 +2065,12 @@ function tagFromEvent(event: MouseEvent): string | null {
   return value.startsWith("#") ? value : null;
 }
 
-function paintTagCursor(area: HTMLTextAreaElement, x: number, y: number) {
+function paintTagCursor(area: Editable, x: number, y: number) {
   if (!editorTagArea(area)) {
     area.style.removeProperty("cursor");
     return;
   }
-  const offset = charOffsetAtPoint(area, x, y);
+  const offset = offsetInField(area, x, y);
   if (offset != null && tagAtOffset(area.value, offset)) {
     area.style.cursor = "pointer";
     return;
@@ -1969,8 +2149,8 @@ notesRoot.addEventListener("click", (event) => {
   openTagSearch(tag, keep);
 });
 notesRoot.addEventListener("mousemove", (event) => {
-  const area = event.target;
-  if (!(area instanceof HTMLTextAreaElement)) {
+  const area = editingHost(event.target);
+  if (!area) {
     return;
   }
   const x = event.clientX;
@@ -1988,8 +2168,9 @@ notesRoot.addEventListener("mouseout", (event) => {
     cancelAnimationFrame(tagCursorFrame);
     tagCursorFrame = 0;
   }
-  if (event.target instanceof HTMLTextAreaElement) {
-    event.target.style.removeProperty("cursor");
+  const area = editingHost(event.target);
+  if (area) {
+    area.style.removeProperty("cursor");
   }
 });
 
@@ -2160,6 +2341,9 @@ modeToggleEl.addEventListener("click", () => {
 coderToggleEl.addEventListener("click", () => {
   look.coder = !memoUsesCoder(look.coder);
   paintCoder();
+  if (!showingPreview) {
+    renderBlocks();
+  }
   scheduleLook();
   closeEditorMenu();
 });
@@ -2593,14 +2777,14 @@ if (!isPreviewWindow()) {
         !event.isComposing
       ) {
         const active = document.activeElement;
-        const inTextarea = active instanceof HTMLTextAreaElement;
+        const field = active instanceof HTMLTextAreaElement ? active : editingHost(active);
         const isEmptyNewMemo =
           !pinnedNoteId &&
           editingId === null &&
           noteContent.trim().length === 0 &&
           noteBlocks.length === 1 &&
-          (inTextarea ? active.value.length === 0 : true);
-        if (!inTextarea || isEmptyNewMemo) {
+          (field ? field.value.length === 0 : true);
+        if (!field || isEmptyNewMemo) {
           event.preventDefault();
           event.stopPropagation();
           toggleMemoSearchByTab();
@@ -2901,12 +3085,20 @@ async function resolveConflict(id: string, choice: "local" | "remote") {
 
 if (inTauri() && !isPreviewWindow()) {
   const applyEditorPrefs = (settings: EditorPrefs) => {
+    const before = memoUsesCoder(look.coder);
     setEditorPrefs({
       coderEditor: Boolean(settings.coderEditor),
       markdownHighlight: settings.markdownHighlight !== false,
       markdownScheme: settings.markdownScheme,
     });
+    const after = memoUsesCoder(look.coder);
     paintCoder();
+    if (before !== after) {
+      if (!showingPreview) {
+        renderBlocks();
+      }
+      rerenderStackEditors();
+    }
   };
   window.addEventListener("resize", () => {
     refreshEditorFields();
@@ -3022,6 +3214,16 @@ if (isPreviewWindow()) {
     void startFresh(event.payload).catch((error: unknown) => {
       console.error(error);
     });
+  });
+  window.addEventListener("focus", () => {
+    if (showingPreview) {
+      return;
+    }
+    const active = document.activeElement;
+    if (active && active !== document.body && active !== document.documentElement) {
+      return;
+    }
+    focusNote();
   });
 
   void listen<number>("composer-cycle", (event) => {

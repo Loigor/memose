@@ -569,6 +569,41 @@ export function ensureTextSlots(items: Block[]): Block[] {
   return next;
 }
 
+export function dropCodeBlock(
+  blocks: Block[],
+  index: number,
+): { blocks: Block[]; index: number; offset: number } {
+  let textOrdinal = -1;
+  let offset = 0;
+  for (let i = 0; i < index; i += 1) {
+    const block = blocks[i];
+    if (block?.kind === "text") {
+      textOrdinal += 1;
+      offset = block.text.length;
+    }
+  }
+  const next = ensureTextSlots(blocks.filter((_, i) => i !== index));
+  if (textOrdinal < 0) {
+    const first = next.findIndex((block) => block.kind === "text");
+    return { blocks: next, index: Math.max(0, first), offset: 0 };
+  }
+  let seen = -1;
+  let focus = 0;
+  for (let i = 0; i < next.length; i += 1) {
+    if (next[i]?.kind !== "text") {
+      continue;
+    }
+    seen += 1;
+    if (seen === textOrdinal) {
+      focus = i;
+      break;
+    }
+  }
+  const target = next[focus];
+  const clamped = target?.kind === "text" ? Math.min(offset, target.text.length) : 0;
+  return { blocks: next, index: focus, offset: clamped };
+}
+
 export function parseBlocks(content: string): Block[] {
   const next: Block[] = [];
   let lastIndex = 0;

@@ -1,6 +1,6 @@
 import { paintEditorField } from "./editor-field.ts";
 
-export function editorShell(area: HTMLTextAreaElement): HTMLElement {
+export function editorShell(area: HTMLElement): HTMLElement {
   return area.closest(".md-field") ?? area;
 }
 
@@ -157,7 +157,7 @@ export function scrollTextOffsetIntoView(area: HTMLTextAreaElement, offset: numb
   requestAnimationFrame(pin);
 }
 
-export function estimateCharOffsetInLine(area: HTMLTextAreaElement, line: TextLineMetric, clientX: number): number {
+export function estimateCharOffsetInLine(area: HTMLElement, line: TextLineMetric, clientX: number): number {
   if (line.text.length === 0 || clientX <= line.left) {
     return line.startOffset;
   }

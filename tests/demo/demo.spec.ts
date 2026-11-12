@@ -173,10 +173,27 @@ async function sceneComposer(page: Page) {
   await clickAt(page, page.locator("#preview input[type='checkbox']").first());
   await hold(page, 1000);
   await clickAt(page, preview);
-  await page.locator("#blocks textarea").first().waitFor();
+  await page.locator("#blocks .md-lines, #blocks textarea").first().waitFor();
 
   await caption(page, "Search recent memos by tag");
-  await clickAt(page, page.locator("#blocks .md-tag").last());
+  const ship = page.locator("#blocks .md-row", { hasText: "#ship" });
+  const shipPoint = await ship.evaluate((el) => {
+    const text = el.textContent ?? "";
+    const at = text.lastIndexOf("#ship");
+    const node = [...el.childNodes].find((child) => child.nodeType === Node.TEXT_NODE);
+    if (!(node instanceof Text) || at < 0) {
+      return null;
+    }
+    const range = el.ownerDocument.createRange();
+    range.setStart(node, at);
+    range.setEnd(node, Math.min(node.data.length, at + 5));
+    const rect = range.getBoundingClientRect();
+    return { x: rect.x + rect.width / 2, y: rect.y + rect.height / 2 };
+  });
+  if (!shipPoint) {
+    throw new Error("tag");
+  }
+  await page.mouse.click(shipPoint.x, shipPoint.y);
   await page.locator("#recent-search").waitFor();
   await hold(page, 500);
   await clickAt(page, page.locator("#recent .title", { hasText: "Standup" }));

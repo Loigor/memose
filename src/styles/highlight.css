@@ -148,6 +148,10 @@ html[data-theme="dark"][data-mdhl-scheme="mono"] {
   line-height: inherit;
 }
 
+.md-field[data-coder] .md-gutter-code {
+  color: var(--md-code);
+}
+
 .md-field[data-coder]:has(textarea.inline-line-slot) .md-gutter {
   display: none;
 }

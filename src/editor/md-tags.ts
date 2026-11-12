@@ -18,6 +18,16 @@ function tagPattern(): RegExp {
   return /(?<![#\p{L}\p{N}_/])#([\p{L}\p{N}_][\p{L}\p{N}_/-]*)/gu;
 }
 
+export function tagLengthAt(text: string, index: number): number {
+  const pattern = tagPattern();
+  pattern.lastIndex = index;
+  const match = pattern.exec(text);
+  if (!match || match.index !== index) {
+    return 0;
+  }
+  return match[0].length;
+}
+
 export function wrapTagsHtml(escaped: string): string {
   const skip = new Set(["md-code", "md-fence", "md-link", "md-image"]);
   const stack: string[] = [];

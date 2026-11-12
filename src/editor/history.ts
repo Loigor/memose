@@ -1,3 +1,4 @@
+import { activeField, fieldAt } from "./editable.ts";
 import { serializeBlocks, type Block } from "./markdown-edit.ts";
 
 export type Caret = { index: number; start: number; end: number };
@@ -13,7 +14,7 @@ export function restoreCaret(container: ParentNode, next: Caret | null) {
   if (!next) {
     return;
   }
-  const area = container.querySelector<HTMLTextAreaElement>(`textarea[data-index="${next.index}"]`);
+  const area = fieldAt(container, next.index);
   if (area) {
     area.focus();
     const s = Math.min(next.start, area.value.length);
@@ -23,22 +24,16 @@ export function restoreCaret(container: ParentNode, next: Caret | null) {
 }
 
 export function readPlace(container: ParentNode, caret: Caret | null): EditorPlace | null {
-  const active = typeof document !== "undefined" ? document.activeElement : null;
-  const live =
-    active instanceof HTMLTextAreaElement && container.contains(active)
-      ? active
-      : caret
-        ? container.querySelector<HTMLTextAreaElement>(`textarea[data-index="${caret.index}"]`)
-        : null;
+  const live = activeField(container) ?? (caret ? fieldAt(container, caret.index) : null);
   const paneScroll = "scrollTop" in container ? (container as HTMLElement).scrollTop : 0;
-  if (!(live instanceof HTMLTextAreaElement)) {
+  if (!live) {
     return caret ? { caret: { ...caret }, scrollTop: 0, scrollLeft: 0, paneScroll } : null;
   }
   return {
     caret: {
       index: Number(live.dataset.index ?? caret?.index ?? 0),
-      start: live.selectionStart,
-      end: live.selectionEnd,
+      start: live.selectionStart ?? live.value.length,
+      end: live.selectionEnd ?? live.value.length,
     },
     scrollTop: live.scrollTop,
     scrollLeft: live.scrollLeft,
@@ -54,9 +49,7 @@ export function restorePlace(
   if (!place) {
     return false;
   }
-  const area = container.querySelector<HTMLTextAreaElement>(
-    `textarea[data-index="${place.caret.index}"]`,
-  );
+  const area = fieldAt(container, place.caret.index);
   if (!area) {
     return false;
   }
