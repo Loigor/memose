@@ -131,6 +131,7 @@ export function paintEditorField(area: HTMLTextAreaElement) {
   }
   syncEditorScroll(area);
   markLongLines(highlight, coder);
+  placeLangBadge(field);
 }
 
 export function refreshEditorFields(root: ParentNode = document) {
@@ -165,7 +166,7 @@ function paintLang(field: HTMLElement, area: HTMLTextAreaElement) {
     delete field.dataset.lang;
   }
   const surface = field.querySelector(":scope > .md-surface") ?? field;
-  let badge = surface.querySelector(":scope > .md-lang");
+  let badge = field.querySelector<HTMLElement>(":scope > .md-lang, :scope > .md-surface > .md-lang");
   if (!label) {
     badge?.remove();
     area.removeAttribute("aria-label");
@@ -181,6 +182,27 @@ function paintLang(field: HTMLElement, area: HTMLTextAreaElement) {
     badge.textContent = label;
   }
   area.setAttribute("aria-label", `${label} code`);
+}
+
+function placeLangBadge(field: HTMLElement) {
+  const badge = field.querySelector<HTMLElement>(":scope > .md-lang, :scope > .md-surface > .md-lang");
+  if (!badge) {
+    return;
+  }
+  const note = field.closest("#card, .stack-note");
+  const codeGutter = field.querySelector(":scope > .md-gutter-code");
+  const nested = Boolean(note?.hasAttribute("data-coder") && codeGutter);
+  badge.classList.toggle("is-side", nested);
+  if (nested) {
+    if (badge.parentElement !== field) {
+      field.append(badge);
+    }
+    return;
+  }
+  const surface = field.querySelector(":scope > .md-surface");
+  if (surface && badge.parentElement !== surface) {
+    surface.append(badge);
+  }
 }
 
 function applyEditorDataset() {
@@ -621,11 +643,16 @@ function paintMarkBars(area: HTMLTextAreaElement, field: HTMLElement) {
   const style = getComputedStyle(area);
   const padTop = Number.parseFloat(style.paddingTop) || 0;
   const lineHeight = Number.parseFloat(style.lineHeight) || 18;
-  const key = sources.map((line) => (marks.lines.has(line) ? "1" : "0")).join("");
+  const codeGutter = field.querySelector<HTMLElement>(":scope > .md-gutter-code");
+  const extend = codeGutter
+    ? codeGutter.offsetWidth + (Number.parseFloat(getComputedStyle(codeGutter).marginLeft) || 0)
+    : 0;
+  const key = `${sources.map((line) => (marks.lines.has(line) ? "1" : "0")).join("")}|${extend}`;
   if (layer.dataset.key === key && layer.childElementCount > 0) {
     return;
   }
   layer.dataset.key = key;
+  layer.style.left = extend > 0 ? `${-extend}px` : "";
   layer.replaceChildren();
   sources.forEach((line, index) => {
     if (!marks.lines.has(line)) {
@@ -714,6 +741,7 @@ function paintNumbers(
   numbers: number[],
   cols: number,
   origin: number,
+  showBalls = true,
 ) {
   gutter.style.setProperty("--gutter-cols", String(cols));
   gutter.classList.remove("has-mark");
@@ -722,7 +750,7 @@ function paintNumbers(
   const marked = area.closest("#card, .stack-note")?.hasAttribute("data-coder")
     ? markState.get(area)?.lines
     : undefined;
-  const markKey = marked && marked.size > 0 ? [...marked].sort((a, b) => a - b).join(",") : "";
+  const markKey = showBalls && marked && marked.size > 0 ? [...marked].sort((a, b) => a - b).join(",") : "";
   const lineHeight = Number.parseFloat(getComputedStyle(area).lineHeight) || 18;
   const key = `${numbers.join("\n")}|${origin}|${markKey}|${lineHeight}`;
   if (gutter.dataset.lines === key) {
@@ -731,7 +759,7 @@ function paintNumbers(
   gutter.dataset.lines = key;
   const body = gutterBody(gutter);
   body.textContent = numbers.join("\n");
-  if (!marked) {
+  if (!showBalls || !marked) {
     return;
   }
   sources.forEach((line, index) => {
@@ -813,7 +841,7 @@ function renumberGutters(scope: ParentNode, coderNote: boolean) {
     if (row.area.dataset.kind === "code") {
       const local = codeGutter(field, true);
       if (local) {
-        paintNumbers(local, row.area, gutterNumbers(row.area, 1), Math.max(2, String(row.count).length), 1);
+        paintNumbers(local, row.area, gutterNumbers(row.area, 1), Math.max(2, String(row.count).length), 1, false);
       }
     } else {
       codeGutter(field, false);

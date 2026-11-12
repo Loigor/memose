@@ -475,6 +475,7 @@ test("a language fence becomes a highlighted code block after enter", async ({ p
   await expect(page.locator("textarea[data-kind='code']")).toHaveCount(0);
   await page.keyboard.press("Enter");
   await expect(page.locator(".md-lang")).toHaveText("json");
+  await expect(page.locator(".md-lang")).not.toHaveClass(/is-side/);
   const code = page.locator("textarea[data-kind='code']");
   await expect(code).toHaveValue("");
   await page.keyboard.type('{"a": 1}');
@@ -605,7 +606,7 @@ test("a code block in the coder editor keeps both line numbers", async ({ page }
   await revealEditorButton(page, coder);
   await coder.click();
   const area = await composerTextarea(page);
-  await area.fill("intro\n```\nconst x = 1\nline 2\n```\nbeta");
+  await area.fill("intro\n```json\nconst x = 1\nline 2\n```\nbeta");
   const noteNumbers = () =>
     page.locator("#blocks .md-gutter:not(.md-gutter-code)").evaluateAll((els) => els.map((el) => el.textContent));
   const codeNumbers = () => page.locator("#blocks .md-gutter-code").evaluateAll((els) => els.map((el) => el.textContent));
@@ -616,6 +617,42 @@ test("a code block in the coder editor keeps both line numbers", async ({ page }
   const primaryColor = await primary.evaluate((el) => getComputedStyle(el).color);
   const localColor = await local.evaluate((el) => getComputedStyle(el).color);
   expect(localColor).not.toBe(primaryColor);
+  const badge = page.locator(".md-lang");
+  await expect(badge).toHaveText("json");
+  await expect(badge).toHaveClass(/is-side/);
+  const places = await page.evaluate(() => {
+    const label = document.querySelector(".md-lang")!.getBoundingClientRect();
+    const field = document.querySelector(".md-field:has(textarea[data-kind='code'])")!.getBoundingClientRect();
+    const main = document.querySelector(".md-field:has(textarea[data-kind='code']) .md-gutter:not(.md-gutter-code)")!.getBoundingClientRect();
+    const local = document.querySelector(".md-gutter-code")!.getBoundingClientRect();
+    const code = document.querySelector("textarea[data-kind='code']")!.getBoundingClientRect();
+    return {
+      labelTop: label.top,
+      labelBottom: label.bottom,
+      fieldTop: field.top,
+      mainRight: main.right,
+      localLeft: local.left,
+      codeLeft: code.left,
+      border: getComputedStyle(document.querySelector(".md-gutter-code")!).borderLeftWidth,
+    };
+  });
+  expect(places.labelTop).toBeLessThan(places.fieldTop);
+  expect(places.labelBottom).toBeGreaterThan(places.fieldTop);
+  expect(places.localLeft - places.mainRight).toBeLessThan(8);
+  expect(places.codeLeft).toBeGreaterThan(places.localLeft);
+  expect(places.border).toBe("1px");
+  await primary.dblclick({ position: { x: 12, y: 14 } });
+  await expect(page.locator(".md-line-ball")).toHaveCount(1);
+  const marked = await page.evaluate(() => {
+    const bar = document.querySelector(".md-mark-bar")!.getBoundingClientRect();
+    const local = document.querySelector(".md-gutter-code")!.getBoundingClientRect();
+    const ball = document.querySelector(".md-line-ball")!.getBoundingClientRect();
+    const main = document.querySelector(".md-field:has(textarea[data-kind='code']) .md-gutter:not(.md-gutter-code)")!.getBoundingClientRect();
+    return { barLeft: bar.left, localLeft: local.left, localRight: local.right, ballLeft: ball.left, mainLeft: main.left, mainRight: main.right };
+  });
+  expect(marked.barLeft).toBeLessThanOrEqual(marked.localLeft + 1);
+  expect(marked.ballLeft).toBeGreaterThanOrEqual(marked.mainLeft - 1);
+  expect(marked.ballLeft).toBeLessThan(marked.mainRight);
   const lefts = await page.evaluate(() => {
     const text = document.querySelector("#blocks textarea:not([data-kind='code'])");
     const code = document.querySelector("textarea[data-kind='code']");

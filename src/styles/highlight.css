@@ -183,6 +183,28 @@ html[data-theme="dark"][data-mdhl-scheme="mono"] {
   --tok-key: #fafafa;
 }
 
+#card[data-coder] #composer-view {
+  padding-left: 0;
+  padding-right: 0;
+}
+
+#card[data-coder] #conflict,
+#card[data-coder] #md-toolbar,
+#card[data-coder] #memo-list {
+  margin-left: 12px;
+  margin-right: 12px;
+}
+
+#card[data-coder] #preview {
+  padding-left: 12px;
+  padding-right: 12px;
+}
+
+.stack-note[data-coder] .stack-blocks {
+  padding-left: 0;
+  padding-right: 0;
+}
+
 .md-field[data-coder] {
   border: 1px solid color-mix(in srgb, var(--ink) 22%, transparent);
   border-radius: 2px;
@@ -195,6 +217,14 @@ html[data-theme="dark"][data-mdhl-scheme="mono"] {
   font-size: 13px;
   line-height: 1.45;
   tab-size: var(--indent-ch, 2);
+}
+
+#card[data-coder] .md-field[data-coder],
+.stack-note[data-coder] .md-field[data-coder] {
+  position: relative;
+  border-left: 0;
+  border-right: 0;
+  border-radius: 0;
 }
 
 #card[data-coder] .md-gutter,
@@ -242,6 +272,22 @@ html[data-theme="dark"][data-mdhl-scheme="mono"] {
 
 .md-field[data-coder] .md-gutter-code {
   color: var(--md-code);
+  margin-left: 2px;
+  border-left: 1px solid var(--rule);
+}
+
+.md-lang.is-side {
+  top: 0;
+  left: 8px;
+  right: auto;
+  z-index: 4;
+  margin: 0;
+  padding: 0 3px;
+  max-width: none;
+  font-size: 9px;
+  line-height: 1;
+  background: inherit;
+  transform: translateY(-50%);
 }
 
 .md-field[data-coder] .md-folds:not([hidden]) {
@@ -335,6 +381,13 @@ html[data-theme="dark"][data-mdhl-scheme="mono"] {
 .stack-blocks .md-field[data-coder][data-lang] .md-hl,
 .stack-blocks .md-field[data-coder][data-lang] textarea {
   padding-right: 6.5em;
+}
+
+#card[data-coder] .md-field[data-lang] .md-hl,
+#card[data-coder] .md-field[data-lang] textarea,
+.stack-note[data-coder] .md-field[data-lang] .md-hl,
+.stack-note[data-coder] .md-field[data-lang] textarea {
+  padding-right: 14px;
 }
 
 .md-field[data-coder] .md-hl * {
