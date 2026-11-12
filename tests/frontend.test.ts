@@ -7,6 +7,7 @@ import { fileURLToPath } from "node:url";
 import { moveBlockMedia } from "../src/editor/editor-blocks.ts";
 import { backspaceEdit, inlinePieces, renderParts, rowClass, snapOffset, stepOffset } from "../src/editor/line-style.ts";
 import { highlightCode } from "../src/editor/code-highlight.ts";
+import { braceFolds, displayToSource, expandFolds, foldView, foldsAfterEdit, sourceToDisplay } from "../src/editor/code-fold.ts";
 import { highlightMarkdown } from "../src/editor/md-highlight.ts";
 import { tagAtOffset } from "../src/editor/md-tags.ts";
 import { uniqueFiles } from "../src/media/files.ts";
@@ -576,6 +577,31 @@ test("highlightCode colors a language and keeps every source character", () => {
   assert.match(highlightCode("const x = 1; // note", "js"), /tok-kw[\s\S]*const/);
   assert.match(highlightCode("const x = 1; // note", "javascript"), /tok-cmt/);
   assert.match(highlightCode("a < b & c", "js"), /a &lt; b &amp; c/);
+});
+
+test("braceFolds finds a json block and round-trips the hidden lines", () => {
+  const source = '{\n  "b": {\n    "c": 1\n  }\n}';
+  const ranges = braceFolds(source);
+  assert.deepEqual(ranges, [
+    { start: 1, end: 3 },
+    { start: 0, end: 4 },
+  ]);
+  assert.deepEqual(braceFolds('{ "a": 1 }'), []);
+  assert.deepEqual(braceFolds('{\n  "a": "{"\n}'), [{ start: 0, end: 2 }]);
+  const folded = foldView(source, new Set([0]));
+  assert.equal(folded.display, "{\u200b");
+  assert.deepEqual(folded.holes, ['\n  "b": {\n    "c": 1\n  }\n}']);
+  assert.equal(expandFolds(folded.display, folded.holes), source);
+  const edited = `{\u200b`.replace("{", "{ ");
+  assert.equal(expandFolds(edited, folded.holes).includes('"c": 1'), true);
+  const moved = `x\n  "b": {\n    "c": 1\n  }\n}`;
+  assert.equal(foldsAfterEdit(moved, folded.holes).size, 0);
+  const withRest = '{\n  "a": 1\n}\nrest';
+  const view = foldView(withRest, new Set([0]));
+  assert.equal(view.display, "{\u200b\nrest");
+  assert.equal(displayToSource(view.display, view.holes, view.display.length), withRest.length);
+  assert.equal(sourceToDisplay(view.display, view.holes, 1), 1);
+  assert.equal(sourceToDisplay(view.display, view.holes, 4), 1);
 });
 
 test("highlightMarkdown colors markers without changing the source text", () => {

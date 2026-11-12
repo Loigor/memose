@@ -482,6 +482,44 @@ test("a language fence becomes a highlighted code block after enter", async ({ p
   await expect(page.locator(".md-hl .tok-num")).toHaveText("1");
 });
 
+test("a brace block in a code field folds without dropping the text", async ({ page }) => {
+  await openComposer(page);
+  const area = await composerTextarea(page);
+  await area.click();
+  await page.keyboard.type("```json");
+  await page.keyboard.press("Enter");
+  const code = page.locator("textarea[data-kind='code']");
+  await expect(code).toHaveValue("");
+  await code.evaluate((el) => {
+    el.focus();
+    document.execCommand("insertText", false, '{\n  "a": 1\n}');
+  });
+  const fold = page.locator(".md-fold");
+  await expect(fold).toHaveCount(1);
+  await fold.click();
+  await expect(page.locator(".md-fold-mark")).toBeVisible();
+  await expect(page.locator(".md-hl")).not.toContainText('"a"');
+  await expect.poll(() => code.evaluate((el) => (el as HTMLTextAreaElement).value)).toContain('"a"');
+  await fold.click();
+  await expect(page.locator(".md-fold-mark")).toHaveCount(0);
+  await expect.poll(() => code.evaluate((el) => (el as HTMLTextAreaElement).value)).toContain('"a"');
+});
+
+test("a brace block in the coder editor folds without dropping the text", async ({ page }) => {
+  await openComposer(page);
+  const coder = page.locator("#coder-toggle");
+  await revealEditorButton(page, coder);
+  await coder.click();
+  const area = await composerTextarea(page);
+  await area.fill('{\n  "a": 1\n}');
+  const fold = page.locator(".md-fold");
+  await expect(fold).toHaveCount(1);
+  await fold.click();
+  await expect(page.locator(".md-fold-mark")).toBeVisible();
+  await expect(page.locator(".md-hl")).not.toContainText('"a"');
+  await expect.poll(() => area.evaluate((el) => (el as HTMLTextAreaElement).value)).toContain('"a"');
+});
+
 test("fenced code in the markdown editor uses a coder field", async ({ page }) => {
   await openComposer(page);
   const area = await composerTextarea(page);
