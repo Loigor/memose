@@ -170,6 +170,19 @@ select:focus {
   color: #241f16;
 }
 
+.toggle-row input[type="number"] {
+  width: 64px;
+  margin-top: 0;
+  padding: 4px 6px;
+  border: 1px solid #e8e2d6;
+  border-radius: 8px;
+  background: #fff;
+  color: #241f16;
+  font: inherit;
+  font-size: 13px;
+  flex-shrink: 0;
+}
+
 .toggle-row input[type="checkbox"] {
   width: 17px;
   height: 17px;

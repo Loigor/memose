@@ -71,7 +71,7 @@
   font-size: 16px;
   line-height: 1.4;
   letter-spacing: inherit;
-  tab-size: 4;
+  tab-size: var(--indent-ch, 2);
   white-space: pre-wrap;
   word-wrap: break-word;
   overflow-wrap: break-word;
@@ -90,7 +90,7 @@
   font-size: 16px;
   line-height: 1.4;
   letter-spacing: inherit;
-  tab-size: 4;
+  tab-size: var(--indent-ch, 2);
   white-space: pre-wrap;
   word-wrap: break-word;
   overflow-wrap: break-word;
@@ -109,7 +109,7 @@
   font-size: 16px;
   line-height: 1.4;
   letter-spacing: inherit;
-  tab-size: 4;
+  tab-size: var(--indent-ch, 2);
   white-space: pre-wrap;
   word-wrap: break-word;
   overflow-wrap: break-word;

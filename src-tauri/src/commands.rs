@@ -25,6 +25,7 @@ pub(crate) struct SettingsView {
     coder_editor: bool,
     markdown_highlight: bool,
     markdown_scheme: String,
+    indent_width: u8,
     show_in_switcher: bool,
     pinned_always_on_top: bool,
 }
@@ -170,9 +171,17 @@ pub fn get_settings(app: AppHandle, state: State<AppState>) -> Result<SettingsVi
         coder_editor: state.db.get_meta(notes::CODER_EDITOR)?.as_deref() == Some("1"),
         markdown_highlight: state.db.get_meta(notes::MARKDOWN_HIGHLIGHT)?.as_deref() != Some("0"),
         markdown_scheme: markdown_scheme(state.db.get_meta(notes::MARKDOWN_SCHEME)?.as_deref()),
+        indent_width: indent_width(state.db.get_meta(notes::INDENT_WIDTH)?),
         show_in_switcher: window_ctl::show_in_switcher(&app),
         pinned_always_on_top: window_ctl::pinned_always_on_top(&app),
     })
+}
+
+fn indent_width(raw: Option<String>) -> u8 {
+    match raw.as_deref().and_then(|value| value.parse::<u8>().ok()) {
+        Some(width) if (1..=8).contains(&width) => width,
+        _ => 2,
+    }
 }
 
 fn markdown_scheme(value: Option<&str>) -> String {
@@ -189,6 +198,7 @@ struct EditorPrefsView {
     coder_editor: bool,
     markdown_highlight: bool,
     markdown_scheme: String,
+    indent_width: u8,
 }
 
 fn emit_editor_prefs(app: &AppHandle, state: &State<AppState>) -> Result<(), AppError> {
@@ -199,6 +209,7 @@ fn emit_editor_prefs(app: &AppHandle, state: &State<AppState>) -> Result<(), App
             markdown_highlight: state.db.get_meta(notes::MARKDOWN_HIGHLIGHT)?.as_deref()
                 != Some("0"),
             markdown_scheme: markdown_scheme(state.db.get_meta(notes::MARKDOWN_SCHEME)?.as_deref()),
+            indent_width: indent_width(state.db.get_meta(notes::INDENT_WIDTH)?),
         },
     );
     Ok(())
@@ -281,6 +292,17 @@ pub fn set_pinned_always_on_top(
         .set_meta(notes::PINNED_ALWAYS_ON_TOP, if enabled { "1" } else { "0" })?;
     window_ctl::apply_desktop_prefs(&app);
     Ok(())
+}
+
+#[tauri::command]
+pub fn set_indent_width(
+    app: AppHandle,
+    state: State<AppState>,
+    width: u8,
+) -> Result<(), AppError> {
+    let width = indent_width(Some(width.to_string()));
+    state.db.set_meta(notes::INDENT_WIDTH, &width.to_string())?;
+    emit_editor_prefs(&app, &state)
 }
 
 #[tauri::command]

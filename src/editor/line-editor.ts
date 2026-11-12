@@ -459,7 +459,7 @@ export function mountLineEditor(options: LineEditorOptions): { shell: HTMLElemen
     lines[index] = nextLine;
     const next = lines.join("\n");
     const caret = currentCaret();
-    options.undo(false);
+    options.undo(true);
     writeAll(next);
     place(caret.start, caret.end);
     publish(next, caret);

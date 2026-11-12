@@ -7,7 +7,7 @@ import { marked } from "marked";
 import { audienceChoice, revealPressedChoice } from "./look/audience-ui";
 import { activeField, editingHost, fieldAt, fieldsIn, isEditable, type Editable } from "./editor/editable";
 import { applyMediaFigureSize, focusLiftedCode, handleBlockAreaNavigation, handleBlockMediaDeletion, syncInlineLineSlot } from "./editor/editor-blocks";
-import { memoUsesCoder, refreshEditorFields, setEditorPrefs, wrapEditorField, type EditorPrefs } from "./editor/editor-field";
+import { codeSurface, memoUsesCoder, readLineMarks, refreshEditorFields, setEditorPrefs, wrapEditorField, writeLineMarks, type EditorPrefs } from "./editor/editor-field";
 import { filesFromTransfer, uniqueFiles } from "./media/files";
 import {
   BlockHistory,
@@ -30,6 +30,7 @@ import {
   closedFenceIn,
   completeOpenFence,
   dropCodeBlock,
+  indentCode,
   ensureTextSlots,
   isTypedBlock,
   mediaTokenRegex,
@@ -263,7 +264,7 @@ async function applyMemoSize(width?: number | null, height?: number | null) {
 const hostHistory = new BlockHistory();
 
 function pushHostUndo(force = true) {
-  hostHistory.push(noteBlocks, caret, force);
+  hostHistory.push(noteBlocks, caret, force, readLineMarks(blocksEl));
 }
 
 function resetHostHistory() {
@@ -271,7 +272,7 @@ function resetHostHistory() {
 }
 
 function undoHost(): boolean {
-  const entry = hostHistory.takeUndo(noteBlocks, caret);
+  const entry = hostHistory.takeUndo(noteBlocks, caret, readLineMarks(blocksEl));
   if (!entry) {
     return false;
   }
@@ -279,12 +280,13 @@ function undoHost(): boolean {
   caret = entry.caret ? { ...entry.caret } : null;
   publishBlocks();
   scheduleDraft();
+  writeLineMarks(blocksEl, entry.marks);
   restoreCaret(blocksEl, caret);
   return true;
 }
 
 function redoHost(): boolean {
-  const entry = hostHistory.takeRedo(noteBlocks, caret);
+  const entry = hostHistory.takeRedo(noteBlocks, caret, readLineMarks(blocksEl));
   if (!entry) {
     return false;
   }
@@ -292,6 +294,7 @@ function redoHost(): boolean {
   caret = entry.caret ? { ...entry.caret } : null;
   publishBlocks();
   scheduleDraft();
+  writeLineMarks(blocksEl, entry.marks);
   restoreCaret(blocksEl, caret);
   return true;
 }
@@ -300,6 +303,9 @@ marked.setOptions({ gfm: true, breaks: true });
 
 const cardEl = requireEl(card, "card");
 const blocksEl = requireEl(blocks, "blocks");
+blocksEl.addEventListener("memose-undo", () => {
+  pushHostUndo(true);
+});
 blocksEl.addEventListener("scroll", rememberPlace);
 const previewEl = requireEl(preview, "preview");
 const notePaneEl = requireEl(notePane, "note pane");
@@ -773,6 +779,18 @@ function renderBlocks(focusName?: string) {
             const pos = Math.min(beforeLine.length + 1, target.value.length);
             target.setSelectionRange(pos, pos);
           }
+          return;
+        }
+        if (
+          event.key === "Tab" &&
+          !event.altKey &&
+          !event.metaKey &&
+          !event.ctrlKey &&
+          !event.isComposing &&
+          codeSurface(area)
+        ) {
+          event.preventDefault();
+          applyEdit(area, indentCode(area.value, area.selectionStart ?? 0, area.selectionEnd ?? 0, event.shiftKey));
           return;
         }
         if (
@@ -3135,6 +3153,7 @@ if (inTauri() && !isPreviewWindow()) {
       coderEditor: Boolean(settings.coderEditor),
       markdownHighlight: settings.markdownHighlight !== false,
       markdownScheme: settings.markdownScheme,
+      indentWidth: settings.indentWidth,
     });
     const after = memoUsesCoder(look.coder);
     paintCoder();

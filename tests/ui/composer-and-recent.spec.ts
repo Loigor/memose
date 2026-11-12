@@ -418,7 +418,7 @@ test("coder toggle shows a line gutter on that memo", async ({ page }) => {
     }
     return lines[0].getBoundingClientRect().width - lines[1].getBoundingClientRect().width;
   });
-  expect(tabExtra).toBeGreaterThan(16);
+  expect(tabExtra).toBeGreaterThan(8);
   await area.press("ControlOrMeta+A");
   await expect(page.locator(".md-hl").first()).toHaveCSS("visibility", "visible");
   await expect(page.locator("#coder-toggle")).toHaveText("{ }");
@@ -518,6 +518,49 @@ test("a brace block in the coder editor folds without dropping the text", async 
   await expect(page.locator(".md-fold-mark")).toBeVisible();
   await expect(page.locator(".md-hl")).not.toContainText('"a"');
   await expect.poll(() => area.evaluate((el) => (el as HTMLTextAreaElement).value)).toContain('"a"');
+});
+
+test("enter in a code block keeps the previous indent", async ({ page }) => {
+  await openComposer(page);
+  const area = await composerTextarea(page);
+  await area.click();
+  await page.keyboard.type("```json");
+  await page.keyboard.press("Enter");
+  const code = page.locator("textarea[data-kind='code']");
+  await expect(code).toHaveValue("");
+  await page.keyboard.type("{");
+  await page.keyboard.press("Enter");
+  await expect.poll(() => code.evaluate((el) => (el as HTMLTextAreaElement).value)).toBe("{\n  ");
+  await page.keyboard.type('"a": 1');
+  await page.keyboard.press("Enter");
+  await expect.poll(() => code.evaluate((el) => (el as HTMLTextAreaElement).value)).toBe('{\n  "a": 1\n  ');
+});
+
+test("double-clicking a coder line number marks and unmarks that line", async ({ page }) => {
+  await openComposer(page);
+  const coder = page.locator("#coder-toggle");
+  await revealEditorButton(page, coder);
+  await coder.click();
+  const area = await composerTextarea(page);
+  await area.fill("alpha\nbeta");
+  const gutter = page.locator("#blocks .md-gutter");
+  const before = await gutter.evaluate((el) => el.getBoundingClientRect().width);
+  const textLeft = await area.evaluate((el) => el.getBoundingClientRect().left);
+  await gutter.dblclick({ position: { x: 12, y: 10 } });
+  await expect(page.locator(".md-line-ball")).toHaveCount(1);
+  await expect(page.locator(".md-mark-bar")).toHaveCount(1);
+  await expect.poll(() => area.evaluate((el) => (el as HTMLTextAreaElement).value)).toBe("alpha\nbeta");
+  const after = await gutter.evaluate((el) => el.getBoundingClientRect().width);
+  const textLeftAfter = await area.evaluate((el) => el.getBoundingClientRect().left);
+  expect(after).toBe(before);
+  expect(textLeftAfter).toBe(textLeft);
+  await area.focus();
+  await page.keyboard.press("ControlOrMeta+Z");
+  await expect(page.locator(".md-line-ball")).toHaveCount(0);
+  await page.keyboard.press("ControlOrMeta+Shift+Z");
+  await expect(page.locator(".md-line-ball")).toHaveCount(1);
+  await gutter.click({ position: { x: 12, y: 10 } });
+  await expect(page.locator(".md-line-ball")).toHaveCount(0);
 });
 
 test("fenced code in the markdown editor uses a coder field", async ({ page }) => {

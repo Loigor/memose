@@ -28,6 +28,7 @@ type Settings = {
   coderEditor: boolean;
   markdownHighlight: boolean;
   markdownScheme: string;
+  indentWidth: number;
   showInSwitcher: boolean;
   pinnedAlwaysOnTop: boolean;
 };
@@ -45,6 +46,7 @@ const snapMemos = document.querySelector<HTMLInputElement>("#snap-memos");
 const pinTabScreen = document.querySelector<HTMLSelectElement>("#pin-tab-screen");
 const pinTabEdge = document.querySelector<HTMLSelectElement>("#pin-tab-edge");
 const coderEditor = document.querySelector<HTMLInputElement>("#coder-editor");
+const indentWidth = document.querySelector<HTMLInputElement>("#indent-width");
 const markdownHighlight = document.querySelector<HTMLInputElement>("#markdown-highlight");
 const markdownSchemes = document.querySelector<HTMLDivElement>("#markdown-schemes");
 const audience = document.querySelector<HTMLDivElement>("#memos-audience");
@@ -72,6 +74,7 @@ if (
   !pinTabScreen ||
   !pinTabEdge ||
   !coderEditor ||
+  !indentWidth ||
   !markdownHighlight ||
   !markdownSchemes ||
   !shortcuts ||
@@ -101,6 +104,7 @@ const snapMemosEl = snapMemos;
 const pinTabScreenEl = pinTabScreen;
 const pinTabEdgeEl = pinTabEdge;
 const coderEditorEl = coderEditor;
+const indentWidthEl = indentWidth;
 const markdownHighlightEl = markdownHighlight;
 const markdownSchemesEl = markdownSchemes;
 let chosenScheme = "paper";
@@ -289,6 +293,7 @@ async function loadSettings() {
   snapMemosEl.checked = settings.snapMemos;
   await loadPinPlace(settings);
   coderEditorEl.checked = settings.coderEditor;
+  indentWidthEl.value = String(settings.indentWidth >= 1 && settings.indentWidth <= 8 ? settings.indentWidth : 2);
   markdownHighlightEl.checked = settings.markdownHighlight !== false;
   chosenScheme = settings.markdownScheme === "cool" || settings.markdownScheme === "mono"
     ? settings.markdownScheme
@@ -721,6 +726,19 @@ function paintSchemes() {
     markdownSchemesEl.append(button);
   }
 }
+
+indentWidthEl.addEventListener("change", () => {
+  const width = Math.round(Number(indentWidthEl.value));
+  const next = width >= 1 && width <= 8 ? width : 2;
+  indentWidthEl.value = String(next);
+  void invoke("set_indent_width", { width: next })
+    .then(() => {
+      statusEl.textContent = `One whitespace is ${next} characters.`;
+    })
+    .catch((error: unknown) => {
+      statusEl.textContent = String(error);
+    });
+});
 
 coderEditorEl.addEventListener("change", () => {
   const enabled = coderEditorEl.checked;

@@ -38,6 +38,10 @@ import {
   parseMediaMeta,
   renumberOrderedLists,
   serializeBlocks,
+  copyIndentAfterBreak,
+  indentCode,
+  remapLineMarks,
+  setIndentWidth,
   tabOnMarkdown,
   taskListOnEnter,
   toggleTask,
@@ -207,6 +211,22 @@ test("taskListOnEnter continues lists, exits empty items, and renumbers ordered 
 
   const renumbered = renumberOrderedLists("1. a\n5. b\n9. c", 0, 0);
   assert.equal(renumbered.value, "1. a\n2. b\n3. c");
+});
+
+test("code enter keeps indent and a line mark follows the line", () => {
+  assert.equal(copyIndentAfterBreak("{\n", 2)?.value, "{\n  ");
+  const kept = "  \"a\": 1\n";
+  assert.equal(copyIndentAfterBreak(kept, kept.length)?.value, "  \"a\": 1\n  ");
+  assert.equal(copyIndentAfterBreak("a\n", 2), null);
+  assert.equal(indentCode("hello", 5, 5, false).value, "hello  ");
+  const before = "alpha\nbeta";
+  const after = "\nalpha\nbeta";
+  assert.deepEqual([...remapLineMarks(before, after, new Set([0]))], [1]);
+  assert.equal(remapLineMarks("alpha\nbeta", "\nbeta", new Set([0])).size, 0);
+  assert.deepEqual([...remapLineMarks("alpha\nbeta", "alpha!\nbeta", new Set([0]))], [0]);
+  setIndentWidth(4);
+  assert.equal(copyIndentAfterBreak("{\n", 2)?.value, "{\n    ");
+  setIndentWidth(2);
 });
 
 test("tabOnMarkdown indents and outdents lists and plain text", () => {
@@ -384,6 +404,8 @@ test("settings window html has Visibility, Shortcuts, and Sync (useMemos) tabs w
   assert.match(html, /id="show-in-switcher"/);
   assert.match(html, /id="pinned-always-on-top"/);
   assert.match(html, /id="coder-editor"/);
+  assert.match(html, /id="indent-width"/);
+  assert.match(html, /How many characters one whitespace is/);
   assert.match(html, /id="markdown-highlight"/);
   assert.match(html, /id="markdown-schemes"/);
   assert.match(html, /id="space-choices"/);
@@ -504,6 +526,19 @@ test("BlockHistory clones blocks and undoes to the previous snapshot", () => {
   assert.deepEqual(undone?.blocks, cloneBlocks(first));
   const redone = history.takeRedo(first, { index: 0, start: 0, end: 0 });
   assert.deepEqual(redone?.blocks, cloneBlocks(second));
+});
+
+test("BlockHistory keeps a line mark as its own undo step", () => {
+  const history = new BlockHistory();
+  const text = [{ kind: "text" as const, text: "alpha\nbeta" }];
+  const caret = { index: 0, start: 0, end: 0 };
+  history.push(text, caret, true, [[]]);
+  history.push(text, caret, true, [[1]]);
+  const undone = history.takeUndo(text, caret, [[1]]);
+  assert.deepEqual(undone?.marks, [[]]);
+  assert.deepEqual(undone?.blocks, cloneBlocks(text));
+  const redone = history.takeRedo(text, caret, [[]]);
+  assert.deepEqual(redone?.marks, [[1]]);
 });
 
 test("syncIcon and platform helpers cover common states", () => {

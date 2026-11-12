@@ -194,7 +194,42 @@ html[data-theme="dark"][data-mdhl-scheme="mono"] {
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   font-size: 13px;
   line-height: 1.45;
-  tab-size: 4;
+  tab-size: var(--indent-ch, 2);
+}
+
+#card[data-coder] .md-gutter,
+.stack-note[data-coder] .md-gutter {
+  pointer-events: auto;
+  cursor: pointer;
+}
+
+.md-gutter-body {
+  position: relative;
+}
+
+.md-line-ball {
+  position: absolute;
+  left: -4px;
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background: #d23b3b;
+  pointer-events: none;
+}
+
+.md-mark-bars {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  pointer-events: none;
+  z-index: 0;
+}
+
+.md-mark-bar {
+  position: absolute;
+  left: 0;
+  right: 0;
+  background: color-mix(in srgb, #d23b3b 20%, transparent);
 }
 
 .md-field[data-coder] .md-gutter {

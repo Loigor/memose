@@ -36,6 +36,7 @@ export type HarnessSettings = {
   coderEditor?: boolean;
   markdownHighlight?: boolean;
   markdownScheme?: string;
+  indentWidth?: number;
   pinTabScreen?: string;
   pinTabEdge?: string;
 };
@@ -162,6 +163,10 @@ function installBrowserHarness(seed: BrowserSeed) {
       seed.settings?.markdownScheme === "cool" || seed.settings?.markdownScheme === "mono"
         ? seed.settings.markdownScheme
         : "paper",
+    indentWidth:
+      seed.settings?.indentWidth != null && seed.settings.indentWidth >= 1 && seed.settings.indentWidth <= 8
+        ? Math.round(seed.settings.indentWidth)
+        : 2,
     pinTabScreen: seed.settings?.pinTabScreen === "all" || seed.settings?.pinTabScreen?.startsWith("display:")
       ? seed.settings.pinTabScreen
       : "cursor",
@@ -628,14 +633,27 @@ function installBrowserHarness(seed: BrowserSeed) {
           coderEditor: state.settings.coderEditor,
           markdownHighlight: state.settings.markdownHighlight,
           markdownScheme: state.settings.markdownScheme,
+          indentWidth: state.settings.indentWidth,
         });
         return null;
+      case "set_indent_width": {
+        const width = Math.round(Number(a.width));
+        state.settings.indentWidth = width >= 1 && width <= 8 ? width : 2;
+        emit("editor-prefs-changed", {
+          coderEditor: state.settings.coderEditor,
+          markdownHighlight: state.settings.markdownHighlight,
+          markdownScheme: state.settings.markdownScheme,
+          indentWidth: state.settings.indentWidth,
+        });
+        return null;
+      }
       case "set_markdown_highlight":
         state.settings.markdownHighlight = Boolean(a.enabled);
         emit("editor-prefs-changed", {
           coderEditor: state.settings.coderEditor,
           markdownHighlight: state.settings.markdownHighlight,
           markdownScheme: state.settings.markdownScheme,
+          indentWidth: state.settings.indentWidth,
         });
         return null;
       case "set_markdown_scheme":
@@ -645,6 +663,7 @@ function installBrowserHarness(seed: BrowserSeed) {
           coderEditor: state.settings.coderEditor,
           markdownHighlight: state.settings.markdownHighlight,
           markdownScheme: state.settings.markdownScheme,
+          indentWidth: state.settings.indentWidth,
         });
         return null;
       case "set_collapsed": {

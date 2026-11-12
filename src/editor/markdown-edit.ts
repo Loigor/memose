@@ -458,6 +458,145 @@ export function tabOnMarkdown(value: string, start: number, end: number, shiftKe
   return renumberOrderedLists(next, nextStart, nextEnd);
 }
 
+let indentWidth = 2;
+
+export function setIndentWidth(width: number) {
+  const next = Math.round(width);
+  indentWidth = next >= 1 && next <= 8 ? next : 2;
+}
+
+export function indentWidthCols(): number {
+  return indentWidth;
+}
+
+function indentUnit(): string {
+  return " ".repeat(indentWidth);
+}
+
+export function copyIndentAfterBreak(value: string, caret: number): Edit | null {
+  if (caret <= 0 || value[caret - 1] !== "\n") {
+    return null;
+  }
+  const prevEnd = caret - 1;
+  const prevStart = prevEnd === 0 ? 0 : value.lastIndexOf("\n", prevEnd - 1) + 1;
+  const prev = value.slice(prevStart, prevEnd);
+  const lead = /^[ \t]*/.exec(prev)?.[0] ?? "";
+  const body = prev.slice(lead.length).trimEnd();
+  const extra = /[{[(]$/.test(body) ? indentUnit() : "";
+  const insert = lead + extra;
+  if (!insert || value.startsWith(insert, caret)) {
+    return null;
+  }
+  const next = value.slice(0, caret) + insert + value.slice(caret);
+  const at = caret + insert.length;
+  return { value: next, start: at, end: at };
+}
+
+export function indentCode(value: string, start: number, end: number, shift: boolean): Edit {
+  const unit = indentUnit();
+  const from = Math.min(start, end);
+  const to = Math.max(start, end);
+  if (from === to && !shift) {
+    const next = value.slice(0, from) + unit + value.slice(to);
+    const at = from + unit.length;
+    return { value: next, start: at, end: at };
+  }
+  const first = lineBounds(value, from);
+  const effectiveEnd = to > from && value[to - 1] === "\n" ? to - 1 : to;
+  const last = lineBounds(value, effectiveEnd);
+  const lines = value.slice(first.lineStart, last.lineEnd).split("\n");
+  let firstDelta = 0;
+  let total = 0;
+  const updated = lines.map((line, index) => {
+    if (!shift) {
+      if (index === 0) {
+        firstDelta = unit.length;
+      }
+      total += unit.length;
+      return unit + line;
+    }
+    const lead = /^[ \t]+/.exec(line)?.[0] ?? "";
+    const remove = lead.startsWith("\t")
+      ? 1
+      : lead.startsWith(unit)
+        ? unit.length
+        : Math.min(unit.length, lead.length);
+    if (index === 0) {
+      firstDelta = -remove;
+    }
+    total -= remove;
+    return line.slice(remove);
+  });
+  const next = value.slice(0, first.lineStart) + updated.join("\n") + value.slice(last.lineEnd);
+  const nextStart = Math.max(first.lineStart, from + firstDelta);
+  const nextEnd = Math.max(nextStart, to + total);
+  return { value: next, start: nextStart, end: nextEnd };
+}
+
+// shortcut: splitting a marked line drops the marker, upgrade when a mark must stay on one half.
+export function remapLineMarks(before: string, after: string, marks: ReadonlySet<number>): Set<number> {
+  const next = new Set<number>();
+  if (marks.size === 0 || before === after) {
+    return before === after ? new Set(marks) : next;
+  }
+  const oldLines = before.split("\n");
+  const newLines = after.split("\n");
+  let prefix = 0;
+  while (prefix < oldLines.length && prefix < newLines.length && oldLines[prefix] === newLines[prefix]) {
+    prefix += 1;
+  }
+  let suffix = 0;
+  while (
+    suffix < oldLines.length - prefix &&
+    suffix < newLines.length - prefix &&
+    oldLines[oldLines.length - 1 - suffix] === newLines[newLines.length - 1 - suffix]
+  ) {
+    suffix += 1;
+  }
+  const delta = newLines.length - oldLines.length;
+  const suffixStart = oldLines.length - suffix;
+  const keep = (line: number) => {
+    const text = newLines[line];
+    if (text != null && text.trim() !== "") {
+      next.add(line);
+    }
+  };
+  for (const line of marks) {
+    if (line < prefix) {
+      keep(line);
+      continue;
+    }
+    if (line >= suffixStart) {
+      keep(line + delta);
+      continue;
+    }
+    if (delta === 0) {
+      keep(line);
+      continue;
+    }
+    const text = oldLines[line] ?? "";
+    if (text.trim() === "") {
+      continue;
+    }
+    let found = -1;
+    const middleEnd = newLines.length - suffix;
+    for (let index = prefix; index < middleEnd; index += 1) {
+      if (newLines[index] !== text) {
+        continue;
+      }
+      if (found >= 0) {
+        found = -1;
+        break;
+      }
+      found = index;
+    }
+    if (found >= 0) {
+      keep(found);
+    }
+  }
+  return next;
+}
+
 export type TextBlock = { kind: "text"; text: string };
 export type CodeBlock = { kind: "code"; lang: string; text: string };
 export type MediaBlock = { kind: "media"; name: string; label?: string; width?: number; inline?: boolean };

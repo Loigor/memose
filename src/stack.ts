@@ -6,7 +6,7 @@ import { marked } from "marked";
 import { audienceChoice, revealPressedChoice } from "./look/audience-ui";
 import { activeField, editingHost, fieldAt, fieldsIn, type Editable } from "./editor/editable";
 import { applyMediaFigureSize, focusLiftedCode, handleBlockAreaNavigation, handleBlockMediaDeletion, syncInlineLineSlot } from "./editor/editor-blocks";
-import { memoUsesCoder, refreshEditorFields, wrapEditorField } from "./editor/editor-field";
+import { codeSurface, memoUsesCoder, readLineMarks, refreshEditorFields, wrapEditorField, writeLineMarks } from "./editor/editor-field";
 import { filesFromTransfer } from "./media/files";
 import { BlockHistory, cloneBlocks, restoreCaret, type Caret } from "./editor/history";
 import { namedTheme, type Look } from "./look/look";
@@ -21,6 +21,7 @@ import {
   closedFenceIn,
   completeOpenFence,
   dropCodeBlock,
+  indentCode,
   ensureTextSlots,
   isTypedBlock,
   noteTitle,
@@ -154,12 +155,25 @@ export type StackState = {
   lastError: string | null;
 };
 
+function sectionMarkRoot(state: StackState): ParentNode {
+  if (stackEl) {
+    for (const section of stackEl.querySelectorAll<HTMLElement>(".stack-note")) {
+      const id = section.dataset.id;
+      if (id && stackState.get(id) === state) {
+        return section.querySelector(".stack-blocks") ?? section;
+      }
+    }
+  }
+  return document.createDocumentFragment();
+}
+
 function pushSectionUndo(state: StackState, force = true) {
-  state.history.push(state.blocks, state.caret, force);
+  state.history.push(state.blocks, state.caret, force, readLineMarks(sectionMarkRoot(state)));
 }
 
 export function undoSection(section: HTMLElement, state: StackState): boolean {
-  const entry = state.history.takeUndo(state.blocks, state.caret);
+  const container = section.querySelector<HTMLElement>(".stack-blocks");
+  const entry = state.history.takeUndo(state.blocks, state.caret, readLineMarks(container ?? section));
   if (!entry) {
     return false;
   }
@@ -168,15 +182,17 @@ export function undoSection(section: HTMLElement, state: StackState): boolean {
   state.content = serializeBlocks(state.blocks);
   renderSectionBlocks(section, state);
   scheduleSectionSave(section, state);
-  const container = section.querySelector<HTMLElement>(".stack-blocks");
-  if (container) {
-    restoreCaret(container, state.caret);
+  const next = section.querySelector<HTMLElement>(".stack-blocks");
+  if (next) {
+    writeLineMarks(next, entry.marks);
+    restoreCaret(next, state.caret);
   }
   return true;
 }
 
 export function redoSection(section: HTMLElement, state: StackState): boolean {
-  const entry = state.history.takeRedo(state.blocks, state.caret);
+  const container = section.querySelector<HTMLElement>(".stack-blocks");
+  const entry = state.history.takeRedo(state.blocks, state.caret, readLineMarks(container ?? section));
   if (!entry) {
     return false;
   }
@@ -185,14 +201,29 @@ export function redoSection(section: HTMLElement, state: StackState): boolean {
   state.content = serializeBlocks(state.blocks);
   renderSectionBlocks(section, state);
   scheduleSectionSave(section, state);
-  const container = section.querySelector<HTMLElement>(".stack-blocks");
-  if (container) {
-    restoreCaret(container, state.caret);
+  const next = section.querySelector<HTMLElement>(".stack-blocks");
+  if (next) {
+    writeLineMarks(next, entry.marks);
+    restoreCaret(next, state.caret);
   }
   return true;
 }
 
 export const stackState = new Map<string, StackState>();
+stackEl?.addEventListener("memose-undo", (event) => {
+  const node = event.target;
+  const section =
+    node instanceof Element
+      ? node.closest<HTMLElement>(".stack-note")
+      : node instanceof Node
+        ? node.parentElement?.closest<HTMLElement>(".stack-note") ?? null
+        : null;
+  const id = section?.dataset.id;
+  const held = id ? stackState.get(id) : undefined;
+  if (held) {
+    pushSectionUndo(held, true);
+  }
+});
 const saveTimers = new Map<string, ReturnType<typeof setTimeout>>();
 
 let hostCollapsed = false;
@@ -985,6 +1016,23 @@ function renderSectionBlocks(section: HTMLElement, state: StackState, focusName?
             const pos = Math.min(beforeLine.length + 1, target.value.length);
             target.setSelectionRange(pos, pos);
           }
+          return;
+        }
+        if (
+          event.key === "Tab" &&
+          !event.altKey &&
+          !event.metaKey &&
+          !event.ctrlKey &&
+          !event.isComposing &&
+          codeSurface(area)
+        ) {
+          event.preventDefault();
+          applySectionEdit(
+            section,
+            state,
+            area,
+            indentCode(area.value, area.selectionStart ?? 0, area.selectionEnd ?? 0, event.shiftKey),
+          );
           return;
         }
         if (

@@ -10,6 +10,7 @@ import {
   sourceToDisplay,
   type FoldView,
 } from "./code-fold.ts";
+import { copyIndentAfterBreak, indentWidthCols, remapLineMarks, setIndentWidth } from "./markdown-edit.ts";
 import { highlightMarkdown } from "./md-highlight.ts";
 
 export type HighlightScheme = "paper" | "cool" | "mono";
@@ -18,12 +19,14 @@ export type EditorPrefs = {
   coderEditor: boolean;
   markdownHighlight: boolean;
   markdownScheme: HighlightScheme;
+  indentWidth?: number;
 };
 
 let prefs: EditorPrefs = {
   coderEditor: false,
   markdownHighlight: true,
   markdownScheme: "paper",
+  indentWidth: 2,
 };
 
 export function editorPrefs(): EditorPrefs {
@@ -35,6 +38,10 @@ export function namedScheme(value: string | null | undefined): HighlightScheme {
     return value;
   }
   return "paper";
+}
+
+export function codeSurface(area: HTMLTextAreaElement): boolean {
+  return fieldUsesCoder(area);
 }
 
 export function memoUsesCoder(explicit: boolean | null | undefined): boolean {
@@ -49,6 +56,7 @@ export function wrapEditorField(area: HTMLTextAreaElement): HTMLElement {
   attachFolding(area);
   const existing = area.closest(".md-field");
   if (existing instanceof HTMLElement) {
+    attachLineMarks(existing, area);
     paintEditorField(area);
     return existing;
   }
@@ -67,6 +75,7 @@ export function wrapEditorField(area: HTMLTextAreaElement): HTMLElement {
   highlight.setAttribute("aria-hidden", "true");
   surface.append(highlight, area, overflowLayer(surface));
   field.append(folds, gutter, surface);
+  attachLineMarks(field, area);
   folds.addEventListener("mousedown", (event) => toggleFold(area, event));
   area.addEventListener("scroll", () => syncEditorScroll(area));
   let resizeFrame = 0;
@@ -108,12 +117,13 @@ export function paintEditorField(area: HTMLTextAreaElement) {
   }
   paintLang(field, area);
   paintFoldMarks(area, field);
+  paintMarkBars(area, field);
   const scope = area.closest("#blocks, .stack-blocks");
   if (scope) {
     renumberGutters(scope, Boolean(note?.hasAttribute("data-coder")));
   } else if (coder) {
     const numbers = gutterNumbers(area, 1);
-    paintNumbers(gutter, numbers, Math.max(2, String(sourceLineCount(area)).length));
+    paintNumbers(gutter, area, numbers, Math.max(2, String(sourceLineCount(area)).length), 1);
     codeGutter(field, false);
   } else {
     clearGutter(gutter);
@@ -133,11 +143,17 @@ export function refreshEditorFields(root: ParentNode = document) {
 }
 
 export function setEditorPrefs(next: EditorPrefs) {
+  const width = Math.round(Number(next.indentWidth));
   prefs = {
     coderEditor: Boolean(next.coderEditor),
     markdownHighlight: next.markdownHighlight !== false,
     markdownScheme: namedScheme(next.markdownScheme),
+    indentWidth: width >= 1 && width <= 8 ? width : 2,
   };
+  setIndentWidth(prefs.indentWidth ?? 2);
+  if (typeof document !== "undefined") {
+    document.documentElement.style.setProperty("--indent-ch", String(prefs.indentWidth ?? 2));
+  }
   refreshEditorFields();
 }
 
@@ -210,6 +226,10 @@ type FoldState = {
 
 const foldState = new WeakMap<HTMLTextAreaElement, FoldState>();
 let foldWrite = false;
+
+type LineMarks = { text: string; lines: Set<number> };
+
+const markState = new WeakMap<HTMLTextAreaElement, LineMarks>();
 
 function sourceLineCount(area: HTMLTextAreaElement): number {
   const state = foldState.get(area);
@@ -372,36 +392,61 @@ function attachFolding(area: HTMLTextAreaElement) {
     showFolded(area, sourceAt);
   });
   area.addEventListener(
-    "input",
-    () => {
-      if (foldWrite) {
-        return;
+    "beforeinput",
+    (event) => {
+      if (event.inputType === "insertLineBreak" || event.inputType === "insertParagraph") {
+        area.dataset.indentBreak = "1";
       }
-      const state = foldState.get(area);
-      if (!state || state.folds.size === 0) {
-        return;
-      }
-      const display = readNative(area);
-      const sourceAt = displayToSource(display, state.holes, nativeStart(area));
-      if (sentinelCount(display) !== state.holes.length) {
-        state.folds.clear();
-        state.holes = [];
-        showFolded(area, sourceAt);
-        return;
-      }
-      state.source = expandFolds(display, state.holes);
-      state.folds = foldsAfterEdit(state.source, state.holes);
-      const next = foldView(state.source, state.folds);
-      if (next.display !== display) {
-        showFolded(area, sourceAt);
-        return;
-      }
-      state.view = next;
-      state.folds = new Set(next.foldedLines);
-      state.holes = next.holes;
     },
     true,
   );
+  area.addEventListener(
+    "input",
+    () => {
+      const breaking = area.dataset.indentBreak === "1";
+      delete area.dataset.indentBreak;
+      if (foldWrite) {
+        return;
+      }
+      if (breaking && codeSurface(area)) {
+        applyBreakIndent(area);
+      }
+      const state = foldState.get(area);
+      if (state && state.folds.size > 0) {
+        const display = readNative(area);
+        const sourceAt = displayToSource(display, state.holes, nativeStart(area));
+        if (sentinelCount(display) !== state.holes.length) {
+          state.folds.clear();
+          state.holes = [];
+          showFolded(area, sourceAt);
+        } else {
+          state.source = expandFolds(display, state.holes);
+          state.folds = foldsAfterEdit(state.source, state.holes);
+          const next = foldView(state.source, state.folds);
+          if (next.display !== display) {
+            showFolded(area, sourceAt);
+          } else {
+            state.view = next;
+            state.folds = new Set(next.foldedLines);
+            state.holes = next.holes;
+          }
+        }
+      }
+      syncMarks(area);
+    },
+    true,
+  );
+}
+
+function applyBreakIndent(area: HTMLTextAreaElement) {
+  const edit = copyIndentAfterBreak(readNative(area), nativeStart(area));
+  if (!edit) {
+    return;
+  }
+  foldWrite = true;
+  writeNative(area, edit.value);
+  setNativeRange(area, edit.start, edit.end);
+  foldWrite = false;
 }
 
 function toggleFold(area: HTMLTextAreaElement, event: MouseEvent) {
@@ -426,6 +471,173 @@ function toggleFold(area: HTMLTextAreaElement, event: MouseEvent) {
     state.folds.add(line);
   }
   showFolded(area, area.selectionStart ?? 0);
+}
+
+function sourceText(area: HTMLTextAreaElement): string {
+  const folded = foldState.get(area);
+  if (folded && folded.folds.size > 0) {
+    return folded.source;
+  }
+  return readNative(area);
+}
+
+function syncMarks(area: HTMLTextAreaElement) {
+  const state = markState.get(area);
+  if (!state || state.lines.size === 0) {
+    return;
+  }
+  const text = sourceText(area);
+  if (text === state.text) {
+    return;
+  }
+  const lines = remapLineMarks(state.text, text, state.lines);
+  state.text = text;
+  state.lines = lines;
+  if (lines.size === 0) {
+    markState.delete(area);
+  }
+}
+
+export function readLineMarks(root: ParentNode): number[][] {
+  const marks: number[][] = [];
+  for (const area of root.querySelectorAll<HTMLTextAreaElement>("textarea")) {
+    const index = Number(area.dataset.index);
+    if (!Number.isInteger(index) || index < 0) {
+      continue;
+    }
+    const lines = markState.get(area)?.lines;
+    marks[index] = lines && lines.size > 0 ? [...lines].sort((a, b) => a - b) : [];
+  }
+  return marks;
+}
+
+export function writeLineMarks(root: ParentNode, marks: number[][] | undefined) {
+  const saved = marks ?? [];
+  for (const area of root.querySelectorAll<HTMLTextAreaElement>("textarea")) {
+    const index = Number(area.dataset.index);
+    const lines = Number.isInteger(index) ? (saved[index] ?? []) : [];
+    if (lines.length === 0) {
+      continue;
+    }
+    markState.set(area, { text: sourceText(area), lines: new Set(lines) });
+    paintEditorField(area);
+  }
+}
+
+function rememberLineMarks(area: HTMLTextAreaElement) {
+  area.dispatchEvent(new CustomEvent("memose-undo", { bubbles: true }));
+}
+
+function gutterHit(area: HTMLTextAreaElement, event: MouseEvent): number | null {
+  const note = area.closest("#card, .stack-note");
+  if (!note?.hasAttribute("data-coder")) {
+    return null;
+  }
+  const node = event.target instanceof Element ? event.target : event.target instanceof Node ? event.target.parentElement : null;
+  const gutter = node?.closest(".md-gutter");
+  if (!(gutter instanceof HTMLElement) || !area.closest(".md-field")?.contains(gutter)) {
+    return null;
+  }
+  const sources = (gutter.dataset.sources ?? "").split(",").filter((part) => part !== "").map(Number);
+  const pad = Number.parseFloat(getComputedStyle(gutter).paddingTop) || 0;
+  const lineHeight = Number.parseFloat(getComputedStyle(area).lineHeight) || 18;
+  const index = Math.floor((event.clientY - gutter.getBoundingClientRect().top + gutter.scrollTop - pad) / lineHeight);
+  const line = sources[index];
+  return Number.isInteger(line) ? line : null;
+}
+
+function attachLineMarks(field: HTMLElement, area: HTMLTextAreaElement) {
+  if (field.dataset.lineMarks === "1") {
+    return;
+  }
+  field.dataset.lineMarks = "1";
+  let pending = 0;
+  field.addEventListener("click", (event) => {
+    const line = gutterHit(area, event);
+    const state = line == null ? undefined : markState.get(area);
+    if (line == null || !state?.lines.has(line)) {
+      return;
+    }
+    window.clearTimeout(pending);
+    pending = window.setTimeout(() => {
+      pending = 0;
+      rememberLineMarks(area);
+      state.lines.delete(line);
+      if (state.lines.size === 0) {
+        markState.delete(area);
+      }
+      paintEditorField(area);
+    }, 220);
+  });
+  field.addEventListener("dblclick", (event) => {
+    const line = gutterHit(area, event);
+    if (line == null) {
+      return;
+    }
+    window.clearTimeout(pending);
+    pending = 0;
+    event.preventDefault();
+    rememberLineMarks(area);
+    let state = markState.get(area);
+    if (!state) {
+      state = { text: sourceText(area), lines: new Set() };
+      markState.set(area, state);
+    }
+    if (state.lines.has(line)) {
+      state.lines.delete(line);
+    } else {
+      state.lines.add(line);
+    }
+    state.text = sourceText(area);
+    if (state.lines.size === 0) {
+      markState.delete(area);
+    }
+    paintEditorField(area);
+  });
+}
+
+function paintMarkBars(area: HTMLTextAreaElement, field: HTMLElement) {
+  const surface = field.querySelector(":scope > .md-surface");
+  const existing = surface?.querySelector<HTMLElement>(":scope > .md-mark-bars");
+  const marks = markState.get(area);
+  const note = area.closest("#card, .stack-note");
+  if (!surface || !marks || marks.lines.size === 0 || !note?.hasAttribute("data-coder")) {
+    existing?.remove();
+    return;
+  }
+  const layer = existing ?? document.createElement("div");
+  layer.className = "md-mark-bars";
+  if (!existing) {
+    surface.prepend(layer);
+  }
+  const folded = foldState.get(area);
+  const sources = folded && folded.folds.size > 0
+    ? folded.view.numbers.map((number) => number - 1)
+    : Array.from({ length: sourceText(area).split("\n").length }, (_, index) => index);
+  if (!sources.some((line) => marks.lines.has(line))) {
+    existing?.remove();
+    return;
+  }
+  const style = getComputedStyle(area);
+  const padTop = Number.parseFloat(style.paddingTop) || 0;
+  const lineHeight = Number.parseFloat(style.lineHeight) || 18;
+  const key = sources.map((line) => (marks.lines.has(line) ? "1" : "0")).join("");
+  if (layer.dataset.key === key && layer.childElementCount > 0) {
+    return;
+  }
+  layer.dataset.key = key;
+  layer.replaceChildren();
+  sources.forEach((line, index) => {
+    if (!marks.lines.has(line)) {
+      return;
+    }
+    const bar = document.createElement("div");
+    bar.className = "md-mark-bar";
+    bar.style.top = `${padTop + index * lineHeight}px`;
+    bar.style.height = `${lineHeight}px`;
+    layer.append(bar);
+  });
+  layer.style.transform = `translateY(${-area.scrollTop}px)`;
 }
 
 function paintFoldMarks(area: HTMLTextAreaElement, field: HTMLElement) {
@@ -479,18 +691,58 @@ function primaryGutter(field: HTMLElement): HTMLElement | null {
 
 function clearGutter(gutter: HTMLElement) {
   gutter.textContent = "";
+  gutter.classList.remove("has-mark");
   gutter.style.removeProperty("--gutter-cols");
   delete gutter.dataset.lines;
+  delete gutter.dataset.sources;
 }
 
-function paintNumbers(gutter: HTMLElement, numbers: number[], cols: number) {
+function gutterBody(gutter: HTMLElement): HTMLElement {
+  const existing = gutter.querySelector<HTMLElement>(":scope > .md-gutter-body");
+  if (existing) {
+    return existing;
+  }
+  const body = document.createElement("div");
+  body.className = "md-gutter-body";
+  gutter.replaceChildren(body);
+  return body;
+}
+
+function paintNumbers(
+  gutter: HTMLElement,
+  area: HTMLTextAreaElement,
+  numbers: number[],
+  cols: number,
+  origin: number,
+) {
   gutter.style.setProperty("--gutter-cols", String(cols));
-  const key = numbers.join("\n");
+  gutter.classList.remove("has-mark");
+  const sources = numbers.map((number) => number - origin);
+  gutter.dataset.sources = sources.join(",");
+  const marked = area.closest("#card, .stack-note")?.hasAttribute("data-coder")
+    ? markState.get(area)?.lines
+    : undefined;
+  const markKey = marked && marked.size > 0 ? [...marked].sort((a, b) => a - b).join(",") : "";
+  const lineHeight = Number.parseFloat(getComputedStyle(area).lineHeight) || 18;
+  const key = `${numbers.join("\n")}|${origin}|${markKey}|${lineHeight}`;
   if (gutter.dataset.lines === key) {
     return;
   }
   gutter.dataset.lines = key;
-  gutter.textContent = key;
+  const body = gutterBody(gutter);
+  body.textContent = numbers.join("\n");
+  if (!marked) {
+    return;
+  }
+  sources.forEach((line, index) => {
+    if (!marked.has(line)) {
+      return;
+    }
+    const ball = document.createElement("span");
+    ball.className = "md-line-ball";
+    ball.style.top = `${index * lineHeight + (lineHeight - 4) / 2}px`;
+    body.append(ball);
+  });
 }
 
 function codeGutter(field: HTMLElement, on: boolean): HTMLElement | null {
@@ -529,7 +781,7 @@ function renumberGutters(scope: ParentNode, coderNote: boolean) {
       }
       if (area.dataset.kind === "code") {
         const numbers = gutterNumbers(area, 1);
-        paintNumbers(gutter, numbers, Math.max(2, String(sourceLineCount(area)).length));
+        paintNumbers(gutter, area, numbers, Math.max(2, String(sourceLineCount(area)).length), 1);
       } else {
         clearGutter(gutter);
       }
@@ -557,11 +809,11 @@ function renumberGutters(scope: ParentNode, coderNote: boolean) {
       codeGutter(field, false);
       continue;
     }
-    paintNumbers(gutter, gutterNumbers(row.area, row.start), cols);
+    paintNumbers(gutter, row.area, gutterNumbers(row.area, row.start), cols, row.start);
     if (row.area.dataset.kind === "code") {
       const local = codeGutter(field, true);
       if (local) {
-        paintNumbers(local, gutterNumbers(row.area, 1), Math.max(2, String(row.count).length));
+        paintNumbers(local, row.area, gutterNumbers(row.area, 1), Math.max(2, String(row.count).length), 1);
       }
     } else {
       codeGutter(field, false);
@@ -653,7 +905,7 @@ function markLongLines(highlight: HTMLElement, coder: boolean) {
   const texts = highlight.querySelectorAll<HTMLElement>(".md-line-text");
   shift.replaceChildren();
   for (let index = 0; index < lines.length; index += 1) {
-    const wide = ctx ? ctx.measureText(expandTabs(lines[index] ?? "")).width : 0;
+    const wide = ctx ? ctx.measureText(expandTabs(lines[index] ?? "", indentWidthCols())).width : 0;
     const long = wide > inner + 1;
     texts[index]?.classList.toggle("is-long", long);
     if (!long) {
@@ -682,6 +934,10 @@ function syncEditorScroll(area: HTMLTextAreaElement) {
   }
   if (shift) {
     shift.style.transform = `translateY(${-area.scrollTop}px)`;
+  }
+  const bars = field.querySelector<HTMLElement>(":scope > .md-surface > .md-mark-bars");
+  if (bars) {
+    bars.style.transform = `translateY(${-area.scrollTop}px)`;
   }
   for (const gutter of field.querySelectorAll<HTMLElement>(":scope > .md-gutter, :scope > .md-folds")) {
     gutter.scrollTop = area.scrollTop;

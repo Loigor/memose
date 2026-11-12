@@ -570,6 +570,7 @@ pub const PIN_TAB_EDGE: &str = "pin_tab_edge";
 pub const SHOW_IN_SWITCHER: &str = "show_in_switcher";
 pub const PINNED_ALWAYS_ON_TOP: &str = "pinned_always_on_top";
 pub const CODER_EDITOR: &str = "coder_editor";
+pub const INDENT_WIDTH: &str = "indent_width";
 pub const MARKDOWN_HIGHLIGHT: &str = "markdown_highlight";
 pub const MARKDOWN_SCHEME: &str = "markdown_scheme";
 pub const HUE_SWATCHES: &str = "hue_swatches";

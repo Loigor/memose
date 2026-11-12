@@ -126,6 +126,7 @@ pub fn run() {
             commands::set_pin_tab_place,
             commands::set_show_in_switcher,
             commands::set_pinned_always_on_top,
+            commands::set_indent_width,
             commands::set_coder_editor,
             commands::set_markdown_highlight,
             commands::set_markdown_scheme,

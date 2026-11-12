@@ -22,7 +22,7 @@ One editing surface. Each line is a row. The row’s class comes from the line p
 
 A fence line stays in the text until Enter, so `` ```json `` can be finished before it becomes a block. Enter lifts that line into a code block, shows the language at the top right, and highlights the code. A brace block in a code block or the coder editor folds from the gutter; the hidden lines stay in the stored text. Closing a fence or inserting a `memose-media` token still splits the note into those blocks.
 
-The coder editor is the raw textarea, gutter, and overlay. A fenced block inside it stays a coder field: the note’s line numbers continue through that block, and the block adds its own gutter in the code color, indented beside them. Preview is still the read-only `marked` view. The normal editor is the default. “Coder editor default” in settings still chooses the textarea instead. Turning coder mode on or off rebuilds the surface once. A color change does not.
+The coder editor is the raw textarea, gutter, and overlay. A fenced block inside it stays a coder field: the note’s line numbers continue through that block, and the block adds its own gutter in the code color, indented beside them. Double-click a line number to mark that line; click it again, or clear the line, to remove the mark. Enter in a code block or the coder editor keeps the previous line’s indent. Whitespace size in settings is how many characters one indent is. Preview is still the read-only `marked` view. The normal editor is the default. “Coder editor default” in settings still chooses the textarea instead. Turning coder mode on or off rebuilds the surface once. A color change does not.
 
 ### Why rows
 

@@ -64,10 +64,33 @@ export function restorePlace(
   return true;
 }
 
+export type LineMarks = number[][];
+
 export type NoteHistoryEntry = {
   blocks: Block[];
   caret: Caret | null;
+  marks: LineMarks;
 };
+
+function cloneMarks(marks: LineMarks | undefined): LineMarks {
+  return (marks ?? []).map((lines) => (lines ? [...lines] : []));
+}
+
+function marksKey(marks: LineMarks | undefined): string {
+  const rows = marks ?? [];
+  let out = "";
+  for (let index = 0; index < rows.length; index += 1) {
+    if (index > 0) {
+      out += "|";
+    }
+    out += (rows[index] ?? []).join(".");
+  }
+  return out;
+}
+
+function sameSnapshot(blocks: Block[], marks: LineMarks | undefined, entry: NoteHistoryEntry): boolean {
+  return serializeBlocks(entry.blocks) === serializeBlocks(blocks) && marksKey(entry.marks) === marksKey(marks);
+}
 
 export function cloneBlocks(items: Block[]): Block[] {
   return items.map((b) =>
@@ -90,28 +113,27 @@ export class BlockHistory {
   redoStack: NoteHistoryEntry[] = [];
   lastInputSnapAt = 0;
 
-  push(blocks: Block[], caret: Caret | null, force = true) {
+  push(blocks: Block[], caret: Caret | null, force = true, marks: LineMarks = []) {
     const now = performance.now();
     if (!force && now - this.lastInputSnapAt < 900 && this.undoStack.length > 0) {
       return;
     }
-    const serialized = serializeBlocks(blocks);
     const top = this.undoStack[this.undoStack.length - 1];
-    if (top && serializeBlocks(top.blocks) === serialized) {
+    if (top && sameSnapshot(blocks, marks, top)) {
       top.caret = caret ? { ...caret } : null;
       return;
     }
     this.undoStack.push({
       blocks: cloneBlocks(blocks),
       caret: caret ? { ...caret } : null,
+      marks: cloneMarks(marks),
     });
     if (this.undoStack.length > 60) {
       this.undoStack.shift();
     }
     this.redoStack = [];
-    if (!force) {
-      this.lastInputSnapAt = now;
-    }
+    // A discrete edit starts a new typing group, so the next keystroke is its own undo.
+    this.lastInputSnapAt = force ? 0 : now;
   }
 
   reset() {
@@ -120,27 +142,27 @@ export class BlockHistory {
     this.lastInputSnapAt = 0;
   }
 
-  takeUndo(currentBlocks: Block[], currentCaret: Caret | null): NoteHistoryEntry | null {
+  takeUndo(currentBlocks: Block[], currentCaret: Caret | null, currentMarks: LineMarks = []): NoteHistoryEntry | null {
     if (this.undoStack.length === 0) {
       return null;
     }
-    const currentSerialized = serializeBlocks(currentBlocks);
     let entry = this.undoStack.pop()!;
-    while (this.undoStack.length > 0 && serializeBlocks(entry.blocks) === currentSerialized) {
+    while (this.undoStack.length > 0 && sameSnapshot(currentBlocks, currentMarks, entry)) {
       entry = this.undoStack.pop()!;
     }
-    if (serializeBlocks(entry.blocks) === currentSerialized) {
+    if (sameSnapshot(currentBlocks, currentMarks, entry)) {
       return null;
     }
     this.redoStack.push({
       blocks: cloneBlocks(currentBlocks),
       caret: currentCaret ? { ...currentCaret } : null,
+      marks: cloneMarks(currentMarks),
     });
     this.lastInputSnapAt = 0;
     return entry;
   }
 
-  takeRedo(currentBlocks: Block[], currentCaret: Caret | null): NoteHistoryEntry | null {
+  takeRedo(currentBlocks: Block[], currentCaret: Caret | null, currentMarks: LineMarks = []): NoteHistoryEntry | null {
     if (this.redoStack.length === 0) {
       return null;
     }
@@ -148,6 +170,7 @@ export class BlockHistory {
     this.undoStack.push({
       blocks: cloneBlocks(currentBlocks),
       caret: currentCaret ? { ...currentCaret } : null,
+      marks: cloneMarks(currentMarks),
     });
     this.lastInputSnapAt = 0;
     return entry;
