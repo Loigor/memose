@@ -41,7 +41,14 @@ These are helpers, not a component framework:
 
 | Module | Role |
 | --- | --- |
-| `main.ts` | App controller: editor state, drafts, pinning, recent list, IPC, event listeners |
+| `main.ts` | Composition root: mode detection, context/state creation, controller mounting, Tauri lifecycle wiring |
+| `app/context.ts` / `app/state.ts` / `app/backend.ts` | Required DOM/runtime dependencies, explicitly owned feature state, typed Tauri IPC adapter |
+| `app/controllers/editor-controller.ts` | Editor document, rendering, preview, history, toolbar, media host, editor-view persistence |
+| `app/controllers/session-controller.ts` | Composer/pinned memo lifecycle, draft persistence, pin/delete/conflict workflows, window sizing |
+| `app/controllers/recent-controller.ts` | Recent memo list, search, selection, and list pin actions |
+| `app/controllers/audience-controller.ts` | Visibility/space selection, sync status, settings reload, audience persistence |
+| `app/controllers/look-controller.ts` | Theme, hue, opacity, coder appearance, swatches, look persistence |
+| `app/controllers/input-controller.ts` | Keyboard/mouse shortcuts, tags, paste/drop, drag gestures, global input routing |
 | `settings.ts` | Settings window controller |
 | `stack.ts` | Stacked memos drawn under a host window |
 | `editor/` (`markdown-edit.ts`, `editor-blocks.ts`, `editor-field.ts`, `textarea.ts`, `history.ts`, `md-highlight.ts`) | Block editor, markdown transforms, undo |
@@ -56,7 +63,7 @@ These are helpers, not a component framework:
 2. **Pinned memo** — extra windows labeled `pin-<note-id>`, with `globalThis.__memosePin` injected
 3. **Media preview** — window label `media-preview`, lightbox only
 
-That split is at the bottom of `main.ts`: it either loads a pinned note, initializes the lightbox, or listens for composer events (`composer-flush`, `composer-fresh`, `notes-changed`, and so on).
+That split is at the bottom of `main.ts`: the composition root routes lifecycle events to the mounted controllers for pinned, preview, or composer mode.
 
 ## Tauri glue
 
@@ -174,7 +181,7 @@ Platform-specific rules for WebView, clipboard, DPI, and Wayland are in [`qualit
 
 ```
 User types in #blocks
-    → serializeBlocks() in main.ts
+    → editor controller serializes blocks
     → invoke("upsert_draft" | "save_edit" | "commit_note")
     → commands.rs → notes::Db (SQLite)
     → request_sync(app)
