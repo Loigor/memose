@@ -8,7 +8,7 @@ export interface StackApi {
   activeStackSection(): {
     section: HTMLElement;
     state: SectionState;
-} | null;
+  } | null;
   applyOpenHeight(): void;
   applySectionEdit(section: HTMLElement, state: SectionState, area: Editable, edit: Edit): void;
   applyStackEditorChrome(): void;
@@ -41,7 +41,7 @@ export interface StackApi {
   sectionAreaSelection(area: Editable, state: SectionState): {
     start: number;
     end: number;
-};
+  };
   sectionBarOnly(id: string | undefined, state: SectionState): boolean;
   sectionHue(state: SectionState): number | null;
   sectionTargetArea(section: HTMLElement, state: SectionState): Editable | null;
@@ -53,7 +53,7 @@ export interface StackApi {
   stackCounts(): {
     opens: number;
     bars: number;
-};
+  };
   startWindowDrag(event: MouseEvent): void;
   syncActiveNoteHeader(): void;
   syncCollapsedPeek(): void;
