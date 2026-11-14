@@ -58,13 +58,7 @@ export interface InputBackend {
   mouseChord(button: number, alt: boolean, ctrl: boolean, shift: boolean, meta: boolean): Promise<void>;
 }
 
-export type AppBackend =
-  & RecentBackend
-  & AudienceBackend
-  & LookBackend
-  & EditorBackend
-  & SessionBackend
-  & InputBackend;
+export type AppBackend = RecentBackend & AudienceBackend & LookBackend & EditorBackend & SessionBackend & InputBackend;
 
 export function createAppBackend(): AppBackend {
   return {

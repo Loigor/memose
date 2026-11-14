@@ -93,14 +93,9 @@ export function createAudienceController(
     );
     for (const space of state.knownSpaces) {
       spaceChoices.append(
-        audienceChoice(
-          space.title,
-          space.synced === false ? "Not on server" : "",
-          state.space === space.name,
-          () => {
-            chooseSpace(space.name);
-          },
-        ),
+        audienceChoice(space.title, space.synced === false ? "Not on server" : "", state.space === space.name, () => {
+          chooseSpace(space.name);
+        }),
       );
     }
     if (!audiencePop.hidden) {
@@ -126,9 +121,7 @@ export function createAudienceController(
       visibility = "PRIVATE";
     }
     state.visibility = visibility;
-    state.space = isOfflinePrivate(visibility)
-      ? ""
-      : (note?.space ?? (note?.visibility ? "" : state.defaultSpace));
+    state.space = isOfflinePrivate(visibility) ? "" : (note?.space ?? (note?.visibility ? "" : state.defaultSpace));
     state.syncState = note?.syncState || "local";
     state.syncError = note?.lastError ?? null;
     visibilityLabel.hidden = false;

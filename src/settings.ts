@@ -292,9 +292,7 @@ async function loadSettings() {
   const settings = await invoke<Settings>("get_settings");
   baseUrlEl.value = settings.baseUrl;
   tokenEl.value = "";
-  tokenHintEl.textContent = settings.hasToken
-    ? `A token is saved on ${thisComputer()}.`
-    : "No token saved.";
+  tokenHintEl.textContent = settings.hasToken ? `A token is saved on ${thisComputer()}.` : "No token saved.";
   autostartEl.checked = settings.launchAtLogin;
   paintDesktopPrefs(settings);
   snapMemosEl.checked = settings.snapMemos;
@@ -303,9 +301,8 @@ async function loadSettings() {
   coderEditorEl.checked = settings.coderEditor;
   indentWidthEl.value = String(settings.indentWidth >= 1 && settings.indentWidth <= 8 ? settings.indentWidth : 2);
   markdownHighlightEl.checked = settings.markdownHighlight !== false;
-  chosenScheme = settings.markdownScheme === "cool" || settings.markdownScheme === "mono"
-    ? settings.markdownScheme
-    : "paper";
+  chosenScheme =
+    settings.markdownScheme === "cool" || settings.markdownScheme === "mono" ? settings.markdownScheme : "paper";
   paintSchemes();
   chosenVisibility = settings.visibility || "PRIVATE";
   chosenSpace = settings.space || "";
@@ -336,8 +333,7 @@ function paintAudienceChoices() {
     });
     visibilityChoicesEl.append(button);
   }
-  const showSpaces =
-    !isOfflinePrivate(chosenVisibility) && (hasSyncConfigured || knownSpaces.length > 0);
+  const showSpaces = !isOfflinePrivate(chosenVisibility) && (hasSyncConfigured || knownSpaces.length > 0);
   memoSpaceFieldEl.hidden = !showSpaces;
   spaceHintEl.hidden = !showSpaces;
   spaceChoicesEl.hidden = !showSpaces;
@@ -622,9 +618,7 @@ showInSwitcherEl.addEventListener("change", () => {
   const enabled = showInSwitcherEl.checked;
   void invoke("set_show_in_switcher", { enabled })
     .then(() => {
-      statusEl.textContent = enabled
-        ? "Alt+Tab enabled. Pinned mode stays on."
-        : "Alt+Tab disabled.";
+      statusEl.textContent = enabled ? "Alt+Tab enabled. Pinned mode stays on." : "Alt+Tab disabled.";
     })
     .catch((error: unknown) => {
       statusEl.textContent = String(error);
@@ -673,9 +667,7 @@ function paintPinTabBar(enabled: boolean) {
 async function loadPinPlace(settings: Settings) {
   const displays = await invoke<{ id: string; label: string }[]>("list_displays").catch(() => []);
   const screen =
-    settings.pinTabScreen === "all" || settings.pinTabScreen?.startsWith("display:")
-      ? settings.pinTabScreen
-      : "cursor";
+    settings.pinTabScreen === "all" || settings.pinTabScreen?.startsWith("display:") ? settings.pinTabScreen : "cursor";
   const edge =
     settings.pinTabEdge === "bottom" || settings.pinTabEdge === "left" || settings.pinTabEdge === "right"
       ? settings.pinTabEdge
@@ -773,9 +765,7 @@ coderEditorEl.addEventListener("change", () => {
   const enabled = coderEditorEl.checked;
   void invoke("set_coder_editor", { enabled })
     .then(() => {
-      statusEl.textContent = enabled
-        ? "New memos use the coder editor."
-        : "New memos use the default editor.";
+      statusEl.textContent = enabled ? "New memos use the coder editor." : "New memos use the default editor.";
     })
     .catch((error: unknown) => {
       statusEl.textContent = String(error);

@@ -37,11 +37,14 @@ if (pinnedNoteId) {
   document.documentElement.classList.add("pin-window");
 }
 const appBackend = createAppBackend();
-const appContext = createAppContext({
-  kind: isPreviewWindow() ? "preview" : pinnedNoteId ? "pinned" : "composer",
-  pinnedNoteId,
-  pinnedThemeHint,
-}, appBackend);
+const appContext = createAppContext(
+  {
+    kind: isPreviewWindow() ? "preview" : pinnedNoteId ? "pinned" : "composer",
+    pinnedNoteId,
+    pinnedThemeHint,
+  },
+  appBackend,
+);
 const appState = createAppState();
 const recentState = appState.recent;
 let lookController!: LookController;
@@ -49,12 +52,7 @@ let recentController!: RecentController;
 let sessionController!: SessionController;
 let inputController!: InputController;
 let stack!: StackController;
-const {
-  card: cardEl,
-  blocks: blocksEl,
-  lightbox: lightboxEl,
-  lightboxImage: lightboxImageEl,
-} = appContext.dom;
+const { card: cardEl, blocks: blocksEl, lightbox: lightboxEl, lightboxImage: lightboxImageEl } = appContext.dom;
 
 const editorController = createEditorController(
   appContext,
@@ -280,7 +278,8 @@ if (isPreviewWindow()) {
     if (event.payload !== pinnedNoteId) {
       return;
     }
-    void sessionController.loadPinned(pinnedNoteId)
+    void sessionController
+      .loadPinned(pinnedNoteId)
       .then(() => editorController.resumePlace())
       .catch((error: unknown) => {
         console.error(error);
@@ -295,7 +294,8 @@ if (isPreviewWindow()) {
   });
   void listen("notes-changed", () => {
     editorController.rememberPlace();
-    void sessionController.loadPinned(pinnedNoteId)
+    void sessionController
+      .loadPinned(pinnedNoteId)
       .then(() => editorController.resumePlace())
       .catch((error: unknown) => {
         console.error(error);

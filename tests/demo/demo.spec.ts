@@ -49,7 +49,7 @@ const stackNotes: NoteSeed[] = [
   },
   {
     id: "snip",
-    content: "# Snippets\n```js\ninvoke(\"set_pinned\", { id, pinned: true })\n```",
+    content: '# Snippets\n```js\ninvoke("set_pinned", { id, pinned: true })\n```',
     stackHost: "design",
     collapsed: true,
     updatedAt: NOW - 10,

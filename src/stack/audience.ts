@@ -46,48 +46,36 @@ export function mountAudience(ctx: StackCtx) {
       if (option.value === "SPACE" && ctx.deps.audience.spaces().length === 0) {
         continue;
       }
-      visChoices.append(audienceChoice(option.label, option.hint, state.visibility === option.value, () => {
-        state.visibility = option.value;
-        if (isOfflinePrivate(option.value)) {
-          state.space = "";
-          state.syncState = "local";
-          state.lastError = null;
-        } else if (option.value === "SPACE" && state.space === "" && ctx.deps.audience.spaces()[0]) {
-          state.space = ctx.deps.audience.spaces()[0].name;
-        }
-        paintSectionAudience(section, state);
-        void invoke("set_note_audience", {
-          id,
-          visibility: state.visibility,
-          space: state.space,
-        }).catch((error: unknown) => {
-          console.error(error);
-        });
-      }));
+      visChoices.append(
+        audienceChoice(option.label, option.hint, state.visibility === option.value, () => {
+          state.visibility = option.value;
+          if (isOfflinePrivate(option.value)) {
+            state.space = "";
+            state.syncState = "local";
+            state.lastError = null;
+          } else if (option.value === "SPACE" && state.space === "" && ctx.deps.audience.spaces()[0]) {
+            state.space = ctx.deps.audience.spaces()[0].name;
+          }
+          paintSectionAudience(section, state);
+          void invoke("set_note_audience", {
+            id,
+            visibility: state.visibility,
+            space: state.space,
+          }).catch((error: unknown) => {
+            console.error(error);
+          });
+        }),
+      );
     }
     spaceChoices.replaceChildren();
     spaceBlock.hidden = ctx.deps.audience.spaces().length === 0 || isOfflinePrivate(state.visibility);
     if (spaceBlock.hidden) {
       return;
     }
-    spaceChoices.append(audienceChoice("Unassigned", "", state.space === "", () => {
-      state.space = "";
-      if (state.visibility === "SPACE" || isOfflinePrivate(state.visibility)) {
-        state.visibility = "PRIVATE";
-      }
-      paintSectionAudience(section, state);
-      void invoke("set_note_audience", {
-        id,
-        visibility: state.visibility,
-        space: state.space,
-      }).catch((error: unknown) => {
-        console.error(error);
-      });
-    }));
-    for (const item of ctx.deps.audience.spaces()) {
-      spaceChoices.append(audienceChoice(item.title, item.synced === false ? "Not on server" : "", state.space === item.name, () => {
-        state.space = item.name;
-        if (isOfflinePrivate(state.visibility)) {
+    spaceChoices.append(
+      audienceChoice("Unassigned", "", state.space === "", () => {
+        state.space = "";
+        if (state.visibility === "SPACE" || isOfflinePrivate(state.visibility)) {
           state.visibility = "PRIVATE";
         }
         paintSectionAudience(section, state);
@@ -98,7 +86,25 @@ export function mountAudience(ctx: StackCtx) {
         }).catch((error: unknown) => {
           console.error(error);
         });
-      }));
+      }),
+    );
+    for (const item of ctx.deps.audience.spaces()) {
+      spaceChoices.append(
+        audienceChoice(item.title, item.synced === false ? "Not on server" : "", state.space === item.name, () => {
+          state.space = item.name;
+          if (isOfflinePrivate(state.visibility)) {
+            state.visibility = "PRIVATE";
+          }
+          paintSectionAudience(section, state);
+          void invoke("set_note_audience", {
+            id,
+            visibility: state.visibility,
+            space: state.space,
+          }).catch((error: unknown) => {
+            console.error(error);
+          });
+        }),
+      );
     }
     if (pop && !pop.hidden) {
       revealPressedChoice(spaceChoices);

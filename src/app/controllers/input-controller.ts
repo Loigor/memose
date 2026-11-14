@@ -2,10 +2,7 @@ import { editingHost, type Editable } from "../../editor/editable";
 import { tagAtOffset } from "../../editor/md-tags";
 import { filesFromTransfer, uniqueFiles } from "../../media/files";
 import { isDraggingMedia } from "../../media/media-dnd";
-import {
-  closeMediaContextMenu,
-  mediaContextMenuOpen,
-} from "../../media/media-elements";
+import { closeMediaContextMenu, mediaContextMenuOpen } from "../../media/media-elements";
 import { inTauri, isPreviewWindow } from "../../platform";
 import {
   domMouseButton,
@@ -59,16 +56,7 @@ export function createInputController(
   look: LookController,
   stack: StackInput,
 ): InputController {
-  const {
-    card,
-    notePane,
-    notesRoot,
-    editorTools,
-    formatPop,
-    colorPop,
-    visibilityLabel,
-    audiencePop,
-  } = context.dom;
+  const { card, notePane, notesRoot, editorTools, formatPop, colorPop, visibilityLabel, audiencePop } = context.dom;
 
   function altHeld() {
     return state.altHeld;
@@ -215,8 +203,7 @@ export function createInputController(
     if (area && area.selectionStart !== area.selectionEnd) {
       return;
     }
-    const keep =
-      area ?? (event.target instanceof Element ? event.target.closest<HTMLElement>(".md-tag") : null);
+    const keep = area ?? (event.target instanceof Element ? event.target.closest<HTMLElement>(".md-tag") : null);
     state.tagClickHandled = true;
     window.setTimeout(() => {
       state.tagClickHandled = false;
@@ -235,8 +222,7 @@ export function createInputController(
       return;
     }
     const area = editorTagArea(event.target);
-    const keep =
-      area ?? (event.target instanceof Element ? event.target.closest<HTMLElement>(".md-tag") : null);
+    const keep = area ?? (event.target instanceof Element ? event.target.closest<HTMLElement>(".md-tag") : null);
     recent.openTagSearch(tag, keep);
   });
   notesRoot.addEventListener("mousemove", (event) => {
@@ -304,9 +290,7 @@ export function createInputController(
     }
     state.lastPasteHandledAt = performance.now();
     const targetSection =
-      (target instanceof Element ? target.closest<HTMLElement>(".stack-note") : null) ??
-      stack.activeSection() ??
-      null;
+      (target instanceof Element ? target.closest<HTMLElement>(".stack-note") : null) ?? stack.activeSection() ?? null;
 
     const files = filesFromTransfer(event.clipboardData);
     const items = [...(event.clipboardData?.items ?? [])]
@@ -434,7 +418,11 @@ export function createInputController(
       if (!(target instanceof Element) || !target.closest("#card, .stack-note")) {
         return;
       }
-      if (target.closest("#color-pop, #audience-pop, #format-pop, #md-toolbar, #editor-tools, .color-pop, .audience-pop, .format-pop, .md-toolbar, .editor-tools")) {
+      if (
+        target.closest(
+          "#color-pop, #audience-pop, #format-pop, #md-toolbar, #editor-tools, .color-pop, .audience-pop, .format-pop, .md-toolbar, .editor-tools",
+        )
+      ) {
         return;
       }
       event.preventDefault();
@@ -469,13 +457,7 @@ export function createInputController(
         if (event.key === "Alt") {
           return;
         }
-        if (
-          event.key === "Tab" &&
-          !event.altKey &&
-          !event.metaKey &&
-          !event.ctrlKey &&
-          !event.isComposing
-        ) {
+        if (event.key === "Tab" && !event.altKey && !event.metaKey && !event.ctrlKey && !event.isComposing) {
           const active = document.activeElement;
           const field = active instanceof HTMLTextAreaElement ? active : editingHost(active);
           const isEmptyNewMemo = editor.isEmptyNewMemo(field);
@@ -520,11 +502,7 @@ export function createInputController(
           event.stopPropagation();
           return;
         }
-        if (
-          (event.metaKey || event.ctrlKey) &&
-          !event.altKey &&
-          !(event.target instanceof HTMLInputElement)
-        ) {
+        if ((event.metaKey || event.ctrlKey) && !event.altKey && !(event.target instanceof HTMLInputElement)) {
           const keyLower = event.key.toLowerCase();
           const isUndo = keyLower === "z" && !event.shiftKey;
           const isRedo = (keyLower === "z" && event.shiftKey) || (keyLower === "y" && !event.metaKey);

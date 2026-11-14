@@ -35,12 +35,15 @@ const WORDS: Record<string, string> = {
   json: "true false null",
   js: "async await break case catch class const continue default delete do else export extends finally for from function if import in instanceof let new of return static super switch this throw try typeof var void while with yield true false null undefined",
   ts: "abstract as async await break case catch class const continue declare default delete do else enum export extends false finally for from function if implements import in infer instanceof interface keyof let namespace never new null of private protected public readonly return satisfies static super switch this throw true try type typeof undefined var void while with yield",
-  python: "and as assert async await break class continue def del elif else except False finally for from global if import in is lambda None nonlocal not or pass raise return True try while with yield",
+  python:
+    "and as assert async await break class continue def del elif else except False finally for from global if import in is lambda None nonlocal not or pass raise return True try while with yield",
   rust: "as async await break const continue crate dyn else enum extern false fn for if impl in let loop match mod move mut pub ref return self Self static struct super trait true type unsafe use where while",
   go: "break case chan const continue default defer else fallthrough for func go goto if import interface map package range return select struct switch type var true false nil",
   java: "abstract assert boolean break byte case catch char class const continue default do double else enum extends final finally float for if implements import instanceof int interface long native new null package private protected public return short static strictfp super switch synchronized this throw throws transient true false try void volatile while",
-  kotlin: "as break class continue do else false for fun if in interface is null object package return super this throw true try typealias typeof val var when while",
-  swift: "as associatedtype break case catch class continue default defer else enum extension false for func guard if import in init internal let nil open operator private protocol public return self static struct switch throw true try typealias var where while",
+  kotlin:
+    "as break class continue do else false for fun if in interface is null object package return super this throw true try typealias typeof val var when while",
+  swift:
+    "as associatedtype break case catch class continue default defer else enum extension false for func guard if import in init internal let nil open operator private protocol public return self static struct switch throw true try typealias var where while",
   c: "auto break case char const continue default do double else enum extern float for goto if inline int long register return short signed sizeof static struct switch typedef union unsigned void volatile while",
   css: "important import media keyframes from to if else and or not var",
   bash: "if then else elif fi for while do done case esac function return in local export",
@@ -80,7 +83,7 @@ function isDigit(ch: string): boolean {
 function readNumber(line: string, index: number): number {
   let j = index;
   if ((line[j] === "-" || line[j] === "+") && isDigit(line[j + 1] ?? "")) {
-    const prev = j === 0 ? "" : line[j - 1] ?? "";
+    const prev = j === 0 ? "" : (line[j - 1] ?? "");
     if (prev !== "" && /[\w)]/.test(prev)) {
       return index;
     }
@@ -261,7 +264,10 @@ function paintLine(
 export function highlightCode(text: string, lang: string): string {
   const name = languageName(lang);
   if (PLAIN.has(name)) {
-    return text.split("\n").map((line) => lineHtml(escapeHtml(line))).join("\n");
+    return text
+      .split("\n")
+      .map((line) => lineHtml(escapeHtml(line)))
+      .join("\n");
   }
   const words = keywords.get(name);
   let carry: Carry = null;

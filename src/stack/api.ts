@@ -38,7 +38,10 @@ export interface StackApi {
   saveSectionEditorView(id: string, state: SectionState): Promise<void>;
   saveSectionLook(id: string, state: SectionState): void;
   scheduleSectionSave(section: HTMLElement, state: SectionState): void;
-  sectionAreaSelection(area: Editable, state: SectionState): {
+  sectionAreaSelection(
+    area: Editable,
+    state: SectionState,
+  ): {
     start: number;
     end: number;
   };

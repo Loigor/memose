@@ -218,9 +218,7 @@ export function mountLineEditor(options: LineEditorOptions): { shell: HTMLElemen
       return pos;
     }
     const row =
-      node instanceof HTMLElement && node.classList.contains("md-row")
-        ? node
-        : node.parentElement?.closest(".md-row");
+      node instanceof HTMLElement && node.classList.contains("md-row") ? node : node.parentElement?.closest(".md-row");
     if (!(row instanceof HTMLElement) || !root.contains(row)) {
       return null;
     }
@@ -434,7 +432,8 @@ export function mountLineEditor(options: LineEditorOptions): { shell: HTMLElemen
     scheduleCommit();
   });
   root.addEventListener("mousedown", (event) => {
-    const box = event.target instanceof HTMLInputElement && event.target.classList.contains("md-check") ? event.target : null;
+    const box =
+      event.target instanceof HTMLInputElement && event.target.classList.contains("md-check") ? event.target : null;
     if (!box) {
       return;
     }
@@ -474,9 +473,7 @@ export function mountLineEditor(options: LineEditorOptions): { shell: HTMLElemen
     if ((event.metaKey || event.ctrlKey) && !event.altKey && ["b", "i", "u"].includes(event.key.toLowerCase())) {
       event.preventDefault();
     }
-    if (
-      handleBlockMediaDeletion(options.container, field, event, options.blocks, options.removeMedia)
-    ) {
+    if (handleBlockMediaDeletion(options.container, field, event, options.blocks, options.removeMedia)) {
       return;
     }
     if (handleBlockAreaNavigation(options.container, field, event)) {
@@ -539,7 +536,16 @@ export function mountLineEditor(options: LineEditorOptions): { shell: HTMLElemen
   return { shell, field };
 }
 
-const MARK_NAMES = new Set(["md-strong", "md-em", "md-code", "md-link", "md-marker", "md-strike", "md-tag", "md-syntax"]);
+const MARK_NAMES = new Set([
+  "md-strong",
+  "md-em",
+  "md-code",
+  "md-link",
+  "md-marker",
+  "md-strike",
+  "md-tag",
+  "md-syntax",
+]);
 
 function isTagSpan(node: Node): node is HTMLElement {
   if (!(node instanceof HTMLElement) || node.tagName !== "SPAN" || !node.classList.contains("md-tag")) {
@@ -550,7 +556,11 @@ function isTagSpan(node: Node): node is HTMLElement {
       return false;
     }
   }
-  return node.childNodes.length === 1 && node.firstChild?.nodeType === Node.TEXT_NODE && !(node.textContent ?? "").includes("\n");
+  return (
+    node.childNodes.length === 1 &&
+    node.firstChild?.nodeType === Node.TEXT_NODE &&
+    !(node.textContent ?? "").includes("\n")
+  );
 }
 
 function isMarkSpan(node: Node): node is HTMLElement {
@@ -614,7 +624,11 @@ function paintSource(row: HTMLElement, text: string): boolean {
 
 function paintChrome(row: HTMLElement, text: string) {
   const lead = /^\s*/.exec(text)?.[0].length ?? 0;
-  const indented = row.classList.contains("is-ul") || row.classList.contains("is-task") || row.classList.contains("is-quote") || row.classList.contains("is-ol");
+  const indented =
+    row.classList.contains("is-ul") ||
+    row.classList.contains("is-task") ||
+    row.classList.contains("is-quote") ||
+    row.classList.contains("is-ol");
   if (indented) {
     row.style.setProperty("--lead", String(lead));
   } else {
@@ -624,7 +638,9 @@ function paintChrome(row: HTMLElement, text: string) {
 
 function samePart(node: Node, part: RenderPart): boolean {
   if (part.check) {
-    return node instanceof HTMLInputElement && node.classList.contains("md-check") && node.checked === Boolean(part.checked);
+    return (
+      node instanceof HTMLInputElement && node.classList.contains("md-check") && node.checked === Boolean(part.checked)
+    );
   }
   if (part.children) {
     return (
@@ -635,7 +651,12 @@ function samePart(node: Node, part: RenderPart): boolean {
     );
   }
   if (part.syntax || part.cls) {
-    return node instanceof HTMLElement && node.className === (part.syntax ? "md-syntax" : part.cls) && node.childNodes.length === 1 && node.textContent === part.text;
+    return (
+      node instanceof HTMLElement &&
+      node.className === (part.syntax ? "md-syntax" : part.cls) &&
+      node.childNodes.length === 1 &&
+      node.textContent === part.text
+    );
   }
   return node.nodeType === Node.TEXT_NODE && node.textContent === part.text;
 }
@@ -825,8 +846,10 @@ function rowsClean(root: HTMLElement): boolean {
 
 function plainFromDom(root: HTMLElement): { text: string; start: number; end: number } {
   const sel = root.ownerDocument.getSelection();
-  const anchor = sel?.anchorNode && root.contains(sel.anchorNode) ? { node: sel.anchorNode, offset: sel.anchorOffset } : null;
-  const focus = sel?.focusNode && root.contains(sel.focusNode) ? { node: sel.focusNode, offset: sel.focusOffset } : null;
+  const anchor =
+    sel?.anchorNode && root.contains(sel.anchorNode) ? { node: sel.anchorNode, offset: sel.anchorOffset } : null;
+  const focus =
+    sel?.focusNode && root.contains(sel.focusNode) ? { node: sel.focusNode, offset: sel.focusOffset } : null;
   let text = "";
   let start: number | null = null;
   let end: number | null = null;

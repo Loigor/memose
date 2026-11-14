@@ -149,13 +149,7 @@ window.addEventListener("pointermove", (event) => {
     drag.container.scrollTop += 8;
   }
 
-  const target = findMediaDropTarget(
-    drag.container,
-    drag.figure,
-    drag.fromIndex,
-    event.clientX,
-    event.clientY,
-  );
+  const target = findMediaDropTarget(drag.container, drag.figure, drag.fromIndex, event.clientX, event.clientY);
   drag.target = target;
   if (drag.indicator) {
     if (target) {

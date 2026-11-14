@@ -358,7 +358,9 @@ if (inTauri()) {
   void listen<string>("pin-strip-edge", (event) => {
     applyEdge(event.payload);
   });
-  void invoke<string>("pin_strip_edge").then(applyEdge).catch(() => applyEdge("top"));
+  void invoke<string>("pin_strip_edge")
+    .then(applyEdge)
+    .catch(() => applyEdge("top"));
   void listen<[string, string]>("pin-tab-aim", (event) => {
     const [id, mode] = event.payload ?? [];
     lastAim = id && mode && mode !== "off" ? { id, mode } : null;

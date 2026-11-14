@@ -39,13 +39,7 @@ export function createRecentController(
   session: RecentSession,
   audience: RecentAudience,
 ): RecentController {
-  const {
-    memoList,
-    recent,
-    recentSearch,
-    recentMore,
-    pinToggle,
-  } = context.dom;
+  const { memoList, recent, recentSearch, recentMore, pinToggle } = context.dom;
   const pinned = context.mode.kind === "pinned";
 
   function clearQuery() {
@@ -152,9 +146,10 @@ export function createRecentController(
     memoList.hidden = false;
     recent.hidden = false;
     showSearch(state.expanded || forcePinSearch);
-    const visible = state.expanded || forcePinSearch
-      ? notes.filter((item) => item.content.toLowerCase().includes(state.query))
-      : notes.slice(0, collapsedCount);
+    const visible =
+      state.expanded || forcePinSearch
+        ? notes.filter((item) => item.content.toLowerCase().includes(state.query))
+        : notes.slice(0, collapsedCount);
     recent.classList.toggle("expanded", state.expanded || forcePinSearch);
     recent.replaceChildren();
     if (visible.length === 0) {
@@ -174,7 +169,8 @@ export function createRecentController(
       title.className = "title";
       title.textContent = noteTitle(item.content);
       title.addEventListener("click", () => {
-        void session.open(item)
+        void session
+          .open(item)
           .then(markSelected)
           .catch((error: unknown) => {
             console.error(error);

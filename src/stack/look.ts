@@ -121,5 +121,15 @@ export function mountLook(ctx: StackCtx) {
       }
     });
   });
-  return { sectionTheme, sectionHue, paintSectionColor, paintSectionCoder, applyStackEditorChrome, repaintStackColors, saveSectionLook, setSectionHue, paintSectionSlots };
+  return {
+    sectionTheme,
+    sectionHue,
+    paintSectionColor,
+    paintSectionCoder,
+    applyStackEditorChrome,
+    repaintStackColors,
+    saveSectionLook,
+    setSectionHue,
+    paintSectionSlots,
+  };
 }

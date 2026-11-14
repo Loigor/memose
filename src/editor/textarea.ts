@@ -5,9 +5,7 @@ export function editorShell(area: HTMLElement): HTMLElement {
 }
 
 export function withKeptScroll(roots: Array<HTMLElement | null | undefined>, run: () => void) {
-  const saved = roots
-    .filter((el): el is HTMLElement => el != null)
-    .map((el) => ({ el, top: el.scrollTop }));
+  const saved = roots.filter((el): el is HTMLElement => el != null).map((el) => ({ el, top: el.scrollTop }));
   run();
   for (const item of saved) {
     item.el.scrollTop = item.top;
@@ -120,11 +118,7 @@ export function measureTextareaLines(area: HTMLTextAreaElement): TextLineMetric[
   return metrics;
 }
 
-export function charOffsetAtPoint(
-  area: HTMLTextAreaElement,
-  clientX: number,
-  clientY: number,
-): number | null {
+export function charOffsetAtPoint(area: HTMLTextAreaElement, clientX: number, clientY: number): number | null {
   const lines = measureTextareaLines(area);
   const line = lines.find((item) => clientY >= item.top && clientY <= item.bottom);
   if (!line || clientX < line.left - 1 || clientX > line.right + 2) {
@@ -141,8 +135,7 @@ export function scrollTextOffsetIntoView(area: HTMLTextAreaElement, offset: numb
   const pin = () => {
     const lines = measureTextareaLines(area);
     const line =
-      lines.find((item) => offset >= item.startOffset && offset <= item.endOffset) ??
-      lines[lines.length - 1];
+      lines.find((item) => offset >= item.startOffset && offset <= item.endOffset) ?? lines[lines.length - 1];
     if (!line) {
       return;
     }
