@@ -41,9 +41,23 @@ These are helpers, not a component framework:
 
 | Module | Role |
 | --- | --- |
-| `main.ts` | App controller: editor state, drafts, pinning, recent list, IPC, event listeners |
+| `main.ts` | Composition root: mode detection, context/state creation, controller mounting, Tauri lifecycle wiring |
+| `app/context.ts` / `app/state.ts` / `app/backend.ts` | Required DOM/runtime dependencies, explicitly owned feature state, typed Tauri IPC adapter |
+| `app/controllers/editor-controller.ts` | Editor document, rendering, preview, history, toolbar, media host, editor-view persistence |
+| `app/controllers/session-controller.ts` | Composer/pinned memo lifecycle, draft persistence, pin/delete/conflict workflows, window sizing |
+| `app/controllers/recent-controller.ts` | Recent memo list, search, selection, and list pin actions |
+| `app/controllers/audience-controller.ts` | Visibility/space selection, sync status, settings reload, audience persistence |
+| `app/controllers/look-controller.ts` | Theme, hue, opacity, coder appearance, swatches, look persistence |
+| `app/controllers/input-controller.ts` | Keyboard/mouse shortcuts, tags, paste/drop, drag gestures, global input routing |
 | `settings.ts` | Settings window controller |
-| `stack.ts` | Stacked memos drawn under a host window |
+| `stack/index.ts` | Stack composition root: one context, then section, look, audience, layout, and window-chrome controllers |
+| `stack/context.ts` | Stack dependencies and the per-window state those controllers close over |
+| `stack/editor.ts` | Guest memo document, rendering, history, preview, and edit persistence |
+| `stack/look.ts` | Guest theme, hue, coder, and look persistence |
+| `stack/audience.ts` | Guest visibility, space, and audience persistence |
+| `stack/layout.ts` | Fold, peek, header chrome, and window height |
+| `stack/sections.ts` | Guest section DOM and stack-chain loading |
+| `stack/chrome.ts` | Drag, resize, snap, cursor, and native file drop |
 | `editor/` (`markdown-edit.ts`, `editor-blocks.ts`, `editor-field.ts`, `textarea.ts`, `history.ts`, `md-highlight.ts`) | Block editor, markdown transforms, undo |
 | `media/` (`media-dnd.ts`, `media-elements.ts`, `files.ts`) | Paste/drop, resize, lightbox, attachments |
 | `look/` (`look.ts`, `memo-chrome.ts`, `hue-pop.ts`, `audience-ui.ts`, `visibility.ts`, `sync-status.ts`) | Hue, theme, audience, sync icon |
@@ -56,7 +70,7 @@ These are helpers, not a component framework:
 2. **Pinned memo** — extra windows labeled `pin-<note-id>`, with `globalThis.__memosePin` injected
 3. **Media preview** — window label `media-preview`, lightbox only
 
-That split is at the bottom of `main.ts`: it either loads a pinned note, initializes the lightbox, or listens for composer events (`composer-flush`, `composer-fresh`, `notes-changed`, and so on).
+That split is at the bottom of `main.ts`: the composition root routes lifecycle events to the mounted controllers for pinned, preview, or composer mode.
 
 ## Tauri glue
 
@@ -165,7 +179,7 @@ Tokens used to live in the OS keychain; `auth.rs` copies a leftover token into `
 3. **Global shortcuts** (Tauri plugin): new memo / toggle pinned. Side buttons go through `mouse_hook.rs`.
 4. **Pinned memos** are extra WebViews of the same `index.html?pin=<id>`, label `pin-<uuid>`, with an init script setting `__memosePin`. Geometry is stored on the note row (`win_x` / `win_y` / `win_w` / `win_h`).
 5. **Settings** is a separate `settings.html` window.
-6. **Window chrome** (move from anywhere, edge snap, stack-on-drop, fold, corner resize) is native code in `window_ctl/`, driven by IPC from `stack.ts` / `main.ts`.
+6. **Window chrome** (move from anywhere, edge snap, stack-on-drop, fold, corner resize) is native code in `window_ctl/`, driven by IPC from `stack/chrome.ts` / `main.ts`.
 7. **macOS** stays an accessory app until a pin/settings window needs focus; hiding calls `[NSApp hide:]` so the previous app gets keyboard back.
 
 Platform-specific rules for WebView, clipboard, DPI, and Wayland are in [`quality-pipeline.md`](quality-pipeline.md).
@@ -174,7 +188,7 @@ Platform-specific rules for WebView, clipboard, DPI, and Wayland are in [`qualit
 
 ```
 User types in #blocks
-    → serializeBlocks() in main.ts
+    → editor controller serializes blocks
     → invoke("upsert_draft" | "save_edit" | "commit_note")
     → commands.rs → notes::Db (SQLite)
     → request_sync(app)
