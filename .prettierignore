@@ -1,0 +1,10 @@
+dist/
+release/
+src-tauri/
+test-results/
+playwright-report/
+node_modules/
+package-lock.json
+skills-lock.json
+.agents/
+*.md
