@@ -16,38 +16,12 @@ import { createSessionController, type SessionController } from "./app/controlle
 import { createAppContext } from "./app/context";
 import { createAppState } from "./app/state";
 import { memoUsesCoder, type EditorPrefs } from "./editor/editor-field";
-import { restoreCaret } from "./editor/history";
 import { bindMediaEditor } from "./media/media-dnd";
 import { initLightbox } from "./media/media-elements";
 import type { ThemeName } from "./look/memo-chrome";
 import { inTauri, isPreviewWindow } from "./platform";
 import type { ShortcutBinds } from "./shortcuts";
-import {
-  activeStackSection,
-  applySectionEdit,
-  applyStackEditorChrome,
-  bindStack,
-  dragBlocked,
-  insertSectionMedia,
-  loadStack,
-  mediaMutatorForSection,
-  paintChrome,
-  paintSectionAudience,
-  redoSection,
-  rerenderStackEditors,
-  sectionAreaSelection,
-  sectionTargetArea,
-  syncHeaderCompact,
-  setHostCollapsedFlag,
-  stackEl,
-  stackState,
-  startWindowDrag,
-  syncCollapsedPeek,
-  toggleSectionPreview,
-  resumeStackEditor,
-  undoSection,
-  wireChrome,
-} from "./stack";
+import { createStackController, type StackController } from "./stack/index";
 
 const pinnedFromScript = (globalThis as { __memosePin?: unknown }).__memosePin;
 const themeFromScript = (globalThis as { __memoseTheme?: unknown }).__memoseTheme;
@@ -74,6 +48,7 @@ let lookController!: LookController;
 let recentController!: RecentController;
 let sessionController!: SessionController;
 let inputController!: InputController;
+let stack!: StackController;
 const {
   card: cardEl,
   blocks: blocksEl,
@@ -103,18 +78,11 @@ const editorController = createEditorController(
     previewShortcut: () => inputController.previewShortcut(),
   },
   {
-    activeSection: () => activeStackSection()?.section ?? null,
-    resumeActiveEditor: () => Boolean(pinnedNoteId && resumeStackEditor()),
-    toggleActivePreview: () => {
-      const target = activeStackSection();
-      if (!target) {
-        return false;
-      }
-      toggleSectionPreview(target.section);
-      return true;
-    },
-    insertMedia: insertSectionMedia,
-    applyEditorChrome: applyStackEditorChrome,
+    activeSection: () => stack.activeSectionElement(),
+    resumeActiveEditor: () => Boolean(pinnedNoteId && stack.resumeEditor()),
+    toggleActivePreview: () => stack.toggleActivePreview(),
+    insertMedia: (section, name, label) => stack.insertMedia(section, name, label),
+    applyEditorChrome: () => stack.applyEditorChrome(),
   },
 );
 
@@ -135,16 +103,8 @@ const audienceController = createAudienceController(
     },
   },
   {
-    syncHeader: syncHeaderCompact,
-    repaintSections() {
-      stackEl?.querySelectorAll<HTMLElement>(".stack-note").forEach((section) => {
-        const id = section.dataset.id;
-        const state = id ? stackState.get(id) : undefined;
-        if (state) {
-          paintSectionAudience(section, state);
-        }
-      });
-    },
+    syncHeader: () => stack.syncHeader(),
+    repaintSections: () => stack.repaintAudiences(),
   },
 );
 lookController = createLookController(
@@ -157,6 +117,11 @@ lookController = createLookController(
   },
   {
     altHeld: () => inputController.altHeld(),
+  },
+  {
+    hasGuests: () => stack.hasGuests(),
+    repaintColors: () => stack.repaintColors(),
+    activeHueTarget: () => stack.activeHueTarget(),
   },
 );
 
@@ -183,62 +148,22 @@ sessionController = createSessionController(
   lookController,
   recentController,
   {
-    focusNote(id) {
-      const section = stackEl?.querySelector<HTMLElement>(`.stack-note[data-id="${CSS.escape(id)}"]`);
-      const state = stackState.get(id);
-      if (!section || !state) {
-        return false;
-      }
-      const blocks = section.querySelector(".stack-blocks");
-      if (blocks && state.caret) {
-        restoreCaret(blocks, state.caret);
-        return true;
-      }
-      sectionTargetArea(section, state)?.focus();
-      return true;
-    },
-    setHostCollapsed: setHostCollapsedFlag,
-    load: loadStack,
-    paintChrome,
+    focusNote: (id) => stack.focusNote(id),
+    setHostCollapsed: (collapsed) => stack.setHostCollapsedFlag(collapsed),
+    load: () => stack.load(),
+    paintChrome: () => stack.paintChrome(),
   },
 );
 
 const stackInput: StackInput = {
-  activeSection: () => activeStackSection()?.section ?? null,
-  insertPlainText(text, section) {
-    const id = section.dataset.id;
-    const state = id ? stackState.get(id) : undefined;
-    if (!state) {
-      return;
-    }
-    const area = sectionTargetArea(section, state);
-    if (!area) {
-      return;
-    }
-    const { start, end } = sectionAreaSelection(area, state);
-    const value = `${area.value.slice(0, start)}${text}${area.value.slice(end)}`;
-    const cursor = start + text.length;
-    applySectionEdit(section, state, area, { value, start: cursor, end: cursor });
-  },
-  undo(section) {
-    const id = section.dataset.id;
-    const state = id ? stackState.get(id) : undefined;
-    return Boolean(state && undoSection(section, state));
-  },
-  redo(section) {
-    const id = section.dataset.id;
-    const state = id ? stackState.get(id) : undefined;
-    return Boolean(state && redoSection(section, state));
-  },
-  dragBlocked,
-  startWindowDrag,
-  syncCollapsedPeek,
-  refreshPreviewShortcut(shortcut) {
-    stackEl?.querySelectorAll<HTMLButtonElement>(".stack-note .mode-toggle").forEach((btn) => {
-      const open = btn.getAttribute("aria-pressed") === "true";
-      btn.title = open ? `Edit (${shortcut})` : `Preview (${shortcut})`;
-    });
-  },
+  activeSection: () => stack.activeSectionElement(),
+  insertPlainText: (text, section) => stack.insertPlainText(text, section),
+  undo: (section) => stack.undo(section),
+  redo: (section) => stack.redo(section),
+  dragBlocked: (target) => stack.dragBlocked(target),
+  startWindowDrag: (event) => stack.startWindowDrag(event),
+  syncCollapsedPeek: () => stack.syncPeek(),
+  refreshPreviewShortcut: (shortcut) => stack.refreshPreviewShortcut(shortcut),
 };
 
 inputController = createInputController(
@@ -252,33 +177,41 @@ inputController = createInputController(
   stackInput,
 );
 
-bindStack({
-  cardEl,
+stack = createStackController({
+  card: cardEl,
   pinnedNoteId,
-  getLook: lookController.value,
-  getAltHeld: inputController.altHeld,
-  getKnownSpaces: audienceController.knownSpaces,
-  getDefaultVisibility: audienceController.defaultVisibility,
-  getEditingId: () => sessionController.editingId(),
-  currentTheme: lookController.currentTheme,
-  previewShortcut: inputController.previewShortcut,
-  openPreview: (name) => {
-    void editorController.openPreview(name);
+  look: {
+    value: () => lookController.value(),
+    altHeld: () => inputController.altHeld(),
+    theme: () => lookController.currentTheme(),
+    paintThemeIcon: () => lookController.paintThemeIcon(),
   },
-  insertSnippet: editorController.insertSnippet,
-  attachFiles: editorController.attachFiles,
-  syncNoteTitle: editorController.syncTitle,
-  paintThemeIcon: lookController.paintThemeIcon,
+  audience: {
+    spaces: () => audienceController.knownSpaces(),
+    defaultVisibility: () => audienceController.defaultVisibility(),
+  },
+  session: {
+    editingId: () => sessionController.editingId(),
+  },
+  editor: {
+    previewShortcut: () => inputController.previewShortcut(),
+    openPreview: (name) => {
+      void editorController.openPreview(name);
+    },
+    insertSnippet: (snippet, section) => editorController.insertSnippet(snippet, section),
+    attachFiles: (files, section) => editorController.attachFiles(files, section),
+    syncTitle: () => editorController.syncTitle(),
+  },
 });
 bindMediaEditor({
   hostContainer: blocksEl,
   host: editorController.mediaHost,
-  forSection: mediaMutatorForSection,
+  forSection: (section) => stack.mediaMutator(section),
   openPreview: (name) => {
     void editorController.openPreview(name);
   },
 });
-wireChrome();
+stack.wire();
 
 if (inTauri() && !isPreviewWindow()) {
   void appBackend
@@ -302,7 +235,7 @@ editorController.renderSurface();
 if (inTauri() && !isPreviewWindow()) {
   const applyEditorPrefs = (settings: EditorPrefs) => {
     if (editorController.applyPrefs(settings)) {
-      rerenderStackEditors();
+      stack.rerenderEditors();
     }
   };
   void appBackend
@@ -370,7 +303,7 @@ if (isPreviewWindow()) {
       });
   });
   void listen("stack-changed", () => {
-    void loadStack().catch((error: unknown) => {
+    void stack.load().catch((error: unknown) => {
       console.error(error);
     });
   });

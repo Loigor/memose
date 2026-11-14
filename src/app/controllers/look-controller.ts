@@ -2,14 +2,6 @@ import { memoUsesCoder } from "../../editor/editor-field";
 import { darkHue, lightHue, tinted, type Look } from "../../look/look";
 import { paintSurface, paintThemeButton, palette, paperAt, type ThemeName } from "../../look/memo-chrome";
 import { hueSwatches, loadHueSwatches, onHueSwatches, saveHueSwatches, watchHueSwatches } from "../../look/swatches";
-import {
-  activeStackSection,
-  hasStack,
-  repaintStackColors,
-  sectionHue,
-  sectionTheme,
-  setSectionHue,
-} from "../../stack";
 import type { AppContext } from "../context";
 import type { LookState } from "../state";
 
@@ -34,6 +26,12 @@ export interface LookSession {
 
 export interface LookInput {
   altHeld(): boolean;
+}
+
+export interface LookStack {
+  hasGuests(): boolean;
+  repaintColors(): void;
+  activeHueTarget(): { current: number; apply(hue: number): void } | null;
 }
 
 export interface LookController {
@@ -63,6 +61,7 @@ export function createLookController(
   editor: LookEditor,
   session: LookSession,
   input: LookInput,
+  stack: LookStack,
 ): LookController {
   const {
     card,
@@ -89,9 +88,9 @@ export function createLookController(
 
   function paintThemeIcon() {
     const alt = input.altHeld();
-    const hostColorMode = hasStack() ? !alt : alt;
+    const hostColorMode = stack.hasGuests() ? !alt : alt;
     paintThemeButton(themeToggle, themeIcon, currentTheme(), hostColorMode);
-    repaintStackColors();
+    stack.repaintColors();
   }
 
   function paint() {
@@ -114,7 +113,7 @@ export function createLookController(
       paintThemeIcon();
     }
     editor.paintCoder(memoUsesCoder(state.value.coder));
-    repaintStackColors();
+    stack.repaintColors();
   }
 
   function paintSlots() {
@@ -240,18 +239,12 @@ export function createLookController(
   }
 
   function randomHue() {
-    const target = activeStackSection();
-    const current = target
-      ? (sectionHue(target.state) ?? (sectionTheme(target.state) === "dark" ? darkHue : lightHue))
-      : activeHue();
+    const target = stack.activeHueTarget();
+    const current = target?.current ?? activeHue();
     const jitter = Math.random() * 36 - 18;
     const hue = Math.floor((current + 222.5 + jitter + 360) % 360);
     if (target) {
-      const slider = target.section.querySelector<HTMLInputElement>(".hue-slider");
-      if (slider) {
-        slider.value = String(hue);
-      }
-      setSectionHue(target.section, target.state, hue);
+      target.apply(hue);
       return;
     }
     setThemeHue(hue);
@@ -362,7 +355,7 @@ export function createLookController(
 
   themeToggle.addEventListener("click", (event) => {
     const alt = event.altKey || input.altHeld();
-    const colorMode = hasStack() ? !alt : alt;
+    const colorMode = stack.hasGuests() ? !alt : alt;
     if (colorMode) {
       colorPop.hidden = !colorPop.hidden;
       if (!colorPop.hidden) {

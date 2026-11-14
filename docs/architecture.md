@@ -50,7 +50,14 @@ These are helpers, not a component framework:
 | `app/controllers/look-controller.ts` | Theme, hue, opacity, coder appearance, swatches, look persistence |
 | `app/controllers/input-controller.ts` | Keyboard/mouse shortcuts, tags, paste/drop, drag gestures, global input routing |
 | `settings.ts` | Settings window controller |
-| `stack.ts` | Stacked memos drawn under a host window |
+| `stack/index.ts` | Stack composition root: one context, then section, look, audience, layout, and window-chrome controllers |
+| `stack/context.ts` | Stack dependencies and the per-window state those controllers close over |
+| `stack/editor.ts` | Guest memo document, rendering, history, preview, and edit persistence |
+| `stack/look.ts` | Guest theme, hue, coder, and look persistence |
+| `stack/audience.ts` | Guest visibility, space, and audience persistence |
+| `stack/layout.ts` | Fold, peek, header chrome, and window height |
+| `stack/sections.ts` | Guest section DOM and stack-chain loading |
+| `stack/chrome.ts` | Drag, resize, snap, cursor, and native file drop |
 | `editor/` (`markdown-edit.ts`, `editor-blocks.ts`, `editor-field.ts`, `textarea.ts`, `history.ts`, `md-highlight.ts`) | Block editor, markdown transforms, undo |
 | `media/` (`media-dnd.ts`, `media-elements.ts`, `files.ts`) | Paste/drop, resize, lightbox, attachments |
 | `look/` (`look.ts`, `memo-chrome.ts`, `hue-pop.ts`, `audience-ui.ts`, `visibility.ts`, `sync-status.ts`) | Hue, theme, audience, sync icon |
@@ -172,7 +179,7 @@ Tokens used to live in the OS keychain; `auth.rs` copies a leftover token into `
 3. **Global shortcuts** (Tauri plugin): new memo / toggle pinned. Side buttons go through `mouse_hook.rs`.
 4. **Pinned memos** are extra WebViews of the same `index.html?pin=<id>`, label `pin-<uuid>`, with an init script setting `__memosePin`. Geometry is stored on the note row (`win_x` / `win_y` / `win_w` / `win_h`).
 5. **Settings** is a separate `settings.html` window.
-6. **Window chrome** (move from anywhere, edge snap, stack-on-drop, fold, corner resize) is native code in `window_ctl/`, driven by IPC from `stack.ts` / `main.ts`.
+6. **Window chrome** (move from anywhere, edge snap, stack-on-drop, fold, corner resize) is native code in `window_ctl/`, driven by IPC from `stack/chrome.ts` / `main.ts`.
 7. **macOS** stays an accessory app until a pin/settings window needs focus; hiding calls `[NSApp hide:]` so the previous app gets keyboard back.
 
 Platform-specific rules for WebView, clipboard, DPI, and Wayland are in [`quality-pipeline.md`](quality-pipeline.md).
