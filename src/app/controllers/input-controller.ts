@@ -22,7 +22,6 @@ import type { AudienceController } from "./audience-controller";
 import type { EditorController } from "./editor-controller";
 import type { LookController } from "./look-controller";
 import type { RecentController } from "./recent-controller";
-import type { SessionController } from "./session-controller";
 
 export type MouseChordPayload = {
   button: number;
@@ -55,7 +54,6 @@ export function createInputController(
   context: AppContext,
   state: InputState,
   editor: EditorController,
-  session: SessionController,
   recent: RecentController,
   audience: AudienceController,
   look: LookController,
@@ -480,10 +478,7 @@ export function createInputController(
         ) {
           const active = document.activeElement;
           const field = active instanceof HTMLTextAreaElement ? active : editingHost(active);
-          const isEmptyNewMemo =
-            session.isNewMemo() &&
-            editor.isEmptyNewMemo() &&
-            (field ? field.value.length === 0 : true);
+          const isEmptyNewMemo = editor.isEmptyNewMemo(field);
           if (!field || isEmptyNewMemo) {
             event.preventDefault();
             event.stopPropagation();

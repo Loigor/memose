@@ -112,7 +112,7 @@ export interface EditorMediaHost {
 export interface EditorController extends LookEditor {
   content(): string;
   isEmpty(): boolean;
-  isEmptyNewMemo(): boolean;
+  isEmptyNewMemo(field?: { readonly value: string } | null): boolean;
   showStored(content: string): void;
   renderSurface(focusName?: string): void;
   focus(): void;
@@ -176,8 +176,13 @@ export function createEditorController(
     state.places.set(session.placeKey(), place);
   }
 
-  function isEmptyNewMemo() {
-    return session.isNewMemo() && state.content.trim().length === 0 && state.blocks.length === 1;
+  function isEmptyNewMemo(field?: { readonly value: string } | null) {
+    return (
+      session.isNewMemo() &&
+      state.content.trim().length === 0 &&
+      state.blocks.length === 1 &&
+      (field ? field.value.length === 0 : true)
+    );
   }
 
   function resumePlace() {
@@ -471,7 +476,7 @@ export function createEditorController(
               }
               field.focus();
             },
-            allowTab: () => !isEmptyNewMemo(),
+            allowTab: () => !isEmptyNewMemo(field),
             onCaret: () => {
               if (!field) {
                 return;
@@ -654,7 +659,7 @@ export function createEditorController(
             !event.metaKey &&
             !event.ctrlKey &&
             !event.isComposing &&
-            !isEmptyNewMemo()
+            !isEmptyNewMemo(area)
           ) {
             event.preventDefault();
             applyEdit(area, tabOnMarkdown(area.value, area.selectionStart, area.selectionEnd, event.shiftKey));

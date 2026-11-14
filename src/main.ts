@@ -170,7 +170,6 @@ inputController = createInputController(
   appContext,
   appState.input,
   editorController,
-  sessionController,
   recentController,
   audienceController,
   lookController,

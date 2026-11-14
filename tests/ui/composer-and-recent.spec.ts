@@ -765,3 +765,20 @@ test("cycling to the last memo restores the caret", async ({ page }) => {
   await expect.poll(() => editorText(again)).toBe("abcdefghij");
   await expect.poll(async () => again.evaluate((el: HTMLTextAreaElement) => el.selectionStart)).toBe(3);
 });
+
+test("tab indents a whitespace-only new memo instead of leaving the editor", async ({ page }) => {
+  await openComposer(page, { notes: sampleNotes(5) });
+  const area = await composerTextarea(page);
+  await area.fill("  ");
+  await area.press("Tab");
+  await expect(area).toBeFocused();
+  await expect.poll(async () => (await editorText(area)).length).toBeGreaterThan(2);
+  await expect(page.locator("#recent-search")).toBeHidden();
+});
+
+test("tab in an empty new memo opens memo search", async ({ page }) => {
+  await openComposer(page, { notes: sampleNotes(5) });
+  const area = await composerTextarea(page);
+  await area.press("Tab");
+  await expect(page.locator("#recent-search")).toBeVisible();
+});
