@@ -39,7 +39,7 @@ Specs live in `tests/ui/`. Playwright starts (or reuses) Vite on `http://localho
 
 Before each navigation, `tests/ui/tauri-harness.ts` injects:
 
-- `window.__TAURI_INTERNALS__` so `inTauri()` in `src/main.ts` is true
+- `window.__TAURI_INTERNALS__` so `inTauri()` in `src/platform.ts` is true
 - `window.__TAURI_EVENT_PLUGIN_INTERNALS__` so `listen` / `emit` work
 - Window metadata (`main`, `pin-<id>`, or `media-preview`)
 - An in-memory store that implements every Memose `invoke("…")` command plus `plugin:event|*` and `plugin:window|*`
@@ -124,7 +124,7 @@ These are the Playwright specs (`tests/ui/*.spec.ts`, excluding `@scale`). A fai
 | Open a row | Click `.title` | Editor shows that memo; row `.selected` |
 | Pin from list | Click row `.pin` | `set_pinned` invoked; `aria-pressed` updates |
 
-`list_recent` in production fetches at most **200** notes (`recentFetchLimit` in `src/main.ts`, clamp in `Db::list_recent`). Expanded search filters that array in memory and rebuilds `<li>` rows with `replaceChildren()`.
+`list_recent` in production fetches at most **200** notes (`fetchLimit` in `src/app/controllers/recent-controller.ts`, clamp in `Db::list_recent`). Expanded search filters that array in memory and rebuilds `<li>` rows with `replaceChildren()`.
 
 ### 5.3 Theme, hue, audience, delete, conflict
 
@@ -182,7 +182,7 @@ Production facts the scenarios rest on:
 | UI default cap | 1,000 seeded, harness returns 200 | DOM `Nodes`, heap after list paint + search | **< 25k** nodes; heap growth vs empty composer **< 25 MB** |
 | UI stress render | Harness `listRecentLimit: 1000` | Same metrics for 1,000 rows | **< 80k** nodes; heap growth **< 60 MB**; search keystroke **< 500ms** |
 
-The 1,000-row render is intentional over-cap. It answers “what if we raised `recentFetchLimit`?” without changing production.
+The 1,000-row render is intentional over-cap. It answers “what if we raised `fetchLimit`?” without changing production.
 
 ### Scenario B — Refresh and event churn (leak check)
 
