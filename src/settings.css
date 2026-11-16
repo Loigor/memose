@@ -60,7 +60,10 @@ h2 {
   font-size: 13px;
   font-weight: 550;
   cursor: pointer;
-  transition: background 120ms ease, color 120ms ease, box-shadow 120ms ease;
+  transition:
+    background 120ms ease,
+    color 120ms ease,
+    box-shadow 120ms ease;
 }
 
 .settings-tab:hover {
@@ -213,7 +216,9 @@ button {
   font-size: 13px;
   font-weight: 520;
   cursor: pointer;
-  transition: background 120ms ease, border-color 120ms ease;
+  transition:
+    background 120ms ease,
+    border-color 120ms ease;
 }
 
 button:hover {

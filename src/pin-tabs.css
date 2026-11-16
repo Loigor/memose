@@ -34,7 +34,10 @@ html.pin-tabs-window body {
   gap: 2px;
   height: 12px;
   padding: 0 8px;
-  transition: height 140ms ease-out, width 140ms ease-out, padding-top 140ms ease-out;
+  transition:
+    height 140ms ease-out,
+    width 140ms ease-out,
+    padding-top 140ms ease-out;
 }
 
 html.is-hiding #row {
@@ -70,7 +73,9 @@ html.is-open #row {
   text-overflow: ellipsis;
   color: var(--ink);
   cursor: pointer;
-  transition: font-size 140ms ease-out, line-height 140ms ease-out;
+  transition:
+    font-size 140ms ease-out,
+    line-height 140ms ease-out;
 }
 
 html.is-hiding #tab-add,
@@ -106,7 +111,9 @@ html.is-open .pin-tab {
 
 html[data-theme="dark"] .pin-tab {
   color: #fff;
-  text-shadow: 0 1px 1px rgb(0 0 0 / 55%), 0 0 3px rgb(0 0 0 / 50%);
+  text-shadow:
+    0 1px 1px rgb(0 0 0 / 55%),
+    0 0 3px rgb(0 0 0 / 50%);
 }
 
 .pin-tab[aria-current="true"] {
@@ -138,7 +145,9 @@ html[data-theme="dark"] .pin-tab {
   box-shadow: 0 8px 16px var(--shadow);
   opacity: 1;
   transform: translateY(0);
-  transition: opacity 400ms ease, transform 400ms ease;
+  transition:
+    opacity 400ms ease,
+    transform 400ms ease;
 }
 
 #tab-menu.is-closing {

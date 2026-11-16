@@ -69,7 +69,9 @@ header.compact-tools .editor-tools.open {
 }
 
 .brand-name {
-  transition: color 120ms ease, font-weight 120ms ease;
+  transition:
+    color 120ms ease,
+    font-weight 120ms ease;
 }
 
 #card.is-editing > header .brand-name,

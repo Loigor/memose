@@ -70,11 +70,21 @@ html[data-mdhl] .stack-blocks textarea::-moz-selection {
   color: var(--md-marker);
 }
 
-.tok-kw { color: var(--tok-kw); }
-.tok-str { color: var(--tok-str); }
-.tok-num { color: var(--tok-num); }
-.tok-cmt { color: var(--tok-cmt); }
-.tok-key { color: var(--tok-key); }
+.tok-kw {
+  color: var(--tok-kw);
+}
+.tok-str {
+  color: var(--tok-str);
+}
+.tok-num {
+  color: var(--tok-num);
+}
+.tok-cmt {
+  color: var(--tok-cmt);
+}
+.tok-key {
+  color: var(--tok-key);
+}
 
 .md-lang {
   position: absolute;
@@ -208,11 +218,7 @@ html[data-theme="dark"][data-mdhl-scheme="mono"] {
 .md-field[data-coder] {
   border: 1px solid color-mix(in srgb, var(--ink) 22%, transparent);
   border-radius: 2px;
-  background: color-mix(
-    in srgb,
-    color-mix(in srgb, black 14%, var(--paper)) var(--paper-alpha),
-    transparent
-  );
+  background: color-mix(in srgb, color-mix(in srgb, black 14%, var(--paper)) var(--paper-alpha), transparent);
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   font-size: 13px;
   line-height: 1.45;
@@ -425,11 +431,7 @@ html[data-theme="dark"][data-mdhl-scheme="mono"] {
   border-radius: 50%;
   background: color-mix(in srgb, var(--muted) 70%, var(--paper));
   transform: translateY(-50%);
-  box-shadow: 0 0 0 2px color-mix(
-    in srgb,
-    color-mix(in srgb, black 14%, var(--paper)) var(--paper-alpha),
-    transparent
-  );
+  box-shadow: 0 0 0 2px color-mix(in srgb, color-mix(in srgb, black 14%, var(--paper)) var(--paper-alpha), transparent);
 }
 
 #blocks .md-field[data-coder][data-wrap] .md-hl,

@@ -163,12 +163,24 @@
   line-height: 1.25;
 }
 
-.md-row.is-h1 { font-size: 1.6em; }
-.md-row.is-h2 { font-size: 1.35em; }
-.md-row.is-h3 { font-size: 1.2em; }
-.md-row.is-h4 { font-size: 1.1em; }
-.md-row.is-h5 { font-size: 1em; }
-.md-row.is-h6 { font-size: 0.95em; }
+.md-row.is-h1 {
+  font-size: 1.6em;
+}
+.md-row.is-h2 {
+  font-size: 1.35em;
+}
+.md-row.is-h3 {
+  font-size: 1.2em;
+}
+.md-row.is-h4 {
+  font-size: 1.1em;
+}
+.md-row.is-h5 {
+  font-size: 1em;
+}
+.md-row.is-h6 {
+  font-size: 0.95em;
+}
 
 .md-row.is-quote {
   border-left: 2px solid var(--md-marker);
