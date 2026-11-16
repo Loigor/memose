@@ -276,7 +276,7 @@ export function mountSections(ctx: StackCtx) {
       }
       if (
         target.closest(
-          "header, button, input, textarea, .md-lines, .media, .media-audio, .file-attachment, .color-pop, .audience-pop, .format-pop, .md-toolbar, .editor-tools, #resize-grip, .resize-handle",
+          "header, button, input, textarea, .md-lines, .stack-preview, .media, .media-audio, .file-attachment, .color-pop, .audience-pop, .format-pop, .md-toolbar, .editor-tools, #resize-grip, .resize-handle",
         )
       ) {
         return;
