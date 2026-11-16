@@ -60,17 +60,16 @@ textarea,
 
 #preview pre,
 .stack-preview pre {
-  padding-right: 2.5em;
+  margin: 0.9em 0;
+  padding: 8px 2.5em 8px 10px;
+  border: 1px solid color-mix(in srgb, var(--ink) 22%, transparent);
+  border-radius: 2px;
+  background: color-mix(in srgb, color-mix(in srgb, black 14%, var(--paper)) var(--paper-alpha), transparent);
 }
 
-#preview pre[data-lang],
-.stack-preview pre[data-lang] {
-  padding-right: 8.5em;
-}
-
-#preview pre > .md-lang,
-.stack-preview pre > .md-lang {
-  right: 34px;
+/* Keep the language label on the top border clear of the scroll edge. */
+#preview > pre:first-child {
+  margin-top: 8px;
 }
 
 .md-copy {
@@ -86,18 +85,10 @@ textarea,
   border: 0;
   border-radius: 4px;
   color: var(--muted);
-  background: var(--paper);
+  background: transparent;
   cursor: pointer;
-  opacity: 0;
-  transition: opacity 120ms ease;
   user-select: none;
   -webkit-user-select: none;
-}
-
-pre:hover > .md-copy,
-.md-copy:focus-visible,
-.md-copy.is-copied {
-  opacity: 1;
 }
 
 .md-copy:hover {

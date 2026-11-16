@@ -366,26 +366,18 @@ export async function hydratePreviewContent(
   linkTagsIn(container);
   for (const code of container.querySelectorAll("pre > code")) {
     const named = /language-([^\s]+)/.exec(code.className)?.[1] ?? "";
-    const label = named.trim().split(/\s+/)[0] ?? "";
+    const label = named.trim().split(/\s+/)[0] || "text";
     const pre = code.parentElement;
     if (pre instanceof HTMLElement) {
-      if (label) {
-        pre.dataset.lang = label;
-      } else {
-        delete pre.dataset.lang;
-      }
+      pre.dataset.lang = label;
       let badge = pre.querySelector(":scope > .md-lang");
-      if (!label) {
-        badge?.remove();
-      } else if (!(badge instanceof HTMLElement)) {
+      if (!(badge instanceof HTMLElement)) {
         badge = document.createElement("span");
-        badge.className = "md-lang";
+        badge.className = "md-lang is-side";
         badge.setAttribute("aria-hidden", "true");
-        badge.textContent = label;
         pre.append(badge);
-      } else if (badge.textContent !== label) {
-        badge.textContent = label;
       }
+      badge.textContent = label;
     }
     const source = code.textContent ?? "";
     code.innerHTML = highlightCode(source, named);
