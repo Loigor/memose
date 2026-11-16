@@ -13,13 +13,14 @@ import {
   snapOffset,
   stepOffset,
 } from "../src/editor/line-style.ts";
-import { highlightCode } from "../src/editor/code-highlight.ts";
+import { detectLanguage, highlightCode } from "../src/editor/code-highlight.ts";
 import {
   braceFolds,
   displayToSource,
   expandFolds,
   foldView,
   foldsAfterEdit,
+  foldSyntaxFor,
   sourceToDisplay,
 } from "../src/editor/code-fold.ts";
 import { highlightMarkdown } from "../src/editor/md-highlight.ts";
@@ -665,7 +666,7 @@ test("highlightCode colors a language and keeps every source character", () => {
   const html = highlightCode(source, "json");
   assert.match(html, /tok-key/);
   assert.match(html, /tok-num/);
-  assert.match(html, /tok-kw/);
+  assert.match(html, /tok-lit/);
   assert.equal(
     html
       .replace(/<[^>]+>/g, "")
@@ -679,29 +680,144 @@ test("highlightCode colors a language and keeps every source character", () => {
   assert.match(highlightCode("a < b & c", "js"), /a &lt; b &amp; c/);
 });
 
+const plainText = (html: string) =>
+  html
+    .replace(/<[^>]+>/g, "")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&amp;/g, "&");
+
+const tokens = (html: string, cls: string) =>
+  [...html.matchAll(new RegExp(`<span class="tok-${cls}">([^<]*)</span>`, "g"))].map((match) =>
+    (match[1] ?? "").replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&amp;/g, "&"),
+  );
+
+test("highlightCode colors common languages and keeps every source character", () => {
+  const samples: Record<string, string> = {
+    ts: 'import { x } from "./y";\n@Component()\nexport class Foo extends Bar {\n  run(a: string): void {\n    const re = /ab+c/g;\n    return `hi\n${a}`; // done\n  }\n}',
+    python:
+      '@dataclass\nclass Foo(Base):\n    def go(self, x: int = 3):\n        """doc\n        more"""\n        print(f"x={x}")  # c',
+    rust: "#[derive(Debug)]\nstruct P<'a> { s: &'a str }\nfn main() { println!(\"{}\", 'c'); }",
+    go: "package main\nfunc (s *Srv) Run() error {\n\tx := `raw\nstr`\n\treturn nil\n}",
+    bash: '#!/bin/bash\nNAME="x"\nif [ -f "$NAME" ]; then echo ${NAME} --force; fi # c',
+    css: ".btn:hover {\n  color: #fff;\n  margin: -4px 1.5em !important;\n}",
+    html: '<div class="a" hidden>Hi &amp; bye <!-- c --></div>',
+    yaml: "name: app # c\nitems:\n  - key: value\n    ok: true",
+    sql: "SELECT id, COUNT(*) FROM users WHERE name = 'x' -- c",
+    diff: "@@ -1 +1 @@\n-old\n+new",
+    toml: '[tool]\nname = "a"',
+    c: "#include <stdio.h>\nint main(void) { return 0; }",
+    "": "def go(x):\n    return {'a': 1}",
+  };
+  for (const [lang, source] of Object.entries(samples)) {
+    assert.equal(plainText(highlightCode(source, lang)), source, `round-trip ${lang || "untagged"}`);
+  }
+  const ts = highlightCode(samples.ts ?? "", "ts");
+  assert.deepEqual(tokens(ts, "type"), ["Foo", "Bar", "string"]);
+  assert.deepEqual(tokens(ts, "fn"), ["run"]);
+  assert.deepEqual(tokens(ts, "re"), ["/ab+c/g"]);
+  assert.deepEqual(tokens(ts, "meta"), ["@Component"]);
+  assert.deepEqual(tokens(ts, "str").slice(1), ["`hi", "${a}`"]);
+  assert.deepEqual(tokens(highlightCode("a = b / c / d", "js"), "re"), []);
+  const py = highlightCode(samples.python ?? "", "python");
+  assert.deepEqual(tokens(py, "fn"), ["go", "print"]);
+  assert.deepEqual(tokens(py, "lit"), ["self"]);
+  assert.deepEqual(tokens(highlightCode(samples.rust ?? "", "rs"), "meta"), ["#[derive(Debug)]", "'a", "'a"]);
+  assert.deepEqual(tokens(highlightCode(samples.bash ?? "", "sh"), "var"), ["NAME", "${NAME}"]);
+  const css = highlightCode(samples.css ?? "", "css");
+  assert.deepEqual(tokens(css, "attr"), ["color", "margin"]);
+  assert.deepEqual(tokens(css, "num"), ["#fff", "-4px", "1.5em"]);
+  assert.deepEqual(tokens(css, "meta"), [":hover"]);
+  assert.deepEqual(tokens(highlightCode(samples.html ?? "", "html"), "attr"), ["class", "hidden"]);
+  assert.deepEqual(tokens(highlightCode(samples.yaml ?? "", "yaml"), "key"), ["name", "items", "key", "ok"]);
+  assert.deepEqual(tokens(highlightCode(samples.sql ?? "", "sql"), "kw"), ["SELECT", "FROM", "WHERE"]);
+  const diff = highlightCode(samples.diff ?? "", "diff");
+  assert.deepEqual([tokens(diff, "add"), tokens(diff, "del")], [["+new"], ["-old"]]);
+  assert.match(highlightCode(samples[""] ?? "", ""), /tok-kw">def/);
+});
+
+test("detectLanguage guesses untagged code blocks", () => {
+  assert.equal(detectLanguage('{"a": [1, 2]}'), "json");
+  assert.equal(detectLanguage("def go():\n    pass"), "python");
+  assert.equal(detectLanguage("const x = () => 1;"), "js");
+  assert.equal(detectLanguage("interface A { b: string }"), "ts");
+  assert.equal(detectLanguage("SELECT * FROM t;"), "sql");
+  assert.equal(detectLanguage("package main\nfunc main() {}"), "go");
+  assert.equal(detectLanguage("fn main() {\n    let mut x = 1;\n}"), "rust");
+  assert.equal(detectLanguage("#!/bin/bash\necho hi"), "bash");
+  assert.equal(detectLanguage("<div>hi</div>"), "html");
+  assert.equal(detectLanguage("name: app\nport: 80"), "yaml");
+  assert.equal(detectLanguage(".a {\n  color: red;\n}"), "css");
+  assert.equal(detectLanguage("just some words"), "generic");
+  // A whole coder memo: notes stay markdown, only strong signals pick a language.
+  assert.equal(detectLanguage("Note: call Bob\nTodo: buy milk", { prose: true }), "markdown");
+  assert.equal(detectLanguage("# Plan\n- ship it\n- `const x = 1`", { prose: true }), "markdown");
+  assert.equal(detectLanguage("echo hi", { prose: true }), "markdown");
+  assert.equal(detectLanguage("def go(x):\n    return x", { prose: true }), "python");
+  assert.equal(detectLanguage('{"a": 1}', { prose: true }), "json");
+});
+
 test("braceFolds finds a json block and round-trips the hidden lines", () => {
   const source = '{\n  "b": {\n    "c": 1\n  }\n}';
   const ranges = braceFolds(source);
   assert.deepEqual(ranges, [
-    { start: 1, end: 3 },
     { start: 0, end: 4 },
+    { start: 1, end: 3 },
   ]);
   assert.deepEqual(braceFolds('{ "a": 1 }'), []);
   assert.deepEqual(braceFolds('{\n  "a": "{"\n}'), [{ start: 0, end: 2 }]);
   const folded = foldView(source, new Set([0]));
-  assert.equal(folded.display, "{\u200b");
-  assert.deepEqual(folded.holes, ['\n  "b": {\n    "c": 1\n  }\n}']);
+  assert.equal(folded.display, "{\u200b\n}");
+  assert.deepEqual(folded.holes, ['\n  "b": {\n    "c": 1\n  }']);
+  assert.deepEqual(folded.numbers, [1, 5]);
   assert.equal(expandFolds(folded.display, folded.holes), source);
-  const edited = `{\u200b`.replace("{", "{ ");
+  const edited = folded.display.replace("{", "{ ");
   assert.equal(expandFolds(edited, folded.holes).includes('"c": 1'), true);
   const moved = `x\n  "b": {\n    "c": 1\n  }\n}`;
   assert.equal(foldsAfterEdit(moved, folded.holes).size, 0);
   const withRest = '{\n  "a": 1\n}\nrest';
   const view = foldView(withRest, new Set([0]));
-  assert.equal(view.display, "{\u200b\nrest");
+  assert.equal(view.display, "{\u200b\n}\nrest");
   assert.equal(displayToSource(view.display, view.holes, view.display.length), withRest.length);
   assert.equal(sourceToDisplay(view.display, view.holes, 1), 1);
   assert.equal(sourceToDisplay(view.display, view.holes, 4), 1);
+});
+
+test("braceFolds detects IDE-style blocks around inline brackets and else branches", () => {
+  const source = [
+    "function f(a) {",
+    "  const x = { a: 1 };",
+    "  if (a) {",
+    "    go();",
+    "  } else {",
+    "    stop();",
+    "  }",
+    "  call(",
+    "    1,",
+    "  );",
+    "}",
+  ].join("\n");
+  assert.deepEqual(braceFolds(source), [
+    { start: 0, end: 10 },
+    { start: 2, end: 4 },
+    { start: 4, end: 6 },
+    { start: 7, end: 9 },
+  ]);
+  const view = foldView(source, new Set([2]));
+  assert.equal(view.display.split("\n")[3], "  } else {");
+  assert.deepEqual(view.markers.slice(0, 4), ["open", null, "shut", "open"]);
+  assert.equal(expandFolds(view.display, view.holes), source);
+  // a two-line pair has nothing to hide
+  assert.deepEqual(braceFolds("if (a) {\n}"), []);
+});
+
+test("braceFolds ignores brackets in comments and strings per language", () => {
+  const js = "const s = `\n{\n`;\nf({\n  a: 1, // }\n  /* ) */\n});";
+  assert.deepEqual(braceFolds(js, foldSyntaxFor("ts")), [{ start: 3, end: 6 }]);
+  const py = 'x = {\n  "a": 1,  # }\n}\n';
+  assert.deepEqual(braceFolds(py, foldSyntaxFor("python")), [{ start: 0, end: 2 }]);
+  const prose = "Don't glob src/*.ts {\n  item\n}";
+  assert.deepEqual(braceFolds(prose, foldSyntaxFor("", true)), [{ start: 0, end: 2 }]);
 });
 
 test("highlightMarkdown colors markers without changing the source text", () => {

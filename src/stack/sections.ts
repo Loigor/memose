@@ -1,4 +1,4 @@
-import { denseLines, memoUsesCoder, refreshEditorFields } from "../editor/editor-field";
+import { denseLines, detectedMemoLanguage, memoUsesCoder, refreshEditorFields } from "../editor/editor-field";
 import { BlockHistory } from "../editor/history";
 import {
   applyCode,
@@ -15,6 +15,7 @@ import {
 } from "../editor/markdown-edit";
 import { resizeAllBlockTextareas } from "../editor/textarea";
 import { revealPressedChoice } from "../look/audience-ui";
+import { paintLanguageMenu, pickedLanguage, toggleLanguageList } from "../look/language-menu";
 import { namedTheme } from "../look/look";
 import { markdownToolbarHtml, stackHeaderHtml } from "../look/memo-chrome";
 import { hueSwatches, saveHueSwatches } from "../look/swatches";
@@ -356,6 +357,7 @@ export function mountSections(ctx: StackCtx) {
       if (formatPop) {
         formatPop.hidden = true;
         formatToggle?.setAttribute("aria-expanded", "false");
+        toggleLanguageList(formatPop, false);
       }
     };
     const closeSectionEditorMenu = () => {
@@ -455,14 +457,33 @@ export function mountSections(ctx: StackCtx) {
         return;
       }
       const open = formatPop.hidden;
+      const held = ctx.notes.get(note.id);
+      if (open && held) {
+        paintLanguageMenu(formatPop, held.codeLang, detectedMemoLanguage(section));
+      } else {
+        toggleLanguageList(formatPop, false);
+      }
       formatPop.hidden = !open;
       formatToggle.setAttribute("aria-expanded", String(open));
     });
     formatPop?.addEventListener("click", (event) => {
+      const held = ctx.notes.get(note.id);
+      const picked = pickedLanguage(event.target);
+      if (picked !== undefined && held) {
+        held.codeLang = picked;
+        ctx.api.paintSectionCoder(section, held);
+        refreshEditorFields(section);
+        ctx.api.scheduleSectionSave(section, held);
+        closeSectionFormatPop();
+        return;
+      }
       const button = event.target instanceof Element ? event.target.closest("button") : null;
       const action = button?.dataset.format;
-      const held = ctx.notes.get(note.id);
       if (!action || !held) {
+        return;
+      }
+      if (action === "lang" && formatPop) {
+        toggleLanguageList(formatPop);
         return;
       }
       if (action === "wrap") {
@@ -672,6 +693,7 @@ export function mountSections(ctx: StackCtx) {
         theme: prev?.theme ?? namedTheme(note.theme),
         coder: prev?.coder ?? (note.coder === true ? true : note.coder === false ? false : null),
         wrap: prev?.wrap ?? note.lineWrap === true,
+        codeLang: prev ? prev.codeLang : note.codeLang || null,
         folds: prev?.folds ?? denseLines(note.folds),
         marks: prev?.marks ?? denseLines(note.marks),
         mdBar: prev?.mdBar ?? false,

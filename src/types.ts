@@ -22,6 +22,7 @@ export type Note = {
   lineWrap?: boolean;
   folds?: number[][];
   marks?: number[][];
+  codeLang?: string | null;
 };
 
 export type MemoSpace = {

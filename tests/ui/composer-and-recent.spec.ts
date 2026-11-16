@@ -443,6 +443,44 @@ test("coder toggle shows a line gutter on that memo", async ({ page }) => {
   await expect(page.locator(".md-overflow-dot")).toHaveCount(0);
 });
 
+test("long-line dots mark exactly the lines that overflow, also after a resize", async ({ page }) => {
+  const notes = sampleNotes(1);
+  notes[0] = {
+    ...notes[0],
+    content: Array.from({ length: 10 }, (_, i) => "x".repeat(30 + i * 8)).join("\n"),
+    coder: true,
+  };
+  await openComposer(page, { notes });
+  await page.locator("#recent .title").first().click();
+  const lines = () =>
+    page
+      .locator(".md-field[data-coder] .md-hl")
+      .first()
+      .evaluate((hl) => {
+        const style = getComputedStyle(hl);
+        const inner = hl.clientWidth - Number.parseFloat(style.paddingLeft) - Number.parseFloat(style.paddingRight);
+        const texts = [...hl.querySelectorAll(".md-line-text")];
+        return {
+          overflowing: texts.flatMap((text, i) => (text.getBoundingClientRect().width > inner + 1 ? [i] : [])),
+          marked: texts.flatMap((text, i) => (text.classList.contains("is-long") ? [i] : [])),
+          dots: hl.parentElement?.querySelectorAll(".md-overflow-dot").length ?? 0,
+        };
+      });
+  for (const width of [520, 380, 620]) {
+    await page.setViewportSize({ width, height: 720 });
+    await expect
+      .poll(async () => {
+        const seen = await lines();
+        return (
+          seen.overflowing.length > 0 &&
+          seen.marked.join() === seen.overflowing.join() &&
+          seen.dots === seen.marked.length
+        );
+      })
+      .toBe(true);
+  }
+});
+
 test("line wrap shows a long line and enter still adds one break", async ({ page }) => {
   await openComposer(page);
   const coder = page.locator("#coder-toggle");
@@ -577,6 +615,76 @@ test("line wrap, a fold, and a line mark reopen with the memo", async ({ page })
       return stored.find((note) => note.id === "note-0000");
     })
     .toMatchObject({ lineWrap: false, folds: [[1]], marks: [[0]] });
+});
+
+test("resizing refits wrapped coder text live and repaints overlays when it settles", async ({ page }) => {
+  const notes = sampleNotes(2);
+  const prose = Array.from(
+    { length: 12 },
+    (_, i) => `Line ${i} with enough words to wrap in a narrow memo window`,
+  ).join("\n");
+  const code = Array.from({ length: 8 }, (_, i) => `const value${i} = compute(${i}, "a fairly long argument");`).join(
+    "\n",
+  );
+  notes[0] = { ...notes[0], content: prose, coder: true, lineWrap: true };
+  notes[1] = { ...notes[1], content: code, coder: true };
+  await openComposer(page, { notes });
+  await page.locator("#recent .title", { hasText: "Line 0" }).click();
+  const area = page.locator("#blocks textarea").first();
+  const before = await area.evaluate((el) => el.getBoundingClientRect().height);
+  await page.setViewportSize({ width: 300, height: 720 });
+  // Wrapped prose grows on the next frame, without waiting for the resize to settle.
+  await page.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))));
+  const during = await area.evaluate((el) => ({
+    height: el.getBoundingClientRect().height,
+    fits: el.scrollHeight <= el.clientHeight + 1,
+  }));
+  expect(during.height).toBeGreaterThan(before);
+  expect(during.fits).toBe(true);
+  await page.setViewportSize({ width: 520, height: 720 });
+  await page.locator("#recent .title", { hasText: "const value0" }).click();
+  await expect(page.locator("#blocks .md-overflow-dot")).toHaveCount(0);
+  await page.setViewportSize({ width: 300, height: 720 });
+  // Long-line markers are layout work that waits for the drag to end.
+  await expect(page.locator("#blocks .md-overflow-dot")).toHaveCount(8);
+  await expect(page.locator("#blocks .md-gutter-body").first()).toHaveText(/^1\n2\n3/);
+});
+
+test("the coder editor detects, picks, and stores the memo language", async ({ page }) => {
+  const notes = sampleNotes(3);
+  notes[0] = { ...notes[0], content: "def go(x):\n    return x + 1", coder: true };
+  notes[1] = { ...notes[1], content: "# Plan\nNote: call Bob\n- item", coder: true, codeLang: null };
+  notes[2] = { ...notes[2], content: "SELECT 1", coder: true, codeLang: "python" };
+  await openComposer(page, { notes });
+  await page.locator("#recent .title", { hasText: "def go" }).click();
+  await expect(page.locator("#blocks .tok-kw", { hasText: "def" })).toBeVisible();
+  await expect(page.locator("#card")).not.toHaveAttribute("data-code-lang");
+  const format = page.locator("#format-toggle");
+  await revealEditorButton(page, format);
+  await format.click();
+  const language = page.locator('#format-pop button[data-format="lang"]');
+  await expect(language).toContainText("Auto · Python");
+  await language.click();
+  await expect(page.locator("#format-pop .format-langs")).toBeVisible();
+  await page.locator("#format-pop [data-lang-choice='go']").click();
+  await expect(page.locator("#format-pop")).toBeHidden();
+  await expect(page.locator("#card")).toHaveAttribute("data-code-lang", "go");
+  await expect(page.locator("#blocks .tok-kw", { hasText: "return" })).toBeVisible();
+  await expect(page.locator("#blocks .tok-kw", { hasText: "def" })).toHaveCount(0);
+  await expect.poll(async () => (await getNotes(page)).find((note) => note.id === "note-0000")?.codeLang).toBe("go");
+  await format.click();
+  await language.click();
+  await page.locator("#format-pop [data-lang-choice='']").click();
+  await expect(page.locator("#card")).not.toHaveAttribute("data-code-lang");
+  await expect.poll(async () => (await getNotes(page)).find((note) => note.id === "note-0000")?.codeLang).toBe(null);
+  // Plain notes in a coder memo stay markdown under auto-detect.
+  await page.locator("#recent .title", { hasText: "Plan" }).click();
+  await expect(page.locator("#blocks .md-heading")).toBeVisible();
+  await expect(page.locator("#blocks .tok-key")).toHaveCount(0);
+  // A stored choice wins over detection.
+  await page.locator("#recent .title", { hasText: "SELECT 1" }).click();
+  await expect(page.locator("#card")).toHaveAttribute("data-code-lang", "python");
+  await expect(page.locator("#blocks .tok-kw")).toHaveCount(0);
 });
 
 test("a brace block in the coder editor folds without dropping the text", async ({ page }) => {

@@ -28,6 +28,8 @@ export type EditorState = {
   previewClick: { at: number; x: number; y: number } | null;
   viewWrite: Promise<void>;
   coderWrap: boolean;
+  /** Coder editor syntax language for this memo; null means auto-detect. */
+  codeLang: string | null;
   folds: number[][];
   marks: number[][];
   viewBlocks: Block[];
@@ -113,6 +115,7 @@ export function createAppState(): AppState {
       previewClick: null,
       viewWrite: Promise.resolve(),
       coderWrap: false,
+      codeLang: null,
       folds: [],
       marks: [],
       viewBlocks: [],

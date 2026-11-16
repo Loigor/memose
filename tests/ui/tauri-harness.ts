@@ -24,6 +24,7 @@ export type NoteSeed = {
   lineWrap?: boolean;
   folds?: number[][];
   marks?: number[][];
+  codeLang?: string | null;
   serverContent?: string | null;
 };
 
@@ -128,6 +129,7 @@ function installBrowserHarness(seed: BrowserSeed) {
       lineWrap: partial.lineWrap === true,
       folds: Array.isArray(partial.folds) ? partial.folds : [],
       marks: Array.isArray(partial.marks) ? partial.marks : [],
+      codeLang: partial.codeLang ?? null,
       serverContent: partial.serverContent ?? null,
     };
   }
@@ -701,6 +703,7 @@ function installBrowserHarness(seed: BrowserSeed) {
           note.lineWrap = a.lineWrap === true;
           note.folds = Array.isArray(a.folds) ? a.folds : [];
           note.marks = Array.isArray(a.marks) ? a.marks : [];
+          note.codeLang = typeof a.codeLang === "string" ? a.codeLang : null;
         }
         return null;
       }

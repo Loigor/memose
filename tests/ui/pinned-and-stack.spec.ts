@@ -1,7 +1,7 @@
 import { expect, test } from "@playwright/test";
 
 import { editorText, invokedCmds, openPinned } from "./helpers";
-import { emitEvent, harnessSeedNotes, type NoteSeed } from "./tauri-harness";
+import { emitEvent, getNotes, harnessSeedNotes, type NoteSeed } from "./tauri-harness";
 
 function stackNotes(): { host: NoteSeed; guests: NoteSeed[] } {
   const host: NoteSeed = {
@@ -80,4 +80,25 @@ test("deleting a stacked guest removes it from the chain", async ({ page }) => {
   await guest.locator(".delete-yes").click();
   await expect.poll(async () => invokedCmds(page)).toContain("delete_note");
   await expect(page.locator(".stack-note[data-id='guest-2']")).toHaveCount(0);
+});
+
+test("a stacked coder memo keeps its own language", async ({ page }) => {
+  const { host, guests } = stackNotes();
+  guests[0] = { ...guests[0], content: "fn main() {\n    let x = 1;\n}", coder: true, codeLang: "rust" };
+  await openPinned(page, "host-1", { notes: [host, ...guests] });
+  const section = page.locator(".stack-note[data-id='guest-1']");
+  await expect(section).toHaveAttribute("data-code-lang", "rust");
+  await expect(section.locator(".tok-kw", { hasText: "let" })).toBeVisible();
+  const format = section.locator(".format-toggle");
+  if (!(await format.isVisible())) {
+    await section.locator(".editor-menu-toggle").click();
+  }
+  await format.click();
+  await expect(section.locator('.format-pop button[data-format="lang"]')).toContainText("Rust");
+  await section.locator('.format-pop button[data-format="lang"]').click();
+  await section.locator(".format-pop [data-lang-choice='python']").click();
+  await expect(section).toHaveAttribute("data-code-lang", "python");
+  await expect(section.locator(".tok-kw", { hasText: "let" })).toHaveCount(0);
+  await expect.poll(async () => (await getNotes(page)).find((note) => note.id === "guest-1")?.codeLang).toBe("python");
+  await expect(page.locator("#card")).not.toHaveAttribute("data-code-lang");
 });

@@ -1,5 +1,6 @@
 import { memoUsesCoder } from "../editor/editor-field";
 import { paintSurface, paintThemeButton, paperAt, type ThemeName } from "../look/memo-chrome";
+import { toggleLanguageList } from "../look/language-menu";
 import { hueSwatches, onHueSwatches } from "../look/swatches";
 import type { SectionState, StackCtx } from "./context";
 import { invoke } from "@tauri-apps/api/core";
@@ -27,6 +28,11 @@ export function mountLook(ctx: StackCtx) {
 
   function paintSectionCoder(section: HTMLElement, state: SectionState) {
     const on = memoUsesCoder(state.coder);
+    if (state.codeLang) {
+      section.dataset.codeLang = state.codeLang;
+    } else {
+      delete section.dataset.codeLang;
+    }
     section.toggleAttribute("data-coder", on);
     section.toggleAttribute("data-wrap", on && state.wrap);
     section.querySelector(".coder-toggle")?.setAttribute("aria-pressed", String(on));
@@ -36,6 +42,7 @@ export function mountLook(ctx: StackCtx) {
     if (!on && formatPop) {
       formatPop.hidden = true;
       formatToggle?.setAttribute("aria-expanded", "false");
+      toggleLanguageList(formatPop, false);
     }
   }
 

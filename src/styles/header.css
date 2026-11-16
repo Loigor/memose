@@ -442,6 +442,59 @@ header.compact-meta #edited-sep {
   box-shadow: inset 0 0 0 2px var(--paper);
 }
 
+.format-rule {
+  height: 1px;
+  margin: 4px 6px;
+  background: var(--line);
+}
+
+.format-pop button[data-format="lang"] {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.format-pop button[data-format="lang"]::after {
+  content: "";
+  flex: none;
+  width: 5px;
+  height: 5px;
+  border-right: 1.5px solid currentColor;
+  border-bottom: 1.5px solid currentColor;
+  opacity: 0.6;
+  transform: translateY(-1px) rotate(45deg);
+}
+
+.format-pop button[data-format="lang"][aria-expanded="true"]::after {
+  transform: translateY(1px) rotate(-135deg);
+}
+
+.format-value {
+  margin-left: auto;
+  overflow: hidden;
+  max-width: 140px;
+  text-overflow: ellipsis;
+  color: var(--muted);
+}
+
+.format-langs {
+  display: flex;
+  flex-direction: column;
+  max-height: min(220px, 45vh);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+}
+
+.format-langs[hidden] {
+  display: none;
+}
+
+.format-pop .format-langs button {
+  padding-left: 18px;
+}
+
 .md-toolbar {
   display: flex;
   flex: none;
