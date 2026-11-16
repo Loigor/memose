@@ -1,4 +1,4 @@
-import { highlightCode } from "./code-highlight.ts";
+import { highlightCode, resolvedLanguage } from "./code-highlight.ts";
 import {
   displayToSource,
   expandFolds,
@@ -333,7 +333,11 @@ type FoldState = {
 };
 
 function foldSyntax(area: HTMLTextAreaElement): FoldSyntax {
-  return foldSyntaxFor(area.dataset.lang, area.dataset.kind !== "code");
+  if (area.dataset.kind !== "code") {
+    return foldSyntaxFor("", true);
+  }
+  // Untagged blocks fold with the same language the highlighter detected.
+  return foldSyntaxFor(resolvedLanguage(sourceText(area), area.dataset.lang ?? ""));
 }
 
 const foldState = new WeakMap<HTMLTextAreaElement, FoldState>();

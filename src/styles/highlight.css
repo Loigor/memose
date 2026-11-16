@@ -85,6 +85,33 @@ html[data-mdhl] .stack-blocks textarea::-moz-selection {
 .tok-key {
   color: var(--tok-key);
 }
+.tok-fn {
+  color: var(--tok-fn);
+}
+.tok-type {
+  color: var(--tok-type);
+}
+.tok-lit {
+  color: var(--tok-lit);
+}
+.tok-meta {
+  color: var(--tok-meta);
+}
+.tok-attr {
+  color: var(--tok-attr);
+}
+.tok-var {
+  color: var(--tok-var);
+}
+.tok-re {
+  color: var(--tok-re);
+}
+.tok-add {
+  color: var(--tok-add);
+}
+.tok-del {
+  color: var(--tok-del);
+}
 
 .md-lang {
   position: absolute;
@@ -120,6 +147,15 @@ html[data-mdhl-scheme="paper"] {
   --tok-num: #1d4ed8;
   --tok-cmt: #78716c;
   --tok-key: #7c2d12;
+  --tok-fn: #6d28d9;
+  --tok-type: #854d0e;
+  --tok-lit: #1d4ed8;
+  --tok-meta: #a21caf;
+  --tok-attr: #0e7490;
+  --tok-var: #be185d;
+  --tok-re: #b91c1c;
+  --tok-add: #15803d;
+  --tok-del: #b91c1c;
 }
 
 html[data-mdhl-scheme="cool"] {
@@ -134,6 +170,15 @@ html[data-mdhl-scheme="cool"] {
   --tok-num: #7c3aed;
   --tok-cmt: #64748b;
   --tok-key: #0369a1;
+  --tok-fn: #b45309;
+  --tok-type: #0e7490;
+  --tok-lit: #7c3aed;
+  --tok-meta: #be185d;
+  --tok-attr: #0369a1;
+  --tok-var: #c2410c;
+  --tok-re: #b91c1c;
+  --tok-add: #15803d;
+  --tok-del: #b91c1c;
 }
 
 html[data-mdhl-scheme="mono"] {
@@ -148,6 +193,15 @@ html[data-mdhl-scheme="mono"] {
   --tok-num: #262626;
   --tok-cmt: #737373;
   --tok-key: #0a0a0a;
+  --tok-fn: #262626;
+  --tok-type: #404040;
+  --tok-lit: #262626;
+  --tok-meta: #525252;
+  --tok-attr: #404040;
+  --tok-var: #262626;
+  --tok-re: #404040;
+  --tok-add: #166534;
+  --tok-del: #991b1b;
 }
 
 html[data-theme="dark"],
@@ -163,6 +217,15 @@ html[data-theme="dark"][data-mdhl-scheme="paper"] {
   --tok-num: #93c5fd;
   --tok-cmt: #a8a29e;
   --tok-key: #fed7aa;
+  --tok-fn: #c4b5fd;
+  --tok-type: #fde047;
+  --tok-lit: #93c5fd;
+  --tok-meta: #f0abfc;
+  --tok-attr: #67e8f9;
+  --tok-var: #f9a8d4;
+  --tok-re: #fca5a5;
+  --tok-add: #86efac;
+  --tok-del: #fca5a5;
 }
 
 html[data-theme="dark"][data-mdhl-scheme="cool"] {
@@ -177,6 +240,15 @@ html[data-theme="dark"][data-mdhl-scheme="cool"] {
   --tok-num: #d8b4fe;
   --tok-cmt: #94a3b8;
   --tok-key: #7dd3fc;
+  --tok-fn: #fcd34d;
+  --tok-type: #67e8f9;
+  --tok-lit: #d8b4fe;
+  --tok-meta: #f9a8d4;
+  --tok-attr: #7dd3fc;
+  --tok-var: #fdba74;
+  --tok-re: #fca5a5;
+  --tok-add: #86efac;
+  --tok-del: #fca5a5;
 }
 
 html[data-theme="dark"][data-mdhl-scheme="mono"] {
@@ -191,6 +263,15 @@ html[data-theme="dark"][data-mdhl-scheme="mono"] {
   --tok-num: #e5e5e5;
   --tok-cmt: #737373;
   --tok-key: #fafafa;
+  --tok-fn: #e5e5e5;
+  --tok-type: #d4d4d4;
+  --tok-lit: #e5e5e5;
+  --tok-meta: #a3a3a3;
+  --tok-attr: #d4d4d4;
+  --tok-var: #e5e5e5;
+  --tok-re: #d4d4d4;
+  --tok-add: #86efac;
+  --tok-del: #fca5a5;
 }
 
 #card[data-coder] #composer-view {
