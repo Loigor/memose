@@ -221,7 +221,9 @@ html[data-theme="dark"][data-mdhl-scheme="mono"] {
   background: color-mix(in srgb, color-mix(in srgb, black 14%, var(--paper)) var(--paper-alpha), transparent);
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   font-size: 13px;
-  line-height: 1.45;
+  /* Whole pixels: a fractional pitch (13px × 1.45 = 18.85) rounds differently in the textarea,
+     the highlight overlay and the gutter, and the error grows with every line. */
+  line-height: 19px;
   tab-size: var(--indent-ch, 2);
 }
 
@@ -261,6 +263,25 @@ html[data-theme="dark"][data-mdhl-scheme="mono"] {
   z-index: 0;
 }
 
+.md-caret-layer {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  pointer-events: none;
+  z-index: 0;
+}
+
+.md-caret-layer[hidden] {
+  display: none;
+}
+
+.md-caret-line {
+  position: absolute;
+  left: 0;
+  right: 0;
+  background: color-mix(in srgb, var(--ink) 6%, transparent);
+}
+
 .md-mark-bar {
   position: absolute;
   left: 0;
@@ -296,11 +317,15 @@ html[data-theme="dark"][data-mdhl-scheme="mono"] {
   transform: translateY(-50%);
 }
 
+.md-folds {
+  display: none;
+}
+
 .md-field[data-coder] .md-folds:not([hidden]) {
   display: block;
   position: relative;
   flex: none;
-  width: 16px;
+  width: 14px;
   overflow: hidden;
   user-select: none;
 }
@@ -312,16 +337,39 @@ html[data-theme="dark"][data-mdhl-scheme="mono"] {
 .md-fold {
   position: absolute;
   left: 0;
-  width: 16px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
   margin: 0;
   padding: 0;
   border: 0;
   border-radius: 2px;
   background: transparent;
   color: var(--md-marker);
-  font-size: 12px;
-  line-height: 1;
+  opacity: 0.55;
   cursor: pointer;
+  transition: opacity 120ms ease;
+}
+
+/* IDE style: open toggles fade in on hover, folded ones stay visible. */
+.md-field[data-coder]:hover .md-fold,
+.md-fold[data-mark="shut"] {
+  opacity: 1;
+}
+
+.md-fold::before {
+  content: "";
+  box-sizing: border-box;
+  width: 6px;
+  height: 6px;
+  border-right: 1.5px solid currentColor;
+  border-bottom: 1.5px solid currentColor;
+  transform: translateY(-1px) rotate(45deg);
+}
+
+.md-fold[data-mark="shut"]::before {
+  transform: translateX(-1px) rotate(-45deg);
 }
 
 .md-fold:hover {

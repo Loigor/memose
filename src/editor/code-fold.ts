@@ -1,4 +1,6 @@
-// shortcut: folds a brace block when { or [ ends the line and the closer is alone on a later line. Indent folding waits until a language needs it.
+// Bracket folding like an IDE: any {, [ or ( whose matching closer sits on a later line folds the
+// lines between them; the opener line and the closer line stay visible (`if (a) {…} else {…}`).
+// Indent folding waits until a language needs it.
 
 export const FOLD_SENTINEL = "\u200b";
 
@@ -12,36 +14,99 @@ export type FoldView = {
   foldedLines: number[];
 };
 
-type Frame = { line: number; ch: "{" | "[" };
+/** How strings and comments look, so brackets inside them are ignored. */
+export type FoldSyntax = {
+  /** Line comment prefixes, e.g. `//` or `#`. */
+  line: string[];
+  /** Block comment delimiters, e.g. `/*` … `*\/`. */
+  block: Array<[string, string]>;
+  /** Quote characters that end at the line break. */
+  quotes: string[];
+  /** Quote delimiters that may span lines (template literals, triple quotes). */
+  multi: string[];
+};
 
-function lineStart(source: string, index: number): number {
-  return index === 0 ? 0 : source.lastIndexOf("\n", index - 1) + 1;
+const C_LIKE: FoldSyntax = { line: ["//"], block: [["/*", "*/"]], quotes: ['"', "'"], multi: [] };
+const JS_LIKE: FoldSyntax = { ...C_LIKE, multi: ["`"] };
+const HASH: FoldSyntax = { line: ["#"], block: [], quotes: ['"', "'"], multi: [] };
+const PYTHON: FoldSyntax = { line: ["#"], block: [], quotes: ['"', "'"], multi: ['"""', "'''"] };
+const CSS: FoldSyntax = { line: [], block: [["/*", "*/"]], quotes: ['"', "'"], multi: [] };
+const SQL: FoldSyntax = { line: ["--"], block: [["/*", "*/"]], quotes: ['"', "'"], multi: [] };
+const JSON_SYNTAX: FoldSyntax = { line: ["//"], block: [["/*", "*/"]], quotes: ['"'], multi: [] };
+/** Markdown prose: apostrophes and slashes are text, not syntax. */
+export const PROSE_SYNTAX: FoldSyntax = { line: [], block: [], quotes: [], multi: [] };
+
+const BY_LANG: Record<string, FoldSyntax> = {
+  js: JS_LIKE,
+  jsx: JS_LIKE,
+  mjs: JS_LIKE,
+  cjs: JS_LIKE,
+  javascript: JS_LIKE,
+  ts: JS_LIKE,
+  tsx: JS_LIKE,
+  typescript: JS_LIKE,
+  json: JSON_SYNTAX,
+  jsonc: JSON_SYNTAX,
+  json5: JS_LIKE,
+  css: CSS,
+  scss: C_LIKE,
+  less: C_LIKE,
+  py: PYTHON,
+  python: PYTHON,
+  sh: HASH,
+  bash: HASH,
+  zsh: HASH,
+  shell: HASH,
+  yaml: HASH,
+  yml: HASH,
+  toml: HASH,
+  ruby: HASH,
+  rb: HASH,
+  r: HASH,
+  perl: HASH,
+  sql: SQL,
+  lua: SQL,
+};
+
+export function foldSyntaxFor(lang: string | undefined, prose = false): FoldSyntax {
+  if (prose) {
+    return PROSE_SYNTAX;
+  }
+  const key = (lang ?? "").trim().split(/\s+/)[0]?.toLowerCase() ?? "";
+  return BY_LANG[key] ?? C_LIKE;
 }
 
-function lineEnd(source: string, index: number): number {
-  const at = source.indexOf("\n", index);
-  return at === -1 ? source.length : at;
+const OPENERS: Record<string, string> = { "{": "}", "[": "]", "(": ")" };
+const CLOSERS: Record<string, string> = { "}": "{", "]": "[", ")": "(" };
+
+type Frame = { line: number; ch: string };
+
+function startsAt(source: string, index: number, token: string): boolean {
+  return source.startsWith(token, index);
 }
 
-export function braceFolds(source: string): Array<{ start: number; end: number }> {
-  const ranges: Array<{ start: number; end: number }> = [];
+/** Fold ranges keyed by opener line; `end` is the closer's line, which stays visible. */
+export function braceFolds(source: string, syntax: FoldSyntax = C_LIKE): Array<{ start: number; end: number }> {
+  const endAt = new Map<number, number>();
   const stack: Frame[] = [];
   let line = 0;
   let quote: string | null = null;
-  let block = false;
+  let blockEnd: string | null = null;
   let i = 0;
   while (i < source.length) {
     const ch = source[i] ?? "";
     if (ch === "\n") {
       line += 1;
-      quote = null;
+      if (quote && !syntax.multi.includes(quote)) {
+        quote = null;
+      }
       i += 1;
       continue;
     }
-    if (block) {
-      if (ch === "*" && source[i + 1] === "/") {
-        block = false;
-        i += 2;
+    if (blockEnd) {
+      if (startsAt(source, i, blockEnd)) {
+        i += blockEnd.length;
+        blockEnd = null;
         continue;
       }
       i += 1;
@@ -49,54 +114,55 @@ export function braceFolds(source: string): Array<{ start: number; end: number }
     }
     if (quote) {
       if (ch === "\\") {
-        i += 2;
+        // Skip the escaped char, but never swallow a line break so line counting stays right.
+        i += source[i + 1] === "\n" ? 1 : 2;
         continue;
       }
-      if (ch === quote) {
+      if (startsAt(source, i, quote)) {
+        i += quote.length;
         quote = null;
+        continue;
       }
       i += 1;
       continue;
     }
-    if (ch === "/" && source[i + 1] === "/") {
+    if (syntax.line.some((token) => startsAt(source, i, token))) {
       while (i < source.length && source[i] !== "\n") {
         i += 1;
       }
       continue;
     }
-    if (ch === "/" && source[i + 1] === "*") {
-      block = true;
-      i += 2;
+    const block = syntax.block.find(([open]) => startsAt(source, i, open));
+    if (block) {
+      blockEnd = block[1];
+      i += block[0].length;
       continue;
     }
-    if (ch === '"' || ch === "'" || ch === "`") {
-      quote = ch;
-      i += 1;
+    const opensQuote = [...syntax.multi, ...syntax.quotes].find((token) => startsAt(source, i, token));
+    if (opensQuote) {
+      quote = opensQuote;
+      i += opensQuote.length;
       continue;
     }
-    if (ch === "{" || ch === "[") {
-      const rest = source.slice(i + 1, lineEnd(source, i));
-      if (rest.trim() === "") {
-        stack.push({ line, ch });
+    if (OPENERS[ch]) {
+      stack.push({ line, ch });
+    } else if (CLOSERS[ch]) {
+      const want = CLOSERS[ch];
+      let at = stack.length - 1;
+      while (at >= 0 && stack[at]?.ch !== want) {
+        at -= 1;
       }
-      i += 1;
-      continue;
-    }
-    if ((ch === "}" || ch === "]") && stack.length > 0) {
-      const want = ch === "}" ? "{" : "[";
-      const top = stack[stack.length - 1];
-      if (top && top.ch === want) {
-        stack.pop();
-        const before = source.slice(lineStart(source, i), i);
-        const after = source.slice(i + 1, lineEnd(source, i));
-        if (top.line < line && before.trim() === "" && /^[,;)\]\s]*$/.test(after)) {
-          ranges.push({ start: top.line, end: line });
+      if (at >= 0) {
+        const open = stack[at];
+        stack.length = at;
+        if (open && line - open.line >= 2) {
+          endAt.set(open.line, Math.max(endAt.get(open.line) ?? 0, line));
         }
       }
     }
     i += 1;
   }
-  return ranges;
+  return [...endAt.entries()].sort((a, b) => a[0] - b[0]).map(([start, end]) => ({ start, end }));
 }
 
 export function lineIndexAt(source: string, offset: number): number {
@@ -110,8 +176,8 @@ export function lineIndexAt(source: string, offset: number): number {
   return line;
 }
 
-export function foldView(source: string, folded: ReadonlySet<number>): FoldView {
-  const endAt = new Map(braceFolds(source).map((range) => [range.start, range.end]));
+export function foldView(source: string, folded: ReadonlySet<number>, syntax?: FoldSyntax): FoldView {
+  const endAt = new Map(braceFolds(source, syntax).map((range) => [range.start, range.end]));
   const lines = source.split("\n");
   const hidden = new Set<number>();
   const parts: string[] = [];
@@ -124,15 +190,15 @@ export function foldView(source: string, folded: ReadonlySet<number>): FoldView 
       continue;
     }
     const end = endAt.get(i);
-    const foldable = end !== undefined && end > i;
+    const foldable = end !== undefined && end > i + 1;
     const shut = Boolean(foldable && folded.has(i));
     numbers.push(i + 1);
     markers.push(foldable ? (shut ? "shut" : "open") : null);
     if (shut && end !== undefined) {
       parts.push(`${lines[i] ?? ""}${FOLD_SENTINEL}`);
-      holes.push(`\n${lines.slice(i + 1, end + 1).join("\n")}`);
+      holes.push(`\n${lines.slice(i + 1, end).join("\n")}`);
       foldedLines.push(i);
-      for (let hiddenLine = i + 1; hiddenLine <= end; hiddenLine += 1) {
+      for (let hiddenLine = i + 1; hiddenLine < end; hiddenLine += 1) {
         hidden.add(hiddenLine);
       }
     } else {
@@ -207,8 +273,8 @@ export function sentinelCount(text: string): number {
   return count;
 }
 
-export function foldsAfterEdit(source: string, holes: string[]): Set<number> {
-  const openers = new Set(braceFolds(source).map((range) => range.start));
+export function foldsAfterEdit(source: string, holes: string[], syntax?: FoldSyntax): Set<number> {
+  const openers = new Set(braceFolds(source, syntax).map((range) => range.start));
   const next = new Set<number>();
   let from = 0;
   for (const hole of holes) {

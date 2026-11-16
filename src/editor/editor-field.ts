@@ -4,10 +4,12 @@ import {
   expandFolds,
   FOLD_SENTINEL,
   foldsAfterEdit,
+  foldSyntaxFor,
   foldView,
   sentinelCount,
   showFoldMarks,
   sourceToDisplay,
+  type FoldSyntax,
   type FoldView,
 } from "./code-fold.ts";
 import {
@@ -80,10 +82,15 @@ export function wrapEditorField(area: HTMLTextAreaElement): HTMLElement {
   highlight.className = "md-hl";
   highlight.setAttribute("aria-hidden", "true");
   surface.append(highlight, area, overflowLayer(surface));
-  field.append(folds, gutter, surface);
+  field.append(gutter, folds, surface);
   attachLineMarks(field, area);
   folds.addEventListener("mousedown", (event) => toggleFold(area, event));
   area.addEventListener("scroll", () => syncEditorScroll(area));
+  const caretLine = () => paintCaretLine(area);
+  for (const name of ["focus", "blur", "keyup", "mouseup", "input", "select", "selectionchange"]) {
+    area.addEventListener(name, caretLine);
+  }
+  watchCaretLines();
   area.addEventListener("keydown", (event) => {
     keepWrapEnter(area, event);
   });
@@ -132,6 +139,7 @@ export function paintEditorField(area: HTMLTextAreaElement) {
   paintLang(field, area);
   paintFoldMarks(area, field);
   paintMarkBars(area, field);
+  paintCaretLine(area);
   const scope = area.closest("#blocks, .stack-blocks");
   if (scope) {
     renumberGutters(scope, Boolean(note?.hasAttribute("data-coder")));
@@ -189,6 +197,15 @@ function keepWrapEnter(area: HTMLTextAreaElement, event: KeyboardEvent) {
   foldWrite = false;
   area.dataset.indentBreak = "1";
   area.dispatchEvent(new InputEvent("input", { bubbles: true, inputType: "insertLineBreak" }));
+}
+
+/** Line pitch as the layout engine uses it: lengths snap to 1/64 px, so 18.85 lays out as 18.84375. */
+function linePitch(style: CSSStyleDeclaration): number {
+  const value = Number.parseFloat(style.lineHeight);
+  if (!Number.isFinite(value) || value <= 0) {
+    return 18;
+  }
+  return Math.floor(value * 64) / 64;
 }
 
 function rowHeights(area: HTMLTextAreaElement, count: number, lineHeight: number): number[] {
@@ -312,7 +329,12 @@ type FoldState = {
   folds: Set<number>;
   holes: string[];
   view: FoldView;
+  syntax: FoldSyntax;
 };
+
+function foldSyntax(area: HTMLTextAreaElement): FoldSyntax {
+  return foldSyntaxFor(area.dataset.lang, area.dataset.kind !== "code");
+}
 
 const foldState = new WeakMap<HTMLTextAreaElement, FoldState>();
 let foldWrite = false;
@@ -408,7 +430,7 @@ function installValue(area: HTMLTextAreaElement) {
         state.source = String(next);
         state.folds.clear();
         state.holes = [];
-        state.view = foldView(state.source, state.folds);
+        state.view = foldView(state.source, state.folds, state.syntax);
       }
     },
   });
@@ -420,7 +442,7 @@ function installValue(area: HTMLTextAreaElement) {
 }
 
 function rememberView(state: FoldState) {
-  state.view = foldView(state.source, state.folds);
+  state.view = foldView(state.source, state.folds, state.syntax);
   state.folds = new Set(state.view.foldedLines);
   state.holes = state.view.holes;
 }
@@ -430,6 +452,7 @@ function showFolded(area: HTMLTextAreaElement, caret: number) {
   if (!state) {
     return;
   }
+  state.syntax = foldSyntax(area);
   rememberView(state);
   const at = sourceToDisplay(state.view.display, state.view.holes, caret);
   foldWrite = true;
@@ -512,8 +535,9 @@ function attachFolding(area: HTMLTextAreaElement) {
           showFolded(area, sourceAt);
         } else {
           state.source = expandFolds(display, state.holes);
-          state.folds = foldsAfterEdit(state.source, state.holes);
-          const next = foldView(state.source, state.folds);
+          state.syntax = foldSyntax(area);
+          state.folds = foldsAfterEdit(state.source, state.holes, state.syntax);
+          const next = foldView(state.source, state.folds, state.syntax);
           if (next.display !== display) {
             showFolded(area, sourceAt);
           } else {
@@ -553,7 +577,9 @@ function toggleFold(area: HTMLTextAreaElement, event: MouseEvent) {
   }
   let state = foldState.get(area);
   if (!state) {
-    state = { source: readNative(area), folds: new Set(), holes: [], view: foldView(readNative(area), new Set()) };
+    const syntax = foldSyntax(area);
+    const source = readNative(area);
+    state = { source, folds: new Set(), holes: [], view: foldView(source, new Set(), syntax), syntax };
     foldState.set(area, state);
     installValue(area);
   }
@@ -656,7 +682,7 @@ function gutterHit(area: HTMLTextAreaElement, event: MouseEvent): number | null 
             gutter.getBoundingClientRect().top +
             gutter.scrollTop -
             (Number.parseFloat(getComputedStyle(gutter).paddingTop) || 0)) /
-            (Number.parseFloat(getComputedStyle(area).lineHeight) || 18),
+            linePitch(getComputedStyle(area)),
         );
   const line = sources[index];
   return Number.isInteger(line) ? line : null;
@@ -755,16 +781,81 @@ export function writeFolds(root: ParentNode, folds: number[][] | undefined) {
     }
     const caret = area.selectionStart ?? 0;
     const source = sourceText(area);
+    const syntax = foldSyntax(area);
     const state: FoldState = {
       source,
       folds: new Set(kept),
       holes: [],
-      view: foldView(source, new Set()),
+      view: foldView(source, new Set(), syntax),
+      syntax,
     };
     foldState.set(area, state);
     installValue(area);
     showFolded(area, caret);
   }
+}
+
+let caretWatch = false;
+
+/** WebKit only reports caret moves in a textarea through the document's selectionchange. */
+function watchCaretLines() {
+  if (caretWatch || typeof document === "undefined") {
+    return;
+  }
+  caretWatch = true;
+  document.addEventListener("selectionchange", () => {
+    const active = document.activeElement;
+    if (active instanceof HTMLTextAreaElement && active.closest(".md-field")) {
+      paintCaretLine(active);
+    }
+  });
+}
+
+/** IDE-style tint behind the line the caret sits on, while the coder field has focus. */
+function paintCaretLine(area: HTMLTextAreaElement) {
+  const field = area.closest(".md-field");
+  const surface = field?.querySelector<HTMLElement>(":scope > .md-surface");
+  if (!(field instanceof HTMLElement) || !surface) {
+    return;
+  }
+  let layer = surface.querySelector<HTMLElement>(":scope > .md-caret-layer");
+  const at = nativeStart(area);
+  const show =
+    field.hasAttribute("data-coder") &&
+    !area.classList.contains("inline-line-slot") &&
+    document.activeElement === area &&
+    at === nativeEnd(area);
+  if (!show) {
+    if (layer) {
+      layer.hidden = true;
+    }
+    return;
+  }
+  if (!layer) {
+    layer = document.createElement("div");
+    layer.className = "md-caret-layer";
+    layer.setAttribute("aria-hidden", "true");
+    layer.append(document.createElement("div"));
+    surface.prepend(layer);
+  }
+  const bar = layer.firstElementChild as HTMLElement;
+  bar.className = "md-caret-line";
+  const native = readNative(area);
+  let row = 0;
+  for (let i = 0; i < at; i += 1) {
+    if (native[i] === "\n") {
+      row += 1;
+    }
+  }
+  const style = getComputedStyle(area);
+  const padTop = Number.parseFloat(style.paddingTop) || 0;
+  const lineHeight = linePitch(style);
+  const heights = rowHeights(area, lineCount(native), lineHeight);
+  const top = padTop + heights.slice(0, row).reduce((sum, height) => sum + height, 0);
+  bar.style.top = `${top}px`;
+  bar.style.height = `${heights[row] ?? lineHeight}px`;
+  bar.style.transform = `translateY(${-area.scrollTop}px)`;
+  layer.hidden = false;
 }
 
 function paintMarkBars(area: HTMLTextAreaElement, field: HTMLElement) {
@@ -792,10 +883,14 @@ function paintMarkBars(area: HTMLTextAreaElement, field: HTMLElement) {
   }
   const style = getComputedStyle(area);
   const padTop = Number.parseFloat(style.paddingTop) || 0;
-  const lineHeight = Number.parseFloat(style.lineHeight) || 18;
+  const lineHeight = linePitch(style);
   const codeGutter = field.querySelector<HTMLElement>(":scope > .md-gutter-code");
+  // Code blocks stretch the bar under their own gutter and the fold column beside it.
+  const folds = field.querySelector<HTMLElement>(":scope > .md-folds");
   const extend = codeGutter
-    ? codeGutter.offsetWidth + (Number.parseFloat(getComputedStyle(codeGutter).marginLeft) || 0)
+    ? codeGutter.offsetWidth +
+      (Number.parseFloat(getComputedStyle(codeGutter).marginLeft) || 0) +
+      (folds?.offsetWidth ?? 0)
     : 0;
   const heights = rowHeights(area, sources.length, lineHeight);
   const key = `${sources.map((line) => (marks.lines.has(line) ? "1" : "0")).join("")}|${extend}|${heights.join(",")}`;
@@ -825,20 +920,22 @@ function paintFoldMarks(area: HTMLTextAreaElement, field: HTMLElement) {
   if (!host) {
     return;
   }
+  const coder = field.hasAttribute("data-coder");
+  // The column stays in place for every coder field so gutters and text line up across blocks.
+  host.hidden = !coder;
   const state = foldState.get(area);
-  const shown = state && state.folds.size > 0 ? state.view : foldView(readNative(area), new Set());
-  const markers = shown.markers;
-  const numbers = shown.numbers;
-  const any = markers.some((mark) => mark != null);
-  host.hidden = !any;
-  if (!any) {
+  const shown =
+    state && state.folds.size > 0 ? state.view : coder ? foldView(readNative(area), new Set(), foldSyntax(area)) : null;
+  const markers = shown?.markers ?? [];
+  const numbers = shown?.numbers ?? [];
+  if (!coder || !markers.some((mark) => mark != null)) {
     host.replaceChildren();
     delete host.dataset.key;
     return;
   }
   const style = getComputedStyle(area);
   const padTop = Number.parseFloat(style.paddingTop) || 0;
-  const lineHeight = Number.parseFloat(style.lineHeight) || 18;
+  const lineHeight = linePitch(style);
   const heights = rowHeights(area, markers.length, lineHeight);
   const key = `${padTop}:${lineHeight}:${markers.join(",")}:${heights.join(",")}`;
   if (host.dataset.key === key) {
@@ -856,7 +953,7 @@ function paintFoldMarks(area: HTMLTextAreaElement, field: HTMLElement) {
       button.type = "button";
       button.className = "md-fold";
       button.dataset.line = String((numbers[index] ?? 1) - 1);
-      button.textContent = mark === "shut" ? "▸" : "▾";
+      button.dataset.mark = mark;
       button.setAttribute("aria-expanded", mark === "open" ? "true" : "false");
       button.setAttribute("aria-label", mark === "shut" ? "Unfold" : "Fold");
       button.style.top = `${top}px`;
@@ -907,7 +1004,7 @@ function paintNumbers(
     ? markState.get(area)?.lines
     : undefined;
   const markKey = showBalls && marked && marked.size > 0 ? [...marked].sort((a, b) => a - b).join(",") : "";
-  const lineHeight = Number.parseFloat(getComputedStyle(area).lineHeight) || 18;
+  const lineHeight = linePitch(getComputedStyle(area));
   const heights = rowHeights(area, numbers.length, lineHeight);
   const wrapped = area.closest(".md-field")?.hasAttribute("data-wrap") ?? false;
   const key = `${numbers.join("\n")}|${origin}|${markKey}|${lineHeight}|${wrapped ? heights.join(",") : ""}`;
@@ -962,7 +1059,8 @@ function codeGutter(field: HTMLElement, on: boolean): HTMLElement | null {
   const gutter = document.createElement("div");
   gutter.className = "md-gutter md-gutter-code";
   gutter.setAttribute("aria-hidden", "true");
-  const surface = field.querySelector(":scope > .md-surface");
+  // Sits between the memo gutter and the fold column, so fold toggles stay next to the code.
+  const surface = field.querySelector(":scope > .md-folds") ?? field.querySelector(":scope > .md-surface");
   if (surface) {
     field.insertBefore(gutter, surface);
   } else {
@@ -1102,8 +1200,7 @@ function markLongLines(highlight: HTMLElement, coder: boolean) {
   const padLeft = Number.parseFloat(style.paddingLeft) || 0;
   const padRight = Number.parseFloat(style.paddingRight) || 0;
   const padTop = Number.parseFloat(style.paddingTop) || 0;
-  const fontSize = Number.parseFloat(style.fontSize) || 13;
-  const lineHeight = Number.parseFloat(style.lineHeight) || fontSize * 1.45;
+  const lineHeight = linePitch(style);
   const inner = highlight.clientWidth - padLeft - padRight;
   const ctx = lineMeasure(style.font);
   const lines = readNative(area).split("\n");
@@ -1143,6 +1240,10 @@ function syncEditorScroll(area: HTMLTextAreaElement) {
   const bars = field.querySelector<HTMLElement>(":scope > .md-surface > .md-mark-bars");
   if (bars) {
     bars.style.transform = `translateY(${-area.scrollTop}px)`;
+  }
+  const caretLine = field.querySelector<HTMLElement>(":scope > .md-surface > .md-caret-layer > .md-caret-line");
+  if (caretLine) {
+    caretLine.style.transform = `translateY(${-area.scrollTop}px)`;
   }
   for (const gutter of field.querySelectorAll<HTMLElement>(":scope > .md-gutter, :scope > .md-folds")) {
     gutter.scrollTop = area.scrollTop;

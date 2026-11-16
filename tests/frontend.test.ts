@@ -20,6 +20,7 @@ import {
   expandFolds,
   foldView,
   foldsAfterEdit,
+  foldSyntaxFor,
   sourceToDisplay,
 } from "../src/editor/code-fold.ts";
 import { highlightMarkdown } from "../src/editor/md-highlight.ts";
@@ -683,25 +684,63 @@ test("braceFolds finds a json block and round-trips the hidden lines", () => {
   const source = '{\n  "b": {\n    "c": 1\n  }\n}';
   const ranges = braceFolds(source);
   assert.deepEqual(ranges, [
-    { start: 1, end: 3 },
     { start: 0, end: 4 },
+    { start: 1, end: 3 },
   ]);
   assert.deepEqual(braceFolds('{ "a": 1 }'), []);
   assert.deepEqual(braceFolds('{\n  "a": "{"\n}'), [{ start: 0, end: 2 }]);
   const folded = foldView(source, new Set([0]));
-  assert.equal(folded.display, "{\u200b");
-  assert.deepEqual(folded.holes, ['\n  "b": {\n    "c": 1\n  }\n}']);
+  assert.equal(folded.display, "{\u200b\n}");
+  assert.deepEqual(folded.holes, ['\n  "b": {\n    "c": 1\n  }']);
+  assert.deepEqual(folded.numbers, [1, 5]);
   assert.equal(expandFolds(folded.display, folded.holes), source);
-  const edited = `{\u200b`.replace("{", "{ ");
+  const edited = folded.display.replace("{", "{ ");
   assert.equal(expandFolds(edited, folded.holes).includes('"c": 1'), true);
   const moved = `x\n  "b": {\n    "c": 1\n  }\n}`;
   assert.equal(foldsAfterEdit(moved, folded.holes).size, 0);
   const withRest = '{\n  "a": 1\n}\nrest';
   const view = foldView(withRest, new Set([0]));
-  assert.equal(view.display, "{\u200b\nrest");
+  assert.equal(view.display, "{\u200b\n}\nrest");
   assert.equal(displayToSource(view.display, view.holes, view.display.length), withRest.length);
   assert.equal(sourceToDisplay(view.display, view.holes, 1), 1);
   assert.equal(sourceToDisplay(view.display, view.holes, 4), 1);
+});
+
+test("braceFolds detects IDE-style blocks around inline brackets and else branches", () => {
+  const source = [
+    "function f(a) {",
+    "  const x = { a: 1 };",
+    "  if (a) {",
+    "    go();",
+    "  } else {",
+    "    stop();",
+    "  }",
+    "  call(",
+    "    1,",
+    "  );",
+    "}",
+  ].join("\n");
+  assert.deepEqual(braceFolds(source), [
+    { start: 0, end: 10 },
+    { start: 2, end: 4 },
+    { start: 4, end: 6 },
+    { start: 7, end: 9 },
+  ]);
+  const view = foldView(source, new Set([2]));
+  assert.equal(view.display.split("\n")[3], "  } else {");
+  assert.deepEqual(view.markers.slice(0, 4), ["open", null, "shut", "open"]);
+  assert.equal(expandFolds(view.display, view.holes), source);
+  // a two-line pair has nothing to hide
+  assert.deepEqual(braceFolds("if (a) {\n}"), []);
+});
+
+test("braceFolds ignores brackets in comments and strings per language", () => {
+  const js = "const s = `\n{\n`;\nf({\n  a: 1, // }\n  /* ) */\n});";
+  assert.deepEqual(braceFolds(js, foldSyntaxFor("ts")), [{ start: 3, end: 6 }]);
+  const py = 'x = {\n  "a": 1,  # }\n}\n';
+  assert.deepEqual(braceFolds(py, foldSyntaxFor("python")), [{ start: 0, end: 2 }]);
+  const prose = "Don't glob src/*.ts {\n  item\n}";
+  assert.deepEqual(braceFolds(prose, foldSyntaxFor("", true)), [{ start: 0, end: 2 }]);
 });
 
 test("highlightMarkdown colors markers without changing the source text", () => {
