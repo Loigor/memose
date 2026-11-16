@@ -1,0 +1,13 @@
+# Check out text files with LF on every OS (Windows runners default to core.autocrlf=true,
+# which turns LF into CRLF and makes `prettier --check` fail with endOfLine: "lf").
+* text=auto eol=lf
+
+*.png binary
+*.ico binary
+*.icns binary
+*.jpg binary
+*.gif binary
+*.webp binary
+*.mp4 binary
+*.woff binary
+*.woff2 binary
