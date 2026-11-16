@@ -76,7 +76,7 @@ textarea,
 .stack-preview .md-code-view .md-hl {
   min-height: 22px;
   margin: 0;
-  padding: 6px 52px 6px 8px;
+  padding: 6px 52px 6px 5px;
   font: inherit;
   font-size: inherit;
   line-height: inherit;

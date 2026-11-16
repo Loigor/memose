@@ -500,7 +500,7 @@ html[data-theme="dark"][data-mdhl-scheme="mono"] {
 #blocks .md-field[data-coder] textarea,
 .stack-blocks .md-field[data-coder] .md-hl,
 .stack-blocks .md-field[data-coder] textarea {
-  padding: 6px 14px 6px 8px;
+  padding: 6px 14px 6px 5px;
   font: inherit;
   font-size: inherit;
   line-height: inherit;
