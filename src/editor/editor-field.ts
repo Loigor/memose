@@ -779,16 +779,16 @@ function gutterHit(area: HTMLTextAreaElement, event: MouseEvent): number | null 
   const index =
     rows.length > 0
       ? rows.findIndex((row) => {
-          const box = row.getBoundingClientRect();
-          return event.clientY >= box.top && event.clientY < box.bottom;
-        })
+        const box = row.getBoundingClientRect();
+        return event.clientY >= box.top && event.clientY < box.bottom;
+      })
       : Math.floor(
-          (event.clientY -
-            gutter.getBoundingClientRect().top +
-            gutter.scrollTop -
-            (Number.parseFloat(getComputedStyle(gutter).paddingTop) || 0)) /
-            linePitch(getComputedStyle(area)),
-        );
+        (event.clientY -
+          gutter.getBoundingClientRect().top +
+          gutter.scrollTop -
+          (Number.parseFloat(getComputedStyle(gutter).paddingTop) || 0)) /
+        linePitch(getComputedStyle(area)),
+      );
   const line = sources[index];
   return Number.isInteger(line) ? line : null;
 }
@@ -994,8 +994,8 @@ function paintMarkBars(area: HTMLTextAreaElement, field: HTMLElement) {
   const folds = field.querySelector<HTMLElement>(":scope > .md-folds");
   const extend = codeGutter
     ? codeGutter.offsetWidth +
-      (Number.parseFloat(getComputedStyle(codeGutter).marginLeft) || 0) +
-      (folds?.offsetWidth ?? 0)
+    (Number.parseFloat(getComputedStyle(codeGutter).marginLeft) || 0) +
+    (folds?.offsetWidth ?? 0)
     : 0;
   const heights = rowHeights(area, sources.length, lineHeight);
   const key = `${sources.map((line) => (marks.lines.has(line) ? "1" : "0")).join("")}|${extend}|${heights.join(",")}`;
