@@ -749,6 +749,12 @@ test("detectLanguage guesses untagged code blocks", () => {
   assert.equal(detectLanguage("name: app\nport: 80"), "yaml");
   assert.equal(detectLanguage(".a {\n  color: red;\n}"), "css");
   assert.equal(detectLanguage("just some words"), "generic");
+  // A whole coder memo: notes stay markdown, only strong signals pick a language.
+  assert.equal(detectLanguage("Note: call Bob\nTodo: buy milk", { prose: true }), "markdown");
+  assert.equal(detectLanguage("# Plan\n- ship it\n- `const x = 1`", { prose: true }), "markdown");
+  assert.equal(detectLanguage("echo hi", { prose: true }), "markdown");
+  assert.equal(detectLanguage("def go(x):\n    return x", { prose: true }), "python");
+  assert.equal(detectLanguage('{"a": 1}', { prose: true }), "json");
 });
 
 test("braceFolds finds a json block and round-trips the hidden lines", () => {

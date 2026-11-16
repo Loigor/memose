@@ -1,4 +1,4 @@
-import { highlightCode, resolvedLanguage } from "./code-highlight.ts";
+import { detectLanguage, highlightCode, resolvedLanguage } from "./code-highlight.ts";
 import {
   displayToSource,
   expandFolds,
@@ -129,8 +129,11 @@ export function paintEditorField(area: HTMLTextAreaElement) {
   field.toggleAttribute("data-wrap", coder && wrap);
   area.wrap = "soft";
   const shown = readNative(area);
+  const memoLang = memoLanguage(area);
   if (area.dataset.kind === "code") {
     highlight.innerHTML = showFoldMarks(highlightCode(shown, area.dataset.lang ?? ""));
+  } else if (memoLang) {
+    highlight.innerHTML = showFoldMarks(highlightCode(shown, memoLang));
   } else if (prefs.markdownHighlight || coder) {
     highlight.innerHTML = showFoldMarks(highlightMarkdown(shown, { tags: !coder }));
   } else {
@@ -332,9 +335,49 @@ type FoldState = {
   syntax: FoldSyntax;
 };
 
+const detectedMemo = new Map<string, string>();
+
+function detectMemo(text: string): string {
+  const known = detectedMemo.get(text);
+  if (known) {
+    return known;
+  }
+  const lang = detectLanguage(text, { prose: true });
+  if (detectedMemo.size > 32) {
+    detectedMemo.clear();
+  }
+  detectedMemo.set(text, lang);
+  return lang;
+}
+
+/**
+ * Syntax language for a text area in a coder memo: the memo's chosen language, or the detected
+ * one. Null means plain markdown highlighting. Fenced code blocks keep their own tag.
+ */
+function memoLanguage(area: HTMLTextAreaElement): string | null {
+  if (area.dataset.kind === "code") {
+    return null;
+  }
+  const note = area.closest<HTMLElement>("#card, .stack-note");
+  if (!note?.hasAttribute("data-coder")) {
+    return null;
+  }
+  const lang = note.dataset.codeLang || detectMemo(sourceText(area));
+  return lang === "markdown" ? null : lang;
+}
+
+/** What auto-detect picks for a memo's text (code blocks excluded), for the language menu. */
+export function detectedMemoLanguage(scope: ParentNode): string {
+  const text = [...scope.querySelectorAll<HTMLTextAreaElement>("textarea:not([data-kind='code'])")]
+    .map((area) => sourceText(area))
+    .join("\n");
+  return detectMemo(text);
+}
+
 function foldSyntax(area: HTMLTextAreaElement): FoldSyntax {
   if (area.dataset.kind !== "code") {
-    return foldSyntaxFor("", true);
+    const lang = memoLanguage(area);
+    return lang && lang !== "text" ? foldSyntaxFor(lang) : foldSyntaxFor("", true);
   }
   // Untagged blocks fold with the same language the highlighter detected.
   return foldSyntaxFor(resolvedLanguage(sourceText(area), area.dataset.lang ?? ""));

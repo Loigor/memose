@@ -399,8 +399,11 @@ pub fn save_editor_view(
     line_wrap: bool,
     folds: Vec<Vec<u32>>,
     marks: Vec<Vec<u32>>,
+    code_lang: Option<String>,
 ) -> Result<(), AppError> {
-    state.db.save_editor_view(&id, line_wrap, &folds, &marks)
+    state
+        .db
+        .save_editor_view(&id, line_wrap, &folds, &marks, code_lang.as_deref())
 }
 
 #[tauri::command]

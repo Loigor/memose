@@ -579,6 +579,43 @@ test("line wrap, a fold, and a line mark reopen with the memo", async ({ page })
     .toMatchObject({ lineWrap: false, folds: [[1]], marks: [[0]] });
 });
 
+test("the coder editor detects, picks, and stores the memo language", async ({ page }) => {
+  const notes = sampleNotes(3);
+  notes[0] = { ...notes[0], content: "def go(x):\n    return x + 1", coder: true };
+  notes[1] = { ...notes[1], content: "# Plan\nNote: call Bob\n- item", coder: true, codeLang: null };
+  notes[2] = { ...notes[2], content: "SELECT 1", coder: true, codeLang: "python" };
+  await openComposer(page, { notes });
+  await page.locator("#recent .title", { hasText: "def go" }).click();
+  await expect(page.locator("#blocks .tok-kw", { hasText: "def" })).toBeVisible();
+  await expect(page.locator("#card")).not.toHaveAttribute("data-code-lang");
+  const format = page.locator("#format-toggle");
+  await revealEditorButton(page, format);
+  await format.click();
+  const language = page.locator('#format-pop button[data-format="lang"]');
+  await expect(language).toContainText("Auto · Python");
+  await language.click();
+  await expect(page.locator("#format-pop .format-langs")).toBeVisible();
+  await page.locator("#format-pop [data-lang-choice='go']").click();
+  await expect(page.locator("#format-pop")).toBeHidden();
+  await expect(page.locator("#card")).toHaveAttribute("data-code-lang", "go");
+  await expect(page.locator("#blocks .tok-kw", { hasText: "return" })).toBeVisible();
+  await expect(page.locator("#blocks .tok-kw", { hasText: "def" })).toHaveCount(0);
+  await expect.poll(async () => (await getNotes(page)).find((note) => note.id === "note-0000")?.codeLang).toBe("go");
+  await format.click();
+  await language.click();
+  await page.locator("#format-pop [data-lang-choice='']").click();
+  await expect(page.locator("#card")).not.toHaveAttribute("data-code-lang");
+  await expect.poll(async () => (await getNotes(page)).find((note) => note.id === "note-0000")?.codeLang).toBe(null);
+  // Plain notes in a coder memo stay markdown under auto-detect.
+  await page.locator("#recent .title", { hasText: "Plan" }).click();
+  await expect(page.locator("#blocks .md-heading")).toBeVisible();
+  await expect(page.locator("#blocks .tok-key")).toHaveCount(0);
+  // A stored choice wins over detection.
+  await page.locator("#recent .title", { hasText: "SELECT 1" }).click();
+  await expect(page.locator("#card")).toHaveAttribute("data-code-lang", "python");
+  await expect(page.locator("#blocks .tok-kw")).toHaveCount(0);
+});
+
 test("a brace block in the coder editor folds without dropping the text", async ({ page }) => {
   await openComposer(page);
   const coder = page.locator("#coder-toggle");

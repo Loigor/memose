@@ -12,6 +12,7 @@ import {
 import {
   codeSurface,
   denseLines,
+  detectedMemoLanguage,
   readFolds,
   readLineMarks,
   refreshEditorFields,
@@ -55,6 +56,7 @@ import { inTauri } from "../../platform";
 import type { AppContext } from "../context";
 import type { EditorState } from "../state";
 import type { EditorView, LookEditor } from "./look-controller";
+import { paintLanguageMenu, pickedLanguage, toggleLanguageList } from "../../look/language-menu";
 
 const maxMediaBytes = 32 * 1024 * 1024;
 
@@ -915,6 +917,7 @@ export function createEditorController(
   function closeFormatMenu() {
     formatPop.hidden = true;
     formatToggle.setAttribute("aria-expanded", "false");
+    toggleLanguageList(formatPop, false);
   }
 
   function closeMenu() {
@@ -1009,9 +1012,10 @@ export function createEditorController(
     const lineWrap = state.coderWrap;
     const folds = denseLines(state.folds);
     const marks = denseLines(state.marks);
+    const codeLang = state.codeLang;
     state.viewUnsaved = false;
     state.viewWrite = state.viewWrite
-      .then(() => context.backend.saveEditorView(id, lineWrap, folds, marks))
+      .then(() => context.backend.saveEditorView(id, lineWrap, folds, marks, codeLang))
       .then(() => undefined)
       .catch((error: unknown) => {
         console.error(error);
@@ -1021,6 +1025,8 @@ export function createEditorController(
 
   function adoptView(view: EditorView, restore: boolean) {
     state.coderWrap = view.lineWrap === true;
+    state.codeLang = view.codeLang || null;
+    paintCodeLang();
     state.folds = denseLines(view.folds);
     state.marks = denseLines(view.marks);
     if (restore) {
@@ -1029,7 +1035,20 @@ export function createEditorController(
     }
   }
 
+  function paintCodeLang() {
+    if (state.codeLang) {
+      card.dataset.codeLang = state.codeLang;
+    } else {
+      delete card.dataset.codeLang;
+    }
+  }
+
+  function paintLanguageChoice() {
+    paintLanguageMenu(formatPop, state.codeLang, detectedMemoLanguage(blocksEl));
+  }
+
   function paintCoder(on: boolean) {
+    paintCodeLang();
     card.toggleAttribute("data-coder", on);
     card.toggleAttribute("data-wrap", on && state.coderWrap);
     coderToggle.setAttribute("aria-pressed", String(on));
@@ -1044,6 +1063,8 @@ export function createEditorController(
 
   function resetView() {
     state.coderWrap = false;
+    state.codeLang = null;
+    paintCodeLang();
     state.folds = [];
     state.marks = [];
     state.viewUnsaved = false;
@@ -1175,13 +1196,30 @@ export function createEditorController(
   });
   formatToggle.addEventListener("click", () => {
     const open = formatPop.hidden;
+    if (open) {
+      paintLanguageChoice();
+    } else {
+      toggleLanguageList(formatPop, false);
+    }
     formatPop.hidden = !open;
     formatToggle.setAttribute("aria-expanded", String(open));
   });
   formatPop.addEventListener("click", (event) => {
+    const picked = pickedLanguage(event.target);
+    if (picked !== undefined) {
+      state.codeLang = picked;
+      paintCoder(look.usesCoder());
+      scheduleView();
+      closeFormatMenu();
+      return;
+    }
     const button = event.target instanceof Element ? event.target.closest("button") : null;
     const action = button?.dataset.format;
     if (!action) {
+      return;
+    }
+    if (action === "lang") {
+      toggleLanguageList(formatPop);
       return;
     }
     if (action === "wrap") {

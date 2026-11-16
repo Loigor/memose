@@ -900,12 +900,43 @@ const LANGS: Record<string, Lang> = {
 /* ------------------------------------------------------------------------------------------ */
 /* Detection for untagged blocks                                                               */
 
-/** Best guess at the language of an untagged code block; "generic" when nothing stands out. */
-export function detectLanguage(text: string): string {
+const MARKDOWN_LINE = /^\s{0,3}(?:#{1,6}\s|[-*+]\s+\S|\d+[.)]\s|>\s?)|\*\*[^*\n]+\*\*|\[[^\]\n]+\]\([^)\n]*\)/;
+const CODE_LINE =
+  /[;{}]\s*$|^\s*[)\]}],?;?\s*$|^\s*(?:import|export|const|let|var|def|class|fn|func|function|return|if|for|while|#include|package|public|private|SELECT|INSERT|UPDATE|CREATE)\b/;
+
+/** True when a memo reads as markdown notes rather than source code. */
+function readsAsMarkdown(sample: string): boolean {
+  const lines = sample
+    .replace(/^```[\s\S]*?^```/gm, "")
+    .replace(/`[^`\n]*`/g, "")
+    .split("\n")
+    .filter((line) => line.trim());
+  let markdown = 0;
+  let code = 0;
+  for (const line of lines) {
+    if (MARKDOWN_LINE.test(line)) {
+      markdown += 1;
+    } else if (CODE_LINE.test(line)) {
+      code += 1;
+    }
+  }
+  return markdown > code;
+}
+
+/**
+ * Best guess at the language of untagged code; "generic" when nothing stands out.
+ * With `prose`, the text is a whole coder memo: only strong signals count, and the answer is
+ * "markdown" when it reads like notes (so "Note: call Bob" never turns into YAML).
+ */
+export function detectLanguage(text: string, options?: { prose?: boolean }): string {
+  const prose = options?.prose === true;
   const sample = text.length > 4000 ? text.slice(0, 4000) : text;
   const trimmed = sample.trim();
   if (!trimmed) {
-    return "text";
+    return prose ? "markdown" : "text";
+  }
+  if (prose && readsAsMarkdown(sample)) {
+    return "markdown";
   }
   const shebang = /^#!.*\b(bash|sh|zsh|python3?|node|ruby|php)\b/.exec(trimmed);
   if (shebang) {
@@ -970,6 +1001,9 @@ export function detectLanguage(text: string): string {
   if (/^\s*[.#]?[\w-]+(?:[\s,>+~:.#[\]\w-]*)\{\s*$/m.test(sample) && /^\s*[\w-]+\s*:\s*[^;]+;\s*$/m.test(sample)) {
     return "css";
   }
+  if (prose) {
+    return "markdown";
+  }
   if (
     /^\s*(?:echo|cd|export|sudo|npm|git|curl|brew|apt(?:-get)?|docker|ls|mkdir)\s/m.test(sample) ||
     /^\$ /m.test(sample)
@@ -983,6 +1017,46 @@ export function detectLanguage(text: string): string {
     return "yaml";
   }
   return "generic";
+}
+
+/* ------------------------------------------------------------------------------------------ */
+/* Choices offered in the coder editor's language menu                                         */
+
+export const LANGUAGE_CHOICES: ReadonlyArray<readonly [id: string, label: string]> = [
+  ["markdown", "Markdown"],
+  ["ts", "TypeScript"],
+  ["js", "JavaScript"],
+  ["json", "JSON"],
+  ["python", "Python"],
+  ["go", "Go"],
+  ["rust", "Rust"],
+  ["java", "Java"],
+  ["kotlin", "Kotlin"],
+  ["swift", "Swift"],
+  ["csharp", "C#"],
+  ["c", "C / C++"],
+  ["php", "PHP"],
+  ["ruby", "Ruby"],
+  ["scala", "Scala"],
+  ["dart", "Dart"],
+  ["lua", "Lua"],
+  ["bash", "Shell"],
+  ["powershell", "PowerShell"],
+  ["sql", "SQL"],
+  ["html", "HTML / XML"],
+  ["css", "CSS"],
+  ["scss", "SCSS / Less"],
+  ["yaml", "YAML"],
+  ["toml", "TOML / INI"],
+  ["dockerfile", "Dockerfile"],
+  ["graphql", "GraphQL"],
+  ["diff", "Diff"],
+  ["text", "Plain text"],
+];
+
+export function languageLabel(id: string): string {
+  const name = languageName(id);
+  return LANGUAGE_CHOICES.find(([choice]) => choice === name)?.[1] ?? (name || "Markdown");
 }
 
 /* ------------------------------------------------------------------------------------------ */

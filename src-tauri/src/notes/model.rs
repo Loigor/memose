@@ -47,6 +47,8 @@ pub struct Note {
     pub folds: Vec<Vec<u32>>,
     /// Marked source lines per block. Not part of the markdown.
     pub marks: Vec<Vec<u32>>,
+    /// Syntax language of the coder editor, such as `ts`. Empty means auto-detect.
+    pub code_lang: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]

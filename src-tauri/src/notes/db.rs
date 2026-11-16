@@ -426,8 +426,9 @@ impl Db {
         line_wrap: bool,
         folds: &[Vec<u32>],
         marks: &[Vec<u32>],
+        code_lang: Option<&str>,
     ) -> Result<(), AppError> {
-        let stored = encode_editor_view(line_wrap, folds, marks);
+        let stored = encode_editor_view(line_wrap, folds, marks, code_lang);
         self.with(|conn| {
             conn.execute(
                 "UPDATE notes SET editor_view = ?1 WHERE id = ?2",
@@ -809,19 +810,18 @@ fn map_note(row: &rusqlite::Row<'_>) -> rusqlite::Result<Note> {
         stack_host: row.get(19)?,
         theme: theme_column(row.get(20)?),
         coder: row.get::<_, Option<i64>>(21)?.map(|value| value != 0),
-        line_wrap: editor_view.0,
-        folds: editor_view.1,
-        marks: editor_view.2,
+        line_wrap: editor_view.line_wrap,
+        folds: editor_view.folds,
+        marks: editor_view.marks,
+        code_lang: editor_view.code_lang,
     })
 }
 
-type EditorViewTuple = (bool, Vec<Vec<u32>>, Vec<Vec<u32>>);
-
-fn map_editor_view(row: &rusqlite::Row<'_>) -> rusqlite::Result<EditorViewTuple> {
+fn map_editor_view(row: &rusqlite::Row<'_>) -> rusqlite::Result<EditorView> {
     Ok(parse_editor_view(row.get(22)?))
 }
 
-#[derive(serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Default, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct EditorView {
     #[serde(default)]
@@ -830,20 +830,34 @@ struct EditorView {
     folds: Vec<Vec<u32>>,
     #[serde(default)]
     marks: Vec<Vec<u32>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    code_lang: Option<String>,
 }
 
-fn parse_editor_view(raw: Option<String>) -> EditorViewTuple {
+fn parse_editor_view(raw: Option<String>) -> EditorView {
     let Some(raw) = raw.filter(|value| value.len() <= 32_000) else {
-        return (false, Vec::new(), Vec::new());
+        return EditorView::default();
     };
     let Ok(view) = serde_json::from_str::<EditorView>(&raw) else {
-        return (false, Vec::new(), Vec::new());
+        return EditorView::default();
     };
-    (
-        view.line_wrap,
-        bound_lines(view.folds),
-        bound_lines(view.marks),
-    )
+    EditorView {
+        line_wrap: view.line_wrap,
+        folds: bound_lines(view.folds),
+        marks: bound_lines(view.marks),
+        code_lang: code_lang(view.code_lang.as_deref()),
+    }
+}
+
+/// A short language id such as `ts`, `c++` or `c#`; anything else means auto-detect.
+fn code_lang(value: Option<&str>) -> Option<String> {
+    let lang = value?.trim().to_ascii_lowercase();
+    let valid = !lang.is_empty()
+        && lang.len() <= 24
+        && lang
+            .chars()
+            .all(|ch| ch.is_ascii_alphanumeric() || "+#.-_".contains(ch));
+    valid.then_some(lang)
 }
 
 fn bound_lines(rows: Vec<Vec<u32>>) -> Vec<Vec<u32>> {
@@ -862,11 +876,17 @@ fn bound_lines(rows: Vec<Vec<u32>>) -> Vec<Vec<u32>> {
     out
 }
 
-fn encode_editor_view(line_wrap: bool, folds: &[Vec<u32>], marks: &[Vec<u32>]) -> String {
+fn encode_editor_view(
+    line_wrap: bool,
+    folds: &[Vec<u32>],
+    marks: &[Vec<u32>],
+    lang: Option<&str>,
+) -> String {
     serde_json::to_string(&EditorView {
         line_wrap,
         folds: bound_lines(folds.to_vec()),
         marks: bound_lines(marks.to_vec()),
+        code_lang: code_lang(lang),
     })
     .unwrap_or_else(|_| "{}".into())
 }
@@ -1045,18 +1065,27 @@ mod tests {
         assert!(!draft.line_wrap);
         assert!(draft.folds.is_empty());
         assert!(draft.marks.is_empty());
-        db.save_editor_view(&draft.id, true, &[vec![0]], &[vec![1, 1, 3]])
+        assert_eq!(draft.code_lang, None);
+        db.save_editor_view(&draft.id, true, &[vec![0]], &[vec![1, 1, 3]], Some(" TS "))
             .unwrap();
         db.save_edit(&draft.id, "{\n  \"a\": 1\n}").unwrap();
         let note = db.get(&draft.id).unwrap().unwrap();
         assert!(note.line_wrap);
         assert_eq!(note.folds, vec![vec![0]]);
         assert_eq!(note.marks, vec![vec![1, 3]]);
+        assert_eq!(note.code_lang.as_deref(), Some("ts"));
         assert_eq!(note.content, "{\n  \"a\": 1\n}");
-        let (wrap, folds, marks) = parse_editor_view(Some("nope".into()));
-        assert!(!wrap);
-        assert!(folds.is_empty());
-        assert!(marks.is_empty());
+        let broken = parse_editor_view(Some("nope".into()));
+        assert!(!broken.line_wrap);
+        assert!(broken.folds.is_empty());
+        assert!(broken.marks.is_empty());
+        assert_eq!(broken.code_lang, None);
+        let old = parse_editor_view(Some(r#"{"lineWrap":true,"folds":[],"marks":[]}"#.into()));
+        assert!(old.line_wrap);
+        assert_eq!(old.code_lang, None);
+        db.save_editor_view(&draft.id, false, &[], &[], Some("<script>"))
+            .unwrap();
+        assert_eq!(db.get(&draft.id).unwrap().unwrap().code_lang, None);
     }
 
     #[test]

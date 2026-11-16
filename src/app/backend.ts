@@ -31,7 +31,13 @@ export interface LookBackend {
 export interface EditorBackend {
   openMediaPreview(name: string): Promise<void>;
   saveMedia(bytes: Uint8Array, filename: string | null, mime: string | null): Promise<string>;
-  saveEditorView(id: string, lineWrap: boolean, folds: number[][], marks: number[][]): Promise<void>;
+  saveEditorView(
+    id: string,
+    lineWrap: boolean,
+    folds: number[][],
+    marks: number[][],
+    codeLang: string | null,
+  ): Promise<void>;
   getEditorPrefs(): Promise<EditorPrefs>;
 }
 
@@ -100,8 +106,8 @@ export function createAppBackend(): AppBackend {
     saveMedia(bytes, filename, mime) {
       return invoke<string>("save_media", { bytes, filename, mime });
     },
-    saveEditorView(id, lineWrap, folds, marks) {
-      return invoke("save_editor_view", { id, lineWrap, folds, marks });
+    saveEditorView(id, lineWrap, folds, marks, codeLang) {
+      return invoke("save_editor_view", { id, lineWrap, folds, marks, codeLang });
     },
     getEditorPrefs() {
       return invoke<EditorPrefs>("get_settings");
