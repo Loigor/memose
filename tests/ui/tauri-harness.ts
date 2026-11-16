@@ -77,6 +77,17 @@ export type HarnessSeed = {
   previewName?: string | null;
   pinTabs?: PinTabsSeed;
   hueSwatches?: number[];
+  ai?: AiSeed;
+};
+
+export type AiSeed = {
+  llmEnabled?: boolean;
+  llmBaseUrl?: string;
+  llmModel?: string;
+  /** Text the mocked model returns for every prompt. */
+  llmReply?: string;
+  models?: string[];
+  memoContentLimit?: number;
 };
 
 export type Invocation = { cmd: string; args: unknown };
@@ -161,7 +172,21 @@ function installBrowserHarness(seed: BrowserSeed) {
     notes.push(makeNote({ ...seed.draft, syncState: "draft" }));
   }
 
+  const ai = {
+    llmEnabled: Boolean(seed.ai?.llmEnabled),
+    llmBaseUrl: seed.ai?.llmBaseUrl ?? "",
+    llmModel: seed.ai?.llmModel ?? "",
+    hasLlmKey: false,
+    privateOkHost: "",
+    presets: [
+      { name: "Summarize", instruction: "Summarize the text." },
+      { name: "Clean up wording", instruction: "Fix spelling." },
+    ] as { name: string; instruction: string }[],
+  };
+
   const settings = {
+    memoContentLimit: seed.ai?.memoContentLimit ?? 8192,
+    uploadLimit: 0,
     baseUrl: seed.settings?.baseUrl ?? "",
     hasToken: Boolean(seed.settings?.hasToken),
     launchAtLogin: Boolean(seed.settings?.launchAtLogin),
@@ -431,6 +456,48 @@ function installBrowserHarness(seed: BrowserSeed) {
           showInSwitcher: Boolean(state.settings.showInSwitcher) || !alwaysOnTop,
         };
       }
+      case "get_ai_settings": {
+        const base = ai.llmBaseUrl;
+        const host = base.replace(/^[a-z]+:\/\//, "").split(/[/:]/)[0] ?? "";
+        return {
+          llmEnabled: ai.llmEnabled,
+          llmBaseUrl: base,
+          hasLlmKey: ai.hasLlmKey,
+          llmModel: ai.llmModel,
+          llmHost: host,
+          llmLocal: host === "localhost" || host.startsWith("127."),
+          privateOkHost: ai.privateOkHost,
+          presets: ai.presets,
+        };
+      }
+      case "save_ai_settings": {
+        if (typeof a.llmEnabled === "boolean") {
+          ai.llmEnabled = a.llmEnabled;
+        }
+        if (typeof a.llmBaseUrl === "string") {
+          ai.llmBaseUrl = a.llmBaseUrl;
+        }
+        if (typeof a.llmKey === "string") {
+          ai.hasLlmKey = a.llmKey !== "";
+        }
+        if (typeof a.llmModel === "string") {
+          ai.llmModel = a.llmModel;
+        }
+        if (Array.isArray(a.presets)) {
+          ai.presets = a.presets;
+        }
+        if (typeof a.privateOkHost === "string") {
+          ai.privateOkHost = a.privateOkHost;
+        }
+        emit("ai-settings-changed");
+        return null;
+      }
+      case "llm_models":
+        return { models: seed.ai?.models ?? [], ollama: true };
+      case "llm_edit":
+        return seed.ai?.llmReply ?? String(a.text ?? "");
+      case "llm_cancel":
+        return null;
       case "save_settings": {
         if (typeof a.baseUrl === "string") {
           state.settings.baseUrl = a.baseUrl;

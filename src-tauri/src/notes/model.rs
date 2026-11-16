@@ -8,8 +8,6 @@ pub const LOCAL: &str = "local";
 pub const REMOTE: &str = "remote";
 pub const CONFLICT: &str = "conflict";
 
-pub const MEMOS_CONTENT_LIMIT: usize = 8192;
-
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Note {

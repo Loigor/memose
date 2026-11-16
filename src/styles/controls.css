@@ -335,3 +335,152 @@ button:hover {
   flex: 1 0 auto;
   min-height: 64px;
 }
+
+/* Model edit review: takes the place of the editor until every change is decided. */
+.ai-reviewing > :not(.ai-review) {
+  display: none !important;
+}
+
+.ai-review {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  color: var(--ink);
+  font-size: 12px;
+}
+
+.ai-status {
+  margin: 8px 0 0;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+}
+
+.ai-waiting {
+  opacity: 0.7;
+}
+
+.ai-warning {
+  margin: 0;
+  padding: 6px 8px;
+  border-radius: 8px;
+  background: var(--button);
+  line-height: 1.35;
+}
+
+.ai-warning[hidden] {
+  display: none;
+}
+
+.ai-actions {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.ai-summary {
+  flex: 1;
+  min-width: 0;
+  opacity: 0.7;
+}
+
+.ai-review button {
+  padding: 4px 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--button);
+  color: var(--ink);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.ai-review button:hover {
+  background: var(--button-hover);
+}
+
+.ai-review button.ai-primary {
+  border-color: color-mix(in srgb, var(--ink) 45%, transparent);
+  font-weight: 600;
+}
+
+.ai-diff {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  font-size: 13px;
+  line-height: 1.45;
+  user-select: text;
+}
+
+.ai-line {
+  padding: 0 6px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.ai-gap {
+  margin: 2px 0;
+  opacity: 0.5;
+  font-size: 11px;
+}
+
+.ai-hunk {
+  margin: 4px 0;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.ai-removed {
+  background: color-mix(in srgb, #d33 18%, transparent);
+  text-decoration: line-through;
+  text-decoration-color: color-mix(in srgb, var(--ink) 35%, transparent);
+}
+
+.ai-added {
+  background: color-mix(in srgb, #2a2 18%, transparent);
+}
+
+.ai-removed::before,
+.ai-added::before {
+  display: inline-block;
+  width: 1.2em;
+  opacity: 0.6;
+  text-decoration: none;
+}
+
+.ai-removed::before {
+  content: "−";
+}
+
+.ai-added::before {
+  content: "+";
+}
+
+.ai-hunk-actions {
+  display: flex;
+  gap: 6px;
+  padding: 4px 6px;
+  border-top: 1px solid var(--line);
+}
+
+.ai-hunk[data-decided] .ai-hunk-actions {
+  display: none;
+}
+
+.ai-hunk[data-decided="accepted"] .ai-removed,
+.ai-hunk[data-decided="rejected"] .ai-added {
+  display: none;
+}
+
+.ai-hunk[data-decided="rejected"] .ai-removed {
+  background: transparent;
+  text-decoration: none;
+}
+
+.ai-hunk[data-decided="rejected"] .ai-removed::before {
+  content: "";
+}

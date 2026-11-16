@@ -544,6 +544,7 @@ impl Db {
             self.clear_meta(BASE_URL)?;
             self.clear_meta(API_FLAVOR)?;
             self.clear_meta(SPACE_CATALOG)?;
+            self.forget_server_limits()?;
             return Ok(());
         }
         if !trimmed.starts_with("http://") && !trimmed.starts_with("https://") {
@@ -556,8 +557,16 @@ impl Db {
         if previous.as_deref() != Some(trimmed.as_str()) {
             self.clear_meta(API_FLAVOR)?;
             self.clear_meta(SPACE_CATALOG)?;
+            self.forget_server_limits()?;
         }
         Ok(())
+    }
+
+    /// Limits belong to one server and one user, so a new URL or token reads them again.
+    pub fn forget_server_limits(&self) -> Result<(), AppError> {
+        self.clear_meta(MEMO_CONTENT_BYTES)?;
+        self.clear_meta(UPLOAD_BYTES)?;
+        self.clear_meta(LIMITS_CHECKED_AT)
     }
 
     pub fn access_token(&self) -> Result<Option<String>, AppError> {
@@ -571,10 +580,14 @@ impl Db {
         if trimmed.is_empty() {
             return self.clear_access_token();
         }
+        if self.access_token()?.as_deref() != Some(trimmed) {
+            self.forget_server_limits()?;
+        }
         self.set_meta(ACCESS_TOKEN, trimmed)
     }
 
     pub fn clear_access_token(&self) -> Result<(), AppError> {
+        self.forget_server_limits()?;
         self.clear_meta(ACCESS_TOKEN)
     }
 }
@@ -608,6 +621,11 @@ pub fn canonical_visibility(value: &str) -> String {
 }
 
 pub const API_FLAVOR: &str = "api_flavor";
+/// Largest memo body the server accepts, in bytes. Zero is unlimited.
+pub const MEMO_CONTENT_BYTES: &str = "memo_content_bytes";
+/// Largest single upload the server accepts, in bytes. Zero is unlimited or unknown.
+pub const UPLOAD_BYTES: &str = "upload_bytes";
+pub const LIMITS_CHECKED_AT: &str = "limits_checked_at";
 pub const THEME: &str = "theme";
 pub const ACCESS_TOKEN: &str = "access_token";
 pub const KEYCHAIN_IMPORTED: &str = "keychain_imported";

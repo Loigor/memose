@@ -1,6 +1,7 @@
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 
+import { mountLlmMenu } from "./ai/llm-edit";
 import { createAppBackend } from "./app/backend";
 import { createAudienceController } from "./app/controllers/audience-controller";
 import { createEditorController } from "./app/controllers/editor-controller";
@@ -84,6 +85,20 @@ const editorController = createEditorController(
     applyEditorChrome: () => stack.applyEditorChrome(),
   },
 );
+
+const aiAnchor = document.querySelector<HTMLElement>("#ai-anchor");
+if (aiAnchor && !isPreviewWindow()) {
+  mountLlmMenu(
+    aiAnchor,
+    {
+      pane: appContext.dom.notePane,
+      text: () => editorController.content(),
+      replace: (next) => editorController.replaceContent(next),
+      visibility: () => appState.audience.visibility || null,
+    },
+    () => editorController.closeFormatMenu(),
+  );
+}
 
 const audienceController = createAudienceController(
   appContext,

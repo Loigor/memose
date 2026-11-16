@@ -67,6 +67,17 @@
           >
             Sync
           </button>
+          <button
+            id="tab-models"
+            class="settings-tab"
+            type="button"
+            role="tab"
+            aria-selected="false"
+            aria-controls="panel-models"
+            data-tab="models"
+          >
+            Models
+          </button>
         </nav>
       </header>
 
@@ -299,6 +310,66 @@
               <button id="save-settings" class="primary" type="button">Save</button>
               <button id="test-connection" type="button">Test connection</button>
               <button id="clear-memos" class="danger" type="button">Disconnect</button>
+            </div>
+          </div>
+        </section>
+
+        <section
+          id="panel-models"
+          class="settings-panel"
+          role="tabpanel"
+          aria-labelledby="tab-models"
+          data-panel="models"
+          hidden
+        >
+          <div class="settings-card">
+            <div class="card-header">
+              <h2>Model edits</h2>
+              <p class="hint">
+                Ask a chat model to summarize or rewrite a memo. You review every change before it is applied.
+              </p>
+            </div>
+            <label class="toggle-row" for="llm-enabled">
+              <span class="toggle-copy">
+                <span class="toggle-title">Enable model edits</span>
+                <span class="hint">Shows the AI button on memos. Nothing is sent until you run a prompt.</span>
+              </span>
+              <input id="llm-enabled" type="checkbox" />
+            </label>
+            <label>
+              Server URL
+              <input id="llm-base-url" type="url" placeholder="http://localhost:11434/v1" autocomplete="off" />
+            </label>
+            <p class="hint">
+              Any OpenAI-compatible server. Include the version part of the address, such as
+              <code>http://localhost:11434/v1</code> for Ollama or <code>https://api.openai.com/v1</code>.
+            </p>
+            <p id="llm-where" class="hint"></p>
+            <label>
+              API key
+              <input id="llm-key" type="password" placeholder="Leave blank to keep the saved key" autocomplete="off" />
+            </label>
+            <p id="llm-key-hint" class="hint"></p>
+            <label>
+              Model
+              <input id="llm-model" type="text" list="llm-model-list" placeholder="qwen2.5:7b" autocomplete="off" />
+            </label>
+            <datalist id="llm-model-list"></datalist>
+            <p id="llm-model-hint" class="hint"></p>
+            <div class="actions">
+              <button id="save-ai" class="primary" type="button">Save</button>
+              <button id="llm-refresh" type="button">Test and list models</button>
+            </div>
+          </div>
+          <div class="settings-card">
+            <div class="card-header">
+              <h2>Prompts</h2>
+              <p class="hint">Shown in the AI menu of a memo. The instruction is sent with the memo text.</p>
+            </div>
+            <div id="llm-presets" class="preset-list"></div>
+            <div class="actions">
+              <button id="llm-preset-add" type="button">Add prompt</button>
+              <button id="llm-preset-reset" type="button">Restore defaults</button>
             </div>
           </div>
         </section>

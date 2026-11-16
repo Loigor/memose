@@ -5,6 +5,7 @@ use tauri::{AppHandle, Emitter, State};
 use tauri_plugin_autostart::ManagerExt;
 
 use crate::error::AppError;
+use crate::llm;
 use crate::notes::{self, request_sync, Note, PinTabHit, PinTabs, SpaceView};
 use crate::shortcuts::{self, ShortcutBinds};
 use crate::state::AppState;
@@ -31,6 +32,10 @@ pub(crate) struct SettingsView {
     code_font_size: u8,
     show_in_switcher: bool,
     pinned_always_on_top: bool,
+    /// Largest memo body the server accepts, in UTF-8 bytes. Zero is unlimited.
+    memo_content_limit: u64,
+    /// Largest single upload the server accepts, in bytes. Zero is unlimited or unknown.
+    upload_limit: u64,
 }
 
 #[tauri::command]
@@ -149,7 +154,10 @@ pub fn list_recent(state: State<AppState>, limit: Option<u32>) -> Result<Vec<Not
 
 #[tauri::command]
 pub fn get_settings(app: AppHandle, state: State<AppState>) -> Result<SettingsView, AppError> {
+    let limits = notes::limits::stored(&state.db)?;
     Ok(SettingsView {
+        memo_content_limit: limits.memo_content_bytes,
+        upload_limit: limits.upload_bytes,
         base_url: state.db.get_meta(notes::BASE_URL)?.unwrap_or_default(),
         has_token: state.db.access_token()?.is_some(),
         launch_at_login: app.autolaunch().is_enabled().unwrap_or(false),
@@ -977,4 +985,152 @@ pub fn hide_composer(app: AppHandle) {
 #[tauri::command]
 pub fn set_autostart(app: AppHandle, enabled: bool) -> Result<bool, String> {
     tray::set_launch_at_login(&app, Some(enabled))
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct AiSettingsView {
+    llm_enabled: bool,
+    llm_base_url: String,
+    has_llm_key: bool,
+    llm_model: String,
+    /// Host of the model server, shown before text is sent to it.
+    llm_host: String,
+    /// The model server runs on this computer.
+    llm_local: bool,
+    /// Host already allowed to receive offline-only memos.
+    private_ok_host: String,
+    presets: Vec<llm::Preset>,
+}
+
+#[tauri::command]
+pub fn get_ai_settings(state: State<AppState>) -> Result<AiSettingsView, AppError> {
+    let base = state.db.get_meta(llm::LLM_BASE_URL)?.unwrap_or_default();
+    Ok(AiSettingsView {
+        llm_enabled: state.db.get_meta(llm::LLM_ENABLED)?.as_deref() == Some("1"),
+        has_llm_key: state
+            .db
+            .get_meta(llm::LLM_API_KEY)?
+            .is_some_and(|key| !key.is_empty()),
+        llm_model: state.db.get_meta(llm::LLM_MODEL)?.unwrap_or_default(),
+        llm_host: llm::host_of(&base),
+        llm_local: llm::is_local(&base),
+        private_ok_host: state
+            .db
+            .get_meta(llm::LLM_PRIVATE_OK_HOST)?
+            .unwrap_or_default(),
+        presets: llm::presets(&state.db)?,
+        llm_base_url: base,
+    })
+}
+
+/// Saves the given fields and leaves the rest. An empty key removes the saved key.
+#[tauri::command]
+#[allow(clippy::too_many_arguments)]
+pub fn save_ai_settings(
+    app: AppHandle,
+    state: State<AppState>,
+    llm_enabled: Option<bool>,
+    llm_base_url: Option<String>,
+    llm_key: Option<String>,
+    llm_model: Option<String>,
+    presets: Option<Vec<llm::Preset>>,
+    private_ok_host: Option<String>,
+) -> Result<(), AppError> {
+    if let Some(base) = llm_base_url {
+        state
+            .db
+            .set_meta(llm::LLM_BASE_URL, &llm::clean_base(&base)?)?;
+    }
+    if let Some(enabled) = llm_enabled {
+        state
+            .db
+            .set_meta(llm::LLM_ENABLED, if enabled { "1" } else { "0" })?;
+    }
+    match llm_key.as_deref().map(str::trim) {
+        Some("") => state.db.clear_meta(llm::LLM_API_KEY)?,
+        Some(key) => state.db.set_meta(llm::LLM_API_KEY, key)?,
+        None => {}
+    }
+    if let Some(model) = llm_model {
+        state.db.set_meta(llm::LLM_MODEL, model.trim())?;
+    }
+    if let Some(presets) = presets {
+        llm::store_presets(&state.db, &presets)?;
+    }
+    if let Some(host) = private_ok_host {
+        state.db.set_meta(llm::LLM_PRIVATE_OK_HOST, host.trim())?;
+    }
+    let _ = app.emit("ai-settings-changed", ());
+    Ok(())
+}
+
+fn llm_server(state: &AppState) -> Result<(String, Option<String>), AppError> {
+    let base = state
+        .db
+        .get_meta(llm::LLM_BASE_URL)?
+        .filter(|url| !url.is_empty())
+        .ok_or_else(|| AppError::Message("model server URL is not set".into()))?;
+    Ok((base, state.db.get_meta(llm::LLM_API_KEY)?))
+}
+
+#[tauri::command]
+pub async fn llm_models(state: State<'_, AppState>) -> Result<llm::ModelList, AppError> {
+    let (base, key) = llm_server(&state)?;
+    llm::list_models(&state.http, &base, key.as_deref()).await
+}
+
+/// Runs one instruction over `text` and returns the model's proposal.
+/// `llm_cancel` with the same request id stops it.
+#[tauri::command]
+pub async fn llm_edit(
+    state: State<'_, AppState>,
+    request_id: String,
+    instruction: String,
+    text: String,
+) -> Result<String, AppError> {
+    if state.db.get_meta(llm::LLM_ENABLED)?.as_deref() != Some("1") {
+        return Err(AppError::Message("model edits are turned off".into()));
+    }
+    if instruction.trim().is_empty() {
+        return Err(AppError::Message("write an instruction first".into()));
+    }
+    if text.trim().is_empty() {
+        return Err(AppError::Message("there is no text to send".into()));
+    }
+    let (base, key) = llm_server(&state)?;
+    let model = state
+        .db
+        .get_meta(llm::LLM_MODEL)?
+        .filter(|model| !model.is_empty())
+        .ok_or_else(|| AppError::Message("model is not set".into()))?;
+    let (cancel_tx, cancel_rx) = tokio::sync::oneshot::channel();
+    state
+        .llm_requests
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .insert(request_id.clone(), cancel_tx);
+    let http = state.http.clone();
+    let result = tokio::select! {
+        answer = llm::chat(&http, &base, key.as_deref(), &model, &instruction, &text) => answer,
+        _ = cancel_rx => Err(AppError::Message("cancelled".into())),
+    };
+    state
+        .llm_requests
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .remove(&request_id);
+    result
+}
+
+#[tauri::command]
+pub fn llm_cancel(state: State<AppState>, request_id: String) {
+    let cancel = state
+        .llm_requests
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .remove(&request_id);
+    if let Some(cancel) = cancel {
+        let _ = cancel.send(());
+    }
 }

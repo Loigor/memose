@@ -476,3 +476,41 @@ button.danger {
   padding-top: 4px;
   min-height: 20px;
 }
+
+.preset-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.preset-row {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 6px;
+}
+
+.preset-row textarea {
+  grid-column: 1 / -1;
+  box-sizing: border-box;
+  width: 100%;
+  padding: 8px 10px;
+  border: 1px solid #d5cebf;
+  border-radius: 8px;
+  background: #fff;
+  color: inherit;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 400;
+  line-height: 1.4;
+  resize: vertical;
+}
+
+.preset-row textarea:focus {
+  outline: 2px solid #8a795d;
+  outline-offset: 1px;
+}
+
+.hint code {
+  font-size: 0.95em;
+  user-select: text;
+}
