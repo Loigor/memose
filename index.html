@@ -53,6 +53,17 @@
               </span>
             </div>
             <div class="header-actions">
+              <div id="ai-anchor" class="ai-anchor" hidden>
+                <button
+                  class="ai-toggle icon-button"
+                  type="button"
+                  aria-label="AI prompt"
+                  aria-expanded="false"
+                  title="AI prompt"
+                >
+                  AI
+                </button>
+              </div>
               <div class="editor-tools-anchor">
                 <button
                   id="editor-menu-toggle"
@@ -65,18 +76,6 @@
                   <span class="menu-glyph" aria-hidden="true"></span>
                 </button>
                 <div id="editor-tools" class="editor-tools">
-                  <div id="ai-anchor" class="ai-anchor" hidden>
-                    <button
-                      class="ai-toggle icon-button"
-                      type="button"
-                      aria-label="Ask the model"
-                      aria-expanded="false"
-                      title="Ask the model"
-                    >
-                      AI
-                    </button>
-                    <div class="ai-pop" hidden></div>
-                  </div>
                   <div class="format-anchor">
                     <button
                       id="format-toggle"

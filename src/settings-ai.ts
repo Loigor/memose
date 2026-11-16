@@ -2,7 +2,7 @@
 
 import { invoke } from "@tauri-apps/api/core";
 
-import type { AiPreset, AiSettings } from "./ai/llm-edit";
+import type { AiMode, AiPreset, AiSettings } from "./ai/llm-edit";
 
 type ModelList = {
   models: string[];
@@ -20,18 +20,27 @@ function required<T extends Element>(selector: string): T {
 const defaultPresets: AiPreset[] = [
   {
     name: "Summarize",
+    mode: "ask",
     instruction: "Summarize the text in a few short bullet points. Use the language of the text.",
   },
   {
     name: "Action items",
+    mode: "ask",
     instruction:
       "List the action items from the text as a markdown task list (`- [ ] item`). Name the owner and date when the text gives them. Use the language of the text.",
   },
   {
     name: "Clean up wording",
+    mode: "edit",
     instruction:
       "Fix spelling, grammar, and punctuation. Keep the meaning, the structure, and the language. Change as little as possible.",
   },
+];
+
+const modeChoices: { value: AiMode; label: string }[] = [
+  { value: "ask", label: "Answer only" },
+  { value: "edit", label: "Change the memo" },
+  { value: "auto", label: "Model decides" },
 ];
 
 export function initAiSettings(status: HTMLElement) {
@@ -41,10 +50,43 @@ export function initAiSettings(status: HTMLElement) {
   const key = required<HTMLInputElement>("#llm-key");
   const keyHint = required<HTMLElement>("#llm-key-hint");
   const model = required<HTMLInputElement>("#llm-model");
-  const modelList = required<HTMLDataListElement>("#llm-model-list");
+  const modelChoices = required<HTMLElement>("#llm-model-choices");
   const modelHint = required<HTMLElement>("#llm-model-hint");
   const presetsEl = required<HTMLElement>("#llm-presets");
   let presets: AiPreset[] = [];
+  let found: ModelList | null = null;
+
+  const paintModels = () => {
+    modelChoices.replaceChildren();
+    const wanted = model.value.trim();
+    modelChoices.hidden = !found || found.models.length === 0;
+    for (const id of found?.models ?? []) {
+      const choice = document.createElement("button");
+      choice.type = "button";
+      choice.textContent = id;
+      choice.setAttribute("aria-pressed", String(id === wanted));
+      choice.addEventListener("click", () => {
+        model.value = id;
+        paintModels();
+        act(async () => {
+          await invoke("save_ai_settings", { llmModel: id });
+          return `Model set to ${id}.`;
+        });
+      });
+      modelChoices.append(choice);
+    }
+    if (!found) {
+      modelHint.textContent = "";
+    } else if (found.models.length === 0) {
+      modelHint.textContent = "The server lists no models. Type the model name above.";
+    } else if (wanted === "" || found.models.includes(wanted)) {
+      modelHint.textContent = "Pick a model from the list, or type another name above.";
+    } else if (found.ollama) {
+      modelHint.textContent = `This server does not have "${wanted}" yet. Download it with: ollama pull ${wanted}`;
+    } else {
+      modelHint.textContent = `This server does not list "${wanted}". Load it in the app that serves this address.`;
+    }
+  };
 
   const paintPresets = () => {
     presetsEl.replaceChildren();
@@ -60,9 +102,21 @@ export function initAiSettings(status: HTMLElement) {
       name.addEventListener("input", () => {
         preset.name = name.value;
       });
+      const mode = document.createElement("select");
+      mode.setAttribute("aria-label", "What the prompt does");
+      for (const choice of modeChoices) {
+        const option = document.createElement("option");
+        option.value = choice.value;
+        option.textContent = choice.label;
+        mode.append(option);
+      }
+      mode.value = preset.mode;
+      mode.addEventListener("change", () => {
+        preset.mode = mode.value as AiMode;
+      });
       const instruction = document.createElement("textarea");
       instruction.value = preset.instruction;
-      instruction.rows = 2;
+      instruction.rows = 4;
       instruction.placeholder = "What the model should do with the memo";
       instruction.setAttribute("aria-label", "Prompt instruction");
       instruction.addEventListener("input", () => {
@@ -75,7 +129,7 @@ export function initAiSettings(status: HTMLElement) {
         presets.splice(index, 1);
         paintPresets();
       });
-      row.append(name, instruction, remove);
+      row.append(name, mode, remove, instruction);
       presetsEl.append(row);
     });
   };
@@ -95,12 +149,15 @@ export function initAiSettings(status: HTMLElement) {
     } else {
       where.textContent = `Memo text is sent to ${settings.llmHost} when you run a prompt.`;
     }
-    presets = settings.presets.map((preset) => ({ ...preset }));
+    presets = settings.presets.map((preset) => ({ ...preset, mode: preset.mode ?? "auto" }));
     paintPresets();
+    paintModels();
   };
 
   const load = async () => {
-    paint(await invoke<AiSettings>("get_ai_settings"));
+    const settings = await invoke<AiSettings>("get_ai_settings");
+    paint(settings);
+    return settings;
   };
 
   const save = async () => {
@@ -115,7 +172,13 @@ export function initAiSettings(status: HTMLElement) {
     await load();
   };
 
-  const act = (work: () => Promise<string>, busy = "") => {
+  const listModels = async () => {
+    found = await invoke<ModelList>("llm_models");
+    paintModels();
+    return found;
+  };
+
+  function act(work: () => Promise<string>, busy = "") {
     status.textContent = busy;
     void work().then(
       (done) => {
@@ -125,7 +188,9 @@ export function initAiSettings(status: HTMLElement) {
         status.textContent = String(error);
       },
     );
-  };
+  }
+
+  model.addEventListener("input", paintModels);
 
   required<HTMLButtonElement>("#save-ai").addEventListener("click", () => {
     act(async () => {
@@ -137,36 +202,21 @@ export function initAiSettings(status: HTMLElement) {
   enabled.addEventListener("change", () => {
     act(async () => {
       await invoke("save_ai_settings", { llmEnabled: enabled.checked });
-      return enabled.checked ? "Model edits are on." : "Model edits are off.";
+      return enabled.checked ? "Model prompts are on." : "Model prompts are off.";
     });
   });
 
   required<HTMLButtonElement>("#llm-refresh").addEventListener("click", () => {
     act(async () => {
       await save();
-      const found = await invoke<ModelList>("llm_models");
-      modelList.replaceChildren(
-        ...found.models.map((id) => {
-          const option = document.createElement("option");
-          option.value = id;
-          return option;
-        }),
-      );
-      const wanted = model.value.trim();
-      if (wanted === "" || found.models.includes(wanted)) {
-        modelHint.textContent = "";
-      } else if (found.ollama) {
-        modelHint.textContent = `This server does not have "${wanted}" yet. Download it with: ollama pull ${wanted}`;
-      } else {
-        modelHint.textContent = `This server does not list "${wanted}". Load it in the app that serves this address.`;
-      }
-      const count = found.models.length;
+      const list = await listModels();
+      const count = list.models.length;
       return `Connected. ${count} ${count === 1 ? "model" : "models"} found.`;
     }, "Testing…");
   });
 
   required<HTMLButtonElement>("#llm-preset-add").addEventListener("click", () => {
-    presets.push({ name: "", instruction: "" });
+    presets.push({ name: "", instruction: "", mode: "auto" });
     paintPresets();
     presetsEl.querySelector<HTMLInputElement>(".preset-row:last-child input")?.focus();
   });
@@ -176,7 +226,15 @@ export function initAiSettings(status: HTMLElement) {
     paintPresets();
   });
 
-  void load().catch((error: unknown) => {
-    status.textContent = String(error);
-  });
+  void load().then(
+    (settings) => {
+      if (settings.llmBaseUrl) {
+        // The list is a convenience. A server that is not running yet is not an error here.
+        void listModels().catch(() => {});
+      }
+    },
+    (error: unknown) => {
+      status.textContent = String(error);
+    },
+  );
 }

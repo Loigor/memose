@@ -235,7 +235,8 @@ export function mountLayout(ctx: StackCtx) {
       const twoLineMetaW = Math.max(labelW + syncW, editedW);
       const singleBrandW = brandW + (singleMetaW > 0 ? 6 + singleMetaW : 0);
       const twoLineBrandW = brandW + (twoLineMetaW > 0 ? 6 + twoLineMetaW : 0);
-      const fullButtonsRightW = 165;
+      const aiAnchor = header.querySelector<HTMLElement>(".ai-anchor");
+      const fullButtonsRightW = 165 + (aiAnchor && !aiAnchor.hidden ? 32 : 0);
       const compactMeta = hasBothMeta && availW < singleBrandW + fullButtonsRightW;
       const effectiveBrandW = compactMeta ? twoLineBrandW : singleBrandW;
       const compactTools = availW < effectiveBrandW + fullButtonsRightW;

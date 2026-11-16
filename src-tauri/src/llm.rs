@@ -24,30 +24,87 @@ const CHAT_TIMEOUT: Duration = Duration::from_secs(180);
 const MODELS_TIMEOUT: Duration = Duration::from_secs(8);
 const MAX_PRESETS: usize = 12;
 
-const OUTPUT_RULES: &str = "Reply with the resulting text only. Keep it as markdown when the input is markdown. Do not add an introduction, an explanation, or a surrounding code fence.";
+const EDIT_RULES: &str = "Apply the instruction to the note the user sends. Reply with the complete resulting note only. Keep it as markdown when the note is markdown. Do not add an introduction, an explanation, or a surrounding code fence.";
+const ASK_RULES: &str = "Answer the instruction using the note the user sends. Do not rewrite the note. Be brief and direct, and use the language of the instruction.";
+const AUTO_RULES: &str = "The user sends an instruction and a note. Decide what the instruction needs.\n- If it asks to change the note (rewrite, fix, translate, format, shorten, extend, reorder), the first line of your reply is exactly EDIT and the following lines are the complete revised note.\n- If it asks about the note or asks for something that must not replace it (count, find, explain, summarize, list, give an opinion), the first line of your reply is exactly ANSWER and the following lines are the answer.\nWrite nothing before that first line. Do not wrap the reply in a code fence.";
+
+/// What a prompt is for.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Mode {
+    /// The model decides from the instruction.
+    #[default]
+    Auto,
+    /// A question about the memo. The memo is not changed.
+    Ask,
+    /// A rewrite of the memo, reviewed as a diff.
+    Edit,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ReplyKind {
+    Answer,
+    Edit,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Reply {
+    pub kind: ReplyKind,
+    pub text: String,
+}
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Preset {
     pub name: String,
     pub instruction: String,
+    #[serde(default)]
+    pub mode: Mode,
 }
 
+/// One prompt in a memo's chat, with its state and result.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ChatEntry {
+    pub id: String,
+    pub note_id: String,
+    /// Memo title when the prompt was sent, for the running list.
+    pub title: String,
+    pub instruction: String,
+    pub mode: Mode,
+    /// `running`, `answer`, `edit`, `applied`, `dismissed`, `error`, or `cancelled`.
+    pub status: String,
+    /// The answer, the proposed memo text, or the error.
+    pub text: String,
+    /// Memo text that was sent. An edit is compared against it.
+    pub source: String,
+    pub started_at: i64,
+    pub finished_at: Option<i64>,
+}
+
+pub const RUNNING: &str = "running";
+/// Finished prompts kept per memo.
+pub const CHAT_KEEP: usize = 30;
+
 pub fn default_presets() -> Vec<Preset> {
-    let preset = |name: &str, instruction: &str| Preset {
+    let preset = |name: &str, mode: Mode, instruction: &str| Preset {
         name: name.into(),
         instruction: instruction.into(),
+        mode,
     };
     vec![
         preset(
             "Summarize",
+            Mode::Ask,
             "Summarize the text in a few short bullet points. Use the language of the text.",
         ),
         preset(
             "Action items",
+            Mode::Ask,
             "List the action items from the text as a markdown task list (`- [ ] item`). Name the owner and date when the text gives them. Use the language of the text.",
         ),
         preset(
             "Clean up wording",
+            Mode::Edit,
             "Fix spelling, grammar, and punctuation. Keep the meaning, the structure, and the language. Change as little as possible.",
         ),
     ]
@@ -66,6 +123,7 @@ pub fn store_presets(db: &Db, presets: &[Preset]) -> Result<(), AppError> {
         .map(|preset| Preset {
             name: preset.name.trim().chars().take(40).collect(),
             instruction: preset.instruction.trim().chars().take(2000).collect(),
+            mode: preset.mode,
         })
         .filter(|preset| !preset.name.is_empty() && !preset.instruction.is_empty())
         .take(MAX_PRESETS)
@@ -166,21 +224,27 @@ fn unreachable(err: &reqwest::Error) -> AppError {
     }
 }
 
-/// One chat-completions call. Returns the model's text with wrappers removed.
-pub async fn chat(
+/// One chat-completions call. `Auto` lets the model say whether it answered or edited.
+pub async fn ask(
     http: &reqwest::Client,
     base: &str,
     key: Option<&str>,
     model: &str,
+    mode: Mode,
     instruction: &str,
     text: &str,
-) -> Result<String, AppError> {
+) -> Result<Reply, AppError> {
+    let rules = match mode {
+        Mode::Auto => AUTO_RULES,
+        Mode::Ask => ASK_RULES,
+        Mode::Edit => EDIT_RULES,
+    };
     let body = json!({
         "model": model,
         "stream": false,
         "messages": [
-            { "role": "system", "content": format!("{}\n\n{OUTPUT_RULES}", instruction.trim()) },
-            { "role": "user", "content": text },
+            { "role": "system", "content": rules },
+            { "role": "user", "content": format!("Instruction: {}\n\nNote:\n{text}", instruction.trim()) },
         ],
     });
     let request = http
@@ -198,15 +262,44 @@ pub async fn chat(
         .json()
         .await
         .map_err(|_| AppError::Message("the model server sent an unreadable answer".into()))?;
-    let answer = payload
+    let raw = payload
         .pointer("/choices/0/message/content")
         .and_then(Value::as_str)
-        .map(|raw| clean_answer(raw, text))
         .unwrap_or_default();
-    if answer.is_empty() {
+    let reply = read_reply(mode, raw, text);
+    if reply.text.is_empty() {
         return Err(AppError::Message("the model returned no text".into()));
     }
-    Ok(answer)
+    Ok(reply)
+}
+
+/// Sorts the model's text into an answer or an edit.
+/// In `Auto`, a reply without the marker line is an answer, so the memo is never replaced by accident.
+pub fn read_reply(mode: Mode, raw: &str, source: &str) -> Reply {
+    let cleaned = clean_answer(raw, source);
+    let (kind, body) = match mode {
+        Mode::Ask => (ReplyKind::Answer, cleaned.as_str()),
+        Mode::Edit => (ReplyKind::Edit, cleaned.as_str()),
+        Mode::Auto => {
+            let (first, rest) = cleaned.split_once('\n').unwrap_or((cleaned.as_str(), ""));
+            let marker: String = first
+                .chars()
+                .filter(char::is_ascii_alphabetic)
+                .collect::<String>()
+                .to_ascii_uppercase();
+            match marker.as_str() {
+                "EDIT" => (ReplyKind::Edit, rest),
+                "ANSWER" => (ReplyKind::Answer, rest),
+                _ => (ReplyKind::Answer, cleaned.as_str()),
+            }
+        }
+    };
+    let text = if kind == ReplyKind::Edit {
+        clean_answer(body, source)
+    } else {
+        body.trim().to_string()
+    };
+    Reply { kind, text }
 }
 
 /// Removes a leading reasoning block and a code fence the model wrapped around the whole answer.
@@ -374,6 +467,46 @@ mod tests {
     }
 
     #[test]
+    fn auto_reply_is_sorted_by_its_first_line() {
+        let edit = read_reply(Mode::Auto, "EDIT\nHello there.", "hello there");
+        assert_eq!(edit.kind, ReplyKind::Edit);
+        assert_eq!(edit.text, "Hello there.");
+        let answer = read_reply(
+            Mode::Auto,
+            "**ANSWER:**\nThere are 3 tasks.",
+            "- a\n- b\n- c",
+        );
+        assert_eq!(answer.kind, ReplyKind::Answer);
+        assert_eq!(answer.text, "There are 3 tasks.");
+        let fenced = read_reply(Mode::Auto, "EDIT\n```markdown\n- one\n```", "one");
+        assert_eq!(fenced.text, "- one");
+    }
+
+    #[test]
+    fn auto_reply_without_a_marker_never_replaces_the_memo() {
+        let reply = read_reply(Mode::Auto, "There are 3 tasks.", "- a\n- b\n- c");
+        assert_eq!(reply.kind, ReplyKind::Answer);
+        assert_eq!(reply.text, "There are 3 tasks.");
+    }
+
+    #[test]
+    fn a_fixed_mode_ignores_marker_words() {
+        let asked = read_reply(Mode::Ask, "EDIT\nis a word in the note.", "note");
+        assert_eq!(asked.kind, ReplyKind::Answer);
+        assert_eq!(asked.text, "EDIT\nis a word in the note.");
+        let edited = read_reply(Mode::Edit, "Answer the phone.", "answer teh phone");
+        assert_eq!(edited.kind, ReplyKind::Edit);
+        assert_eq!(edited.text, "Answer the phone.");
+    }
+
+    #[test]
+    fn stored_presets_without_a_mode_are_auto() {
+        let parsed: Vec<Preset> =
+            serde_json::from_str(r#"[{"name":"Old","instruction":"Do it."}]"#).unwrap();
+        assert_eq!(parsed[0].mode, Mode::Auto);
+    }
+
+    #[test]
     fn model_ids_come_from_openai_and_ollama_shapes() {
         let openai = json!({ "data": [{ "id": "gpt-4o-mini" }, { "id": "gpt-4o" }] });
         assert_eq!(parse_models(&openai), vec!["gpt-4o", "gpt-4o-mini"]);
@@ -392,10 +525,12 @@ mod tests {
                 Preset {
                     name: " Shorten ".into(),
                     instruction: "Make it shorter.".into(),
+                    mode: Mode::Edit,
                 },
                 Preset {
                     name: String::new(),
                     instruction: "x".into(),
+                    mode: Mode::Auto,
                 },
             ],
         )

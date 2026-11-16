@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::sync::atomic::Ordering;
 
 use serde::Serialize;
@@ -1080,17 +1081,36 @@ pub async fn llm_models(state: State<'_, AppState>) -> Result<llm::ModelList, Ap
     llm::list_models(&state.http, &base, key.as_deref()).await
 }
 
-/// Runs one instruction over `text` and returns the model's proposal.
-/// `llm_cancel` with the same request id stops it.
+fn chats(state: &AppState) -> std::sync::MutexGuard<'_, HashMap<String, Vec<llm::ChatEntry>>> {
+    state
+        .llm_chats
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+}
+
+fn now_ms() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|duration| duration.as_millis() as i64)
+        .unwrap_or(0)
+}
+
+/// Sends one prompt about a memo and records it in that memo's chat.
+/// The result is an answer or a proposed edit. `llm_cancel` with the same id stops it.
 #[tauri::command]
-pub async fn llm_edit(
+#[allow(clippy::too_many_arguments)]
+pub async fn llm_ask(
+    app: AppHandle,
     state: State<'_, AppState>,
     request_id: String,
+    note_id: String,
+    title: String,
     instruction: String,
+    mode: llm::Mode,
     text: String,
-) -> Result<String, AppError> {
+) -> Result<llm::ChatEntry, AppError> {
     if state.db.get_meta(llm::LLM_ENABLED)?.as_deref() != Some("1") {
-        return Err(AppError::Message("model edits are turned off".into()));
+        return Err(AppError::Message("model prompts are turned off".into()));
     }
     if instruction.trim().is_empty() {
         return Err(AppError::Message("write an instruction first".into()));
@@ -1110,17 +1130,65 @@ pub async fn llm_edit(
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner())
         .insert(request_id.clone(), cancel_tx);
+    let entry = llm::ChatEntry {
+        id: request_id.clone(),
+        note_id: note_id.clone(),
+        title: title.trim().chars().take(80).collect(),
+        instruction: instruction.trim().to_string(),
+        mode,
+        status: llm::RUNNING.into(),
+        text: String::new(),
+        source: text.clone(),
+        started_at: now_ms(),
+        finished_at: None,
+    };
+    {
+        let mut all = chats(&state);
+        let log = all.entry(note_id.clone()).or_default();
+        log.push(entry);
+        let extra = log.len().saturating_sub(llm::CHAT_KEEP);
+        let mut dropped = 0;
+        log.retain(|item| {
+            if dropped < extra && item.status != llm::RUNNING {
+                dropped += 1;
+                return false;
+            }
+            true
+        });
+    }
+    let _ = app.emit("llm-changed", &note_id);
     let http = state.http.clone();
     let result = tokio::select! {
-        answer = llm::chat(&http, &base, key.as_deref(), &model, &instruction, &text) => answer,
-        _ = cancel_rx => Err(AppError::Message("cancelled".into())),
+        reply = llm::ask(&http, &base, key.as_deref(), &model, mode, &instruction, &text) => reply.map(Some),
+        _ = cancel_rx => Ok(None),
     };
     state
         .llm_requests
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner())
         .remove(&request_id);
-    result
+    let (status, body) = match result {
+        Ok(Some(reply)) => match reply.kind {
+            llm::ReplyKind::Answer => ("answer", reply.text),
+            llm::ReplyKind::Edit => ("edit", reply.text),
+        },
+        Ok(None) => ("cancelled", String::new()),
+        Err(err) => ("error", err.to_string()),
+    };
+    let finished = {
+        let mut all = chats(&state);
+        let found = all
+            .get_mut(&note_id)
+            .and_then(|log| log.iter_mut().find(|item| item.id == request_id));
+        found.map(|item| {
+            item.status = status.into();
+            item.text = body;
+            item.finished_at = Some(now_ms());
+            item.clone()
+        })
+    };
+    let _ = app.emit("llm-changed", &note_id);
+    finished.ok_or_else(|| AppError::Message("the prompt was cleared".into()))
 }
 
 #[tauri::command]
@@ -1133,4 +1201,62 @@ pub fn llm_cancel(state: State<AppState>, request_id: String) {
     if let Some(cancel) = cancel {
         let _ = cancel.send(());
     }
+}
+
+/// Prompts and results of one memo, oldest first.
+#[tauri::command]
+pub fn llm_chat(state: State<AppState>, note_id: String) -> Vec<llm::ChatEntry> {
+    chats(&state).get(&note_id).cloned().unwrap_or_default()
+}
+
+/// Prompts still running, across all memos. Memo text is left out.
+#[tauri::command]
+pub fn llm_jobs(state: State<AppState>) -> Vec<llm::ChatEntry> {
+    let mut jobs: Vec<llm::ChatEntry> = chats(&state)
+        .values()
+        .flatten()
+        .filter(|item| item.status == llm::RUNNING)
+        .map(|item| llm::ChatEntry {
+            source: String::new(),
+            ..item.clone()
+        })
+        .collect();
+    jobs.sort_by_key(|item| item.started_at);
+    jobs
+}
+
+/// Records what happened to a proposed edit: `applied` or `dismissed`.
+#[tauri::command]
+pub fn llm_mark(
+    app: AppHandle,
+    state: State<AppState>,
+    note_id: String,
+    request_id: String,
+    status: String,
+) -> Result<(), AppError> {
+    if status != "applied" && status != "dismissed" {
+        return Err(AppError::Message("unknown prompt state".into()));
+    }
+    {
+        let mut all = chats(&state);
+        let found = all
+            .get_mut(&note_id)
+            .and_then(|log| log.iter_mut().find(|item| item.id == request_id));
+        if let Some(item) = found {
+            if item.status == "edit" {
+                item.status = status;
+            }
+        }
+    }
+    let _ = app.emit("llm-changed", &note_id);
+    Ok(())
+}
+
+/// Drops the finished prompts of one memo. Running ones stay.
+#[tauri::command]
+pub fn llm_clear_chat(app: AppHandle, state: State<AppState>, note_id: String) {
+    if let Some(log) = chats(&state).get_mut(&note_id) {
+        log.retain(|item| item.status == llm::RUNNING);
+    }
+    let _ = app.emit("llm-changed", &note_id);
 }

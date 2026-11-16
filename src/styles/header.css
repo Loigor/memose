@@ -656,74 +656,49 @@ header.compact-meta #edited-sep {
 }
 
 .ai-toggle {
+  position: relative;
   font-size: 11px;
   font-weight: 600;
   letter-spacing: 0.02em;
 }
 
-.ai-pop {
-  position: absolute;
-  top: calc(100% + 8px);
-  right: 0;
-  z-index: 3;
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  width: 208px;
-  padding: 4px;
-  border: 1px solid var(--line);
-  border-radius: 12px;
-  background: var(--paper);
-  box-shadow: 0 10px 22px var(--shadow);
-  letter-spacing: 0;
-  text-transform: none;
-}
-
-.ai-pop[hidden] {
-  display: none;
-}
-
-.ai-pop button {
-  width: 100%;
-  padding: 6px 10px;
-  border: 0;
-  border-radius: 8px;
-  background: transparent;
-  color: var(--ink);
-  font: inherit;
-  font-size: 12px;
-  text-align: left;
-  cursor: pointer;
-}
-
-.ai-pop button:hover {
+.ai-toggle[aria-expanded="true"] {
   background: var(--button-hover);
 }
 
-.ai-pop .ai-consent {
-  margin: 0;
-  padding: 6px 10px;
-  color: var(--ink);
-  font-size: 12px;
-  line-height: 1.35;
-  white-space: normal;
+/* A ring turns around the button while a prompt for this memo is running. */
+.ai-toggle.ai-busy::before {
+  content: "";
+  position: absolute;
+  inset: 1px;
+  border: 2px solid color-mix(in srgb, var(--ink) 18%, transparent);
+  border-top-color: var(--ink);
+  border-radius: 50%;
+  animation: ai-spin 0.9s linear infinite;
+  pointer-events: none;
 }
 
-.ai-ask {
-  margin: 2px 0 0;
-  padding: 4px 0 0;
-  border-top: 1px solid var(--line);
+.ai-toggle.ai-unread::after {
+  content: "";
+  position: absolute;
+  top: 2px;
+  right: 2px;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #d9662b;
+  box-shadow: 0 0 0 1.5px var(--paper);
 }
 
-.ai-ask input {
-  width: 100%;
-  box-sizing: border-box;
-  padding: 6px 10px;
-  border: 0;
-  border-radius: 8px;
-  background: var(--button);
-  color: var(--ink);
-  font: inherit;
-  font-size: 12px;
-  outline: none;
+@keyframes ai-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ai-toggle.ai-busy::before,
+  .ai-spinner {
+    animation-duration: 2.4s;
+  }
 }

@@ -42,7 +42,7 @@ h2 {
 
 .settings-tabs {
   display: grid;
-  grid-template-columns: repeat(5, minmax(0, 1fr));
+  grid-template-columns: repeat(6, minmax(0, 1fr));
   gap: 4px;
   padding: 4px;
   border: 1px solid #e0d9cc;
@@ -485,8 +485,19 @@ button.danger {
 
 .preset-row {
   display: grid;
-  grid-template-columns: 1fr auto;
+  grid-template-columns: 1fr auto auto;
   gap: 6px;
+}
+
+.preset-row input,
+.preset-row select {
+  min-width: 0;
+  font-size: 13px;
+}
+
+.model-choices {
+  max-height: 168px;
+  overflow: auto;
 }
 
 .preset-row textarea {

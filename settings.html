@@ -324,14 +324,14 @@
         >
           <div class="settings-card">
             <div class="card-header">
-              <h2>Model edits</h2>
+              <h2>Model prompts</h2>
               <p class="hint">
-                Ask a chat model to summarize or rewrite a memo. You review every change before it is applied.
+                Ask a chat model about a memo, or ask it to rewrite one. You review every change before it is applied.
               </p>
             </div>
             <label class="toggle-row" for="llm-enabled">
               <span class="toggle-copy">
-                <span class="toggle-title">Enable model edits</span>
+                <span class="toggle-title">Enable model prompts</span>
                 <span class="hint">Shows the AI button on memos. Nothing is sent until you run a prompt.</span>
               </span>
               <input id="llm-enabled" type="checkbox" />
@@ -352,9 +352,9 @@
             <p id="llm-key-hint" class="hint"></p>
             <label>
               Model
-              <input id="llm-model" type="text" list="llm-model-list" placeholder="qwen2.5:7b" autocomplete="off" />
+              <input id="llm-model" type="text" placeholder="qwen2.5:7b" autocomplete="off" />
             </label>
-            <datalist id="llm-model-list"></datalist>
+            <div id="llm-model-choices" class="choices model-choices" aria-label="Models on this server" hidden></div>
             <p id="llm-model-hint" class="hint"></p>
             <div class="actions">
               <button id="save-ai" class="primary" type="button">Save</button>
@@ -364,7 +364,10 @@
           <div class="settings-card">
             <div class="card-header">
               <h2>Prompts</h2>
-              <p class="hint">Shown in the AI menu of a memo. The instruction is sent with the memo text.</p>
+              <p class="hint">
+                Shown in the AI prompt of a memo. The instruction is sent with the memo text. "Answer only" never
+                changes the memo. "Change the memo" shows the changes for you to accept.
+              </p>
             </div>
             <div id="llm-presets" class="preset-list"></div>
             <div class="actions">

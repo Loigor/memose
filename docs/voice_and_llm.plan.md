@@ -168,16 +168,35 @@ New block kind in [src/editor/markdown-edit.ts](src/editor/markdown-edit.ts), pa
 - While recording: a pulsing "recording" placeholder instead of the player, plus a **Stop** button.
 - The marker lines are never visible or editable as text. Deleting the whole block removes both markers and asks before deleting the file.
 
-## LLM edits
+## LLM prompts
 
-[src-tauri/src/llm.rs](src-tauri/src/llm.rs) is one `/chat/completions` call. The system message is the preset or the one-off instruction. The user message is the memo markdown, the code body, or the speech transcript. Audio bytes are never sent.
+[src-tauri/src/llm.rs](src-tauri/src/llm.rs) makes one `/chat/completions` call per prompt. The user message holds the instruction and the memo text. Audio bytes are never sent.
 
-- **Protected lines.** Media tokens and speech markers are removed before sending and are not part of the diff. They are restored at their anchors afterwards. A model must not be able to drop or rewrite `memose-media/…` lines.
-- Per-request timeout of about 120 s (CPU-bound local models are slow), plus a **Cancel** that aborts the request. Streaming is not required for a diff UI.
-- Header button, and the same control on hover for code blocks and speech blocks, including stack sections. Disabled while that block is recording.
-- The proposal stays in memory. Closing the window drops it.
-- **Stale check.** The proposal stores the source text it was computed from. If the note changed before accept, show "Note changed" and offer to re-run. Do not apply hunks to text that moved.
-- Line diff in `src/editor/line-diff.ts` (Myers or LCS over lines): red removed, green added, **Accept** per hunk, **Accept all**, **Cancel**. Accepted text saves through the editor as one undo step. Warn if the result exceeds the server's content limit; skip the warning when it is unlimited.
+**Ask or edit.** A prompt has a mode:
+
+- **Ask** answers in the chat and never changes the memo ("how many tasks are open?").
+- **Edit** proposes a new memo text, shown as a diff.
+- **Auto** (the default for typed prompts) lets the model decide. Its reply starts with a line `EDIT` or `ANSWER`. A reply without that line is treated as an answer, so the memo is never replaced by accident.
+
+Presets carry their own mode. An answer can still be added to the memo or reviewed as a replacement.
+
+**AI prompt bubble** ([src/ai/llm-edit.ts](src/ai/llm-edit.ts)). The AI button in the memo header opens a bubble that floats over that memo:
+
+- The chat of this memo: each prompt, then its answer, its diff, or its error.
+- A running prompt shows a spinner, the elapsed time and **Cancel**. Prompts running for other memos are listed under "Also running".
+- The AI button turns a ring while a prompt for this memo runs, and shows a dot when a result arrived while the bubble was closed. Opening a memo with a running prompt opens its bubble.
+- The chat lives in Rust `AppState` (`llm_chats`, keyed by memo id), so it survives closing the memo window. It is dropped when the app quits.
+- Line diff from `src/editor/line-diff.ts`: red removed, green added, **Accept** and **Keep original** per change, **Accept all**, **Dismiss**. Accepted text saves through the editor as one undo step.
+
+Safeguards:
+
+- **Protected lines.** Media tokens and speech markers are removed before sending and are not part of the diff. They are restored at their anchors afterwards.
+- **Stale check.** An edit stores the text it was computed from. If the memo text changed before accept, nothing is applied and the bubble says to run the prompt again.
+- Per-request timeout of 180 s (CPU-bound local models are slow). Streaming is not needed.
+- An offline-only memo asks once before its text goes to a non-local host.
+- A warning shows when the accepted result would exceed the server's content limit.
+
+Still open: the AI button on stack sections, prompts scoped to one code block or one speech block, follow-up prompts that include earlier answers, and Ollama pull from settings.
 
 ## Tests
 

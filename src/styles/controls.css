@@ -336,46 +336,217 @@ button:hover {
   min-height: 64px;
 }
 
-/* Model edit review: takes the place of the editor until every change is decided. */
-.ai-reviewing > :not(.ai-review) {
-  display: none !important;
-}
-
-.ai-review {
-  flex: 1;
-  min-height: 0;
+/* AI prompt bubble: floats over the memo it belongs to. */
+.ai-bubble {
+  position: absolute;
+  top: var(--ai-top, 38px);
+  right: 8px;
+  z-index: 6;
+  box-sizing: border-box;
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  width: min(420px, calc(100% - 16px));
+  max-height: calc(100% - var(--ai-top, 38px) - 8px);
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: var(--paper);
+  box-shadow: 0 12px 28px var(--shadow);
   color: var(--ink);
+  font-family: system-ui, sans-serif;
   font-size: 12px;
-}
-
-.ai-status {
-  margin: 8px 0 0;
   line-height: 1.4;
-  overflow-wrap: anywhere;
+  overflow: hidden;
 }
 
-.ai-waiting {
-  opacity: 0.7;
-}
-
-.ai-warning {
-  margin: 0;
-  padding: 6px 8px;
+.ai-bubble button {
+  flex: none;
+  padding: 3px 9px;
+  border: 1px solid var(--line);
   border-radius: 8px;
   background: var(--button);
-  line-height: 1.35;
+  color: var(--ink);
+  font: inherit;
+  cursor: pointer;
 }
 
-.ai-warning[hidden] {
+.ai-bubble button:hover {
+  background: var(--button-hover);
+}
+
+.ai-bubble button.ai-primary {
+  border-color: color-mix(in srgb, var(--ink) 45%, transparent);
+  font-weight: 600;
+}
+
+.ai-head {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 8px 7px 12px;
+  border-bottom: 1px solid var(--line);
+}
+
+.ai-head-title {
+  flex: none;
+  font-weight: 650;
+}
+
+.ai-head-note {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  opacity: 0.6;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ai-bubble button.ai-head-button {
+  border-color: transparent;
+  background: transparent;
+  opacity: 0.75;
+}
+
+.ai-bubble button.ai-close {
+  padding: 0 7px;
+  font-size: 16px;
+  line-height: 1.2;
+}
+
+.ai-jobs {
+  flex: none;
+  padding: 6px 12px;
+  border-bottom: 1px solid var(--line);
+  background: color-mix(in srgb, var(--button) 60%, transparent);
+}
+
+.ai-jobs[hidden] {
   display: none;
 }
 
-.ai-actions {
-  flex: none;
+.ai-jobs-title {
+  margin: 0 0 4px;
+  opacity: 0.6;
+  font-size: 11px;
+}
+
+.ai-job,
+.ai-working {
   display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.ai-job + .ai-job {
+  margin-top: 4px;
+}
+
+.ai-job-text {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ai-time {
+  flex: 1;
+  opacity: 0.65;
+  font-variant-numeric: tabular-nums;
+}
+
+.ai-job .ai-time {
+  flex: none;
+}
+
+.ai-spinner {
+  flex: none;
+  width: 12px;
+  height: 12px;
+  box-sizing: border-box;
+  border: 2px solid color-mix(in srgb, var(--ink) 18%, transparent);
+  border-top-color: var(--ink);
+  border-radius: 50%;
+  animation: ai-spin 0.9s linear infinite;
+}
+
+.ai-log {
+  flex: 1;
+  min-height: 48px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 10px 12px;
+  overflow: auto;
+  scrollbar-width: thin;
+}
+
+.ai-empty,
+.ai-note {
+  margin: 0;
+  opacity: 0.7;
+}
+
+.ai-error {
+  margin-bottom: 6px;
+  opacity: 1;
+  overflow-wrap: anywhere;
+}
+
+.ai-notice {
+  padding: 6px 8px;
+  border-radius: 8px;
+  background: var(--button);
+  opacity: 1;
+}
+
+.ai-entry {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.ai-q {
+  align-self: flex-end;
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  max-width: 88%;
+  padding: 5px 10px;
+  border-radius: 12px 12px 3px 12px;
+  background: var(--button);
+}
+
+.ai-q-text {
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+
+.ai-tag {
+  flex: none;
+  opacity: 0.55;
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.ai-a {
+  min-width: 0;
+}
+
+.ai-answer {
+  margin-bottom: 6px;
+  font-size: 13px;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+  user-select: text;
+  cursor: text;
+}
+
+.ai-actions {
+  display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 6px;
 }
@@ -386,30 +557,15 @@ button:hover {
   opacity: 0.7;
 }
 
-.ai-review button {
-  padding: 4px 10px;
-  border: 1px solid var(--line);
+.ai-warning {
+  margin: 6px 0 0;
+  padding: 6px 8px;
   border-radius: 8px;
   background: var(--button);
-  color: var(--ink);
-  font: inherit;
-  font-size: 12px;
-  cursor: pointer;
-}
-
-.ai-review button:hover {
-  background: var(--button-hover);
-}
-
-.ai-review button.ai-primary {
-  border-color: color-mix(in srgb, var(--ink) 45%, transparent);
-  font-weight: 600;
 }
 
 .ai-diff {
-  flex: 1;
-  min-height: 0;
-  overflow: auto;
+  margin-top: 6px;
   font-size: 13px;
   line-height: 1.45;
   user-select: text;
@@ -417,8 +573,8 @@ button:hover {
 
 .ai-line {
   padding: 0 6px;
-  white-space: pre-wrap;
   overflow-wrap: anywhere;
+  white-space: pre-wrap;
 }
 
 .ai-gap {
@@ -467,10 +623,7 @@ button:hover {
   border-top: 1px solid var(--line);
 }
 
-.ai-hunk[data-decided] .ai-hunk-actions {
-  display: none;
-}
-
+.ai-hunk[data-decided] .ai-hunk-actions,
 .ai-hunk[data-decided="accepted"] .ai-removed,
 .ai-hunk[data-decided="rejected"] .ai-added {
   display: none;
@@ -483,4 +636,67 @@ button:hover {
 
 .ai-hunk[data-decided="rejected"] .ai-removed::before {
   content: "";
+}
+
+.ai-foot {
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px 12px 10px;
+  border-top: 1px solid var(--line);
+}
+
+.ai-presets {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.ai-bubble button.ai-chip {
+  border-radius: 999px;
+}
+
+.ai-ask {
+  display: flex;
+  align-items: flex-end;
+  gap: 6px;
+  margin: 0;
+}
+
+.ai-mode,
+.ai-input {
+  box-sizing: border-box;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--button);
+  color: var(--ink);
+  font: inherit;
+}
+
+.ai-mode {
+  flex: none;
+  height: 26px;
+  padding: 0 4px;
+}
+
+.ai-input {
+  flex: 1;
+  min-width: 0;
+  min-height: 26px;
+  padding: 4px 8px;
+  line-height: 1.35;
+  outline: none;
+  resize: none;
+}
+
+.ai-input:focus {
+  border-color: color-mix(in srgb, var(--ink) 45%, transparent);
+}
+
+.ai-where {
+  margin: 0;
+  opacity: 0.55;
+  font-size: 11px;
+  overflow-wrap: anywhere;
 }
