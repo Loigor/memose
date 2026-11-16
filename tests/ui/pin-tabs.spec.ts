@@ -105,17 +105,17 @@ test("hovered strip makes tab buttons opaque", async ({ page }) => {
 
 test("strip reports tab hit rects", async ({ page }) => {
   await openPinTabs(page, { pinTabs: tabs });
-  await expect.poll(async () => {
-    const last = (await getInvocations(page))
-      .filter((item) => item.cmd === "set_pin_tab_hits")
-      .at(-1);
-    return (last?.args as { hits?: { id: string; w: number; h: number }[] } | undefined)?.hits;
-  }).toEqual(
-    expect.arrayContaining([
-      expect.objectContaining({ id: "tab-work", w: expect.any(Number), h: expect.any(Number) }),
-      expect.objectContaining({ id: "tab-home", w: expect.any(Number), h: expect.any(Number) }),
-    ]),
-  );
+  await expect
+    .poll(async () => {
+      const last = (await getInvocations(page)).filter((item) => item.cmd === "set_pin_tab_hits").at(-1);
+      return (last?.args as { hits?: { id: string; w: number; h: number }[] } | undefined)?.hits;
+    })
+    .toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ id: "tab-work", w: expect.any(Number), h: expect.any(Number) }),
+        expect.objectContaining({ id: "tab-home", w: expect.any(Number), h: expect.any(Number) }),
+      ]),
+    );
 });
 
 test("pin-tab-aim marks the target tab", async ({ page }) => {

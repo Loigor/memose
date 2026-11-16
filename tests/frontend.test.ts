@@ -5,9 +5,23 @@ import test from "node:test";
 import { fileURLToPath } from "node:url";
 
 import { moveBlockMedia } from "../src/editor/editor-blocks.ts";
-import { backspaceEdit, inlinePieces, renderParts, rowClass, snapOffset, stepOffset } from "../src/editor/line-style.ts";
+import {
+  backspaceEdit,
+  inlinePieces,
+  renderParts,
+  rowClass,
+  snapOffset,
+  stepOffset,
+} from "../src/editor/line-style.ts";
 import { highlightCode } from "../src/editor/code-highlight.ts";
-import { braceFolds, displayToSource, expandFolds, foldView, foldsAfterEdit, sourceToDisplay } from "../src/editor/code-fold.ts";
+import {
+  braceFolds,
+  displayToSource,
+  expandFolds,
+  foldView,
+  foldsAfterEdit,
+  sourceToDisplay,
+} from "../src/editor/code-fold.ts";
 import { highlightMarkdown } from "../src/editor/md-highlight.ts";
 import { tagAtOffset } from "../src/editor/md-tags.ts";
 import { uniqueFiles } from "../src/media/files.ts";
@@ -47,7 +61,15 @@ import {
   toggleTask,
   wrapText,
 } from "../src/editor/markdown-edit.ts";
-import { baseColors, huePopHtml, palette, paperAt, stackHeaderHtml, tabFill, themeGlyph } from "../src/look/memo-chrome.ts";
+import {
+  baseColors,
+  huePopHtml,
+  palette,
+  paperAt,
+  stackHeaderHtml,
+  tabFill,
+  themeGlyph,
+} from "../src/look/memo-chrome.ts";
 import { clampHueSwatches } from "../src/look/swatches.ts";
 import { pointIn, pointOnScrollGutter, requireEl } from "../src/dom.ts";
 import {
@@ -105,7 +127,10 @@ test("dropCodeBlock removes an empty code block and keeps the join", () => {
   assert.equal(dropped.blocks[dropped.index]?.kind, "text");
 
   const only = parseBlocks("```\n\n```\n");
-  const lone = dropCodeBlock(only, only.findIndex((block) => block.kind === "code"));
+  const lone = dropCodeBlock(
+    only,
+    only.findIndex((block) => block.kind === "code"),
+  );
   assert.equal(serializeBlocks(lone.blocks), "");
   assert.equal(lone.offset, 0);
 
@@ -222,8 +247,8 @@ test("taskListOnEnter continues lists, exits empty items, and renumbers ordered 
 
 test("code enter keeps indent and a line mark follows the line", () => {
   assert.equal(copyIndentAfterBreak("{\n", 2)?.value, "{\n  ");
-  const kept = "  \"a\": 1\n";
-  assert.equal(copyIndentAfterBreak(kept, kept.length)?.value, "  \"a\": 1\n  ");
+  const kept = '  "a": 1\n';
+  assert.equal(copyIndentAfterBreak(kept, kept.length)?.value, '  "a": 1\n  ');
   assert.equal(copyIndentAfterBreak("a\n", 2), null);
   assert.equal(indentCode("hello", 5, 5, false).value, "hello  ");
   const before = "alpha\nbeta";
@@ -261,7 +286,10 @@ test("parseBlocks lifts closed fences into code blocks", () => {
   }
   assert.equal(serializeBlocks(blocks), source);
   const open = parseBlocks("hello\n```\nstill open");
-  assert.equal(open.some((block) => block.kind === "code"), false);
+  assert.equal(
+    open.some((block) => block.kind === "code"),
+    false,
+  );
 });
 
 test("media helpers parse, serialize, and extract titles accurately", () => {
@@ -480,7 +508,17 @@ test("look helpers normalize note color and theme", () => {
 });
 
 test("restorePlace no-ops without a saved caret", () => {
-  assert.equal(restorePlace({ querySelector() { return null; } } as unknown as ParentNode, null), false);
+  assert.equal(
+    restorePlace(
+      {
+        querySelector() {
+          return null;
+        },
+      } as unknown as ParentNode,
+      null,
+    ),
+    false,
+  );
 });
 
 test("withKeptScroll restores scroller position after a collapse", () => {
@@ -629,7 +667,11 @@ test("highlightCode colors a language and keeps every source character", () => {
   assert.match(html, /tok-num/);
   assert.match(html, /tok-kw/);
   assert.equal(
-    html.replace(/<[^>]+>/g, "").replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&amp;/g, "&"),
+    html
+      .replace(/<[^>]+>/g, "")
+      .replace(/&lt;/g, "<")
+      .replace(/&gt;/g, ">")
+      .replace(/&amp;/g, "&"),
     source,
   );
   assert.match(highlightCode("const x = 1; // note", "js"), /tok-kw[\s\S]*const/);
@@ -736,7 +778,12 @@ test("inline marks keep the source characters", () => {
   );
   assert.equal(inlinePieces("**bold**").length, 1);
   assert.equal(inlinePieces("**bold**")[0]?.mark, "strong");
-  assert.equal(inlinePieces("# Title").map((piece) => piece.text).join(""), "# Title");
+  assert.equal(
+    inlinePieces("# Title")
+      .map((piece) => piece.text)
+      .join(""),
+    "# Title",
+  );
   assert.equal(inlinePieces("# Title")[0]?.mark, "plain");
   assert.deepEqual(inlinePieces("- [x] **milk**"), [
     { text: "- [x] ", mark: "marker" },
@@ -760,7 +807,10 @@ test("inline marks keep the source characters", () => {
       .join(""),
     "**see #ship**",
   );
-  assert.equal(inlinePieces("*see #ship*")[0]?.inner?.some((piece) => piece.mark === "tag"), true);
+  assert.equal(
+    inlinePieces("*see #ship*")[0]?.inner?.some((piece) => piece.mark === "tag"),
+    true,
+  );
   assert.deepEqual(inlinePieces("pay #finance now"), [
     { text: "pay ", mark: "plain" },
     { text: "#finance", mark: "tag" },
@@ -776,14 +826,29 @@ test("inline marks keep the source characters", () => {
     ["> ", "quote"],
   );
   assert.equal(inlinePieces("*em*")[0]?.mark, "em");
-  assert.deepEqual(renderParts("# Title").map((part) => [part.syntax === true, part.text]), [
-    [true, "# "],
-    [false, "Title"],
-  ]);
-  assert.deepEqual(renderParts("**bold**").map((part) => part.text), ["**", "bold", "**"]);
+  assert.deepEqual(
+    renderParts("# Title").map((part) => [part.syntax === true, part.text]),
+    [
+      [true, "# "],
+      [false, "Title"],
+    ],
+  );
+  assert.deepEqual(
+    renderParts("**bold**").map((part) => part.text),
+    ["**", "bold", "**"],
+  );
   assert.equal(renderParts("**bold**")[1]?.cls, "md-strong");
-  assert.equal(renderParts("- [x] milk").some((part) => part.check && part.checked), true);
-  assert.equal(renderParts("- [x] milk").filter((part) => part.syntax).map((part) => part.text).join(""), "- [x] ");
+  assert.equal(
+    renderParts("- [x] milk").some((part) => part.check && part.checked),
+    true,
+  );
+  assert.equal(
+    renderParts("- [x] milk")
+      .filter((part) => part.syntax)
+      .map((part) => part.text)
+      .join(""),
+    "- [x] ",
+  );
   assert.equal(
     renderParts("hello **bold** #ship")
       .map((part) => part.text)
@@ -811,7 +876,7 @@ test("inline marks keep the source characters", () => {
 test("formatJsonDocument pretty-prints objects and json fences", () => {
   assert.equal(formatJsonDocument('{"a":1}'), '{\n  "a": 1\n}');
   assert.equal(formatJsonDocument("not json"), null);
-  const fenced = formatJsonDocument("intro\n```json\n{\"a\":1}\n```\n");
+  const fenced = formatJsonDocument('intro\n```json\n{"a":1}\n```\n');
   assert.match(fenced ?? "", /"a": 1/);
 });
 
@@ -831,7 +896,7 @@ test("memo-chrome computes palettes and renders stack header template", () => {
   assert.ok(tinted["--paper"].includes("180"));
   assert.ok(themeGlyph(true).includes("circle"));
   assert.ok(themeGlyph(false).includes("path"));
-  assert.ok(stackHeaderHtml().includes("class=\"brand-name\""));
+  assert.ok(stackHeaderHtml().includes('class="brand-name"'));
   assert.ok(huePopHtml().includes("hue-slider"));
   assert.ok(huePopHtml().includes("hue-slot"));
   assert.deepEqual(clampHueSwatches([48, 400, 48, 210, 12]), [48, 210, 12]);
@@ -904,4 +969,3 @@ test("release versions and Tauri IPC command contracts stay in sync without dang
     "Every registered Tauri command must be used by the frontend and every frontend invoke() must be registered",
   );
 });
-

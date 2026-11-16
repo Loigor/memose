@@ -21,13 +21,7 @@ import {
   writeLineMarks,
   type EditorPrefs,
 } from "../../editor/editor-field";
-import {
-  cloneBlocks,
-  readPlace,
-  remapBlockLines,
-  restoreCaret,
-  restorePlace,
-} from "../../editor/history";
+import { cloneBlocks, readPlace, remapBlockLines, restoreCaret, restorePlace } from "../../editor/history";
 import { lineOffsetAtPoint, mountLineEditor } from "../../editor/line-editor";
 import {
   applyCode,
@@ -54,12 +48,7 @@ import {
   type Block,
   type Edit,
 } from "../../editor/markdown-edit";
-import {
-  charOffsetAtPoint,
-  editorShell,
-  resizeAllBlockTextareas,
-  sizeBlockTextarea,
-} from "../../editor/textarea";
+import { charOffsetAtPoint, editorShell, resizeAllBlockTextareas, sizeBlockTextarea } from "../../editor/textarea";
 import { createMedia } from "../../media/media-dnd";
 import { hydratePreviewContent, previewBodyTarget } from "../../media/media-elements";
 import { inTauri } from "../../platform";
@@ -329,9 +318,13 @@ export function createEditorController(
       return;
     }
     previewEl.innerHTML = DOMPurify.sanitize(html);
-    await hydratePreviewContent(previewEl, () => generation === state.previewGeneration, (name) => {
-      void openPreview(name);
-    });
+    await hydratePreviewContent(
+      previewEl,
+      () => generation === state.previewGeneration,
+      (name) => {
+        void openPreview(name);
+      },
+    );
   }
 
   function togglePreview() {
@@ -625,12 +618,7 @@ export function createEditorController(
             if (prevBlock?.kind === "media") {
               prevBlock.inline = beforeLine.length > 0;
             }
-            state.blocks.splice(
-              index,
-              1,
-              { kind: "text", text: beforeLine },
-              { kind: "text", text: `\n${afterLine}` },
-            );
+            state.blocks.splice(index, 1, { kind: "text", text: beforeLine }, { kind: "text", text: `\n${afterLine}` });
             publishBlocks();
             drafts.scheduleDraft();
             const target = fieldAt(blocksEl, index);
@@ -665,7 +653,14 @@ export function createEditorController(
             applyEdit(area, tabOnMarkdown(area.value, area.selectionStart, area.selectionEnd, event.shiftKey));
             return;
           }
-          if (event.key !== "Enter" || event.shiftKey || event.altKey || event.metaKey || event.ctrlKey || event.isComposing) {
+          if (
+            event.key !== "Enter" ||
+            event.shiftKey ||
+            event.altKey ||
+            event.metaKey ||
+            event.ctrlKey ||
+            event.isComposing
+          ) {
             return;
           }
           if (block.kind === "code") {
@@ -748,7 +743,8 @@ export function createEditorController(
     }
     const media = blocksEl.querySelector(`[data-media="${CSS.escape(focusName)}"]`);
     const row = media?.parentElement;
-    const next = row?.querySelector("[data-block-field]") ?? row?.nextElementSibling?.querySelector("[data-block-field]");
+    const next =
+      row?.querySelector("[data-block-field]") ?? row?.nextElementSibling?.querySelector("[data-block-field]");
     if (isEditable(next)) {
       next.focus();
     }
@@ -1074,9 +1070,7 @@ export function createEditorController(
   }
 
   function offsetInField(field: Editable, x: number, y: number): number | null {
-    return field instanceof HTMLTextAreaElement
-      ? charOffsetAtPoint(field, x, y)
-      : lineOffsetAtPoint(field, x, y);
+    return field instanceof HTMLTextAreaElement ? charOffsetAtPoint(field, x, y) : lineOffsetAtPoint(field, x, y);
   }
 
   previewEl.addEventListener("change", (event) => {

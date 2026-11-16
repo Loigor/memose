@@ -20,8 +20,14 @@ type ScreenEdgeCue = {
 
 export function mountChrome(ctx: StackCtx) {
   function dragBlocked(target: EventTarget | null): boolean {
-    return (target instanceof Element &&
-      Boolean(target.closest("button, a, input, textarea, .md-lines, select, audio, video, .media, .media-audio, .file-attachment, #media-context-menu, #resize-grip, .resize-handle, #color-pop, #audience-pop, #format-pop, #md-toolbar, #editor-tools, .color-pop, .audience-pop, .format-pop, .md-toolbar, .editor-tools, .md-tag")));
+    return (
+      target instanceof Element &&
+      Boolean(
+        target.closest(
+          "button, a, input, textarea, .md-lines, select, audio, video, .media, .media-audio, .file-attachment, #media-context-menu, #resize-grip, .resize-handle, #color-pop, #audience-pop, #format-pop, #md-toolbar, #editor-tools, .color-pop, .audience-pop, .format-pop, .md-toolbar, .editor-tools, .md-tag",
+        ),
+      )
+    );
   }
 
   function scrollBoxFromElement(node: HTMLElement): {
@@ -63,14 +69,16 @@ export function mountChrome(ctx: StackCtx) {
   }
 
   function asResizeDir(value: string | undefined): ResizeDir | null {
-    if (value === "w" ||
+    if (
+      value === "w" ||
       value === "e" ||
       value === "n" ||
       value === "s" ||
       value === "nw" ||
       value === "ne" ||
       value === "sw" ||
-      value === "se") {
+      value === "se"
+    ) {
       return value;
     }
     return null;
@@ -82,7 +90,11 @@ export function mountChrome(ctx: StackCtx) {
     }
     const target = event.target;
     if (target instanceof Element) {
-      if (target.closest("button, a, input, textarea, select, #color-pop, #audience-pop, #format-pop, #md-toolbar, #editor-tools, .color-pop, .audience-pop, .format-pop, .md-toolbar, .editor-tools")) {
+      if (
+        target.closest(
+          "button, a, input, textarea, select, #color-pop, #audience-pop, #format-pop, #md-toolbar, #editor-tools, .color-pop, .audience-pop, .format-pop, .md-toolbar, .editor-tools",
+        )
+      ) {
         return null;
       }
       const handle = target.closest<HTMLElement>("[data-resize]");
@@ -231,7 +243,7 @@ export function mountChrome(ctx: StackCtx) {
       if (at === null) {
         return;
       }
-      const local = (name === "left" || name === "right" ? at - box.left : at - box.top);
+      const local = name === "left" || name === "right" ? at - box.left : at - box.top;
       if (name === "left" || name === "right") {
         edge.style.left = `${name === "right" ? local - 20 : local}px`;
       } else {
@@ -261,28 +273,36 @@ export function mountChrome(ctx: StackCtx) {
   }
 
   function wireChrome() {
-    window.addEventListener("pointerdown", (event) => {
-      if (event.button !== 0) {
-        return;
-      }
-      const dir = resizeZone(event);
-      if (!dir) {
-        return;
-      }
-      startResize(event, dir);
-    }, true);
-    window.addEventListener("mousedown", (event) => {
-      if (event.button !== 0) {
-        return;
-      }
-      const dir = resizeZone(event);
-      if (!dir) {
-        return;
-      }
-      event.preventDefault();
-      event.stopPropagation();
-      startResize(event, dir);
-    }, true);
+    window.addEventListener(
+      "pointerdown",
+      (event) => {
+        if (event.button !== 0) {
+          return;
+        }
+        const dir = resizeZone(event);
+        if (!dir) {
+          return;
+        }
+        startResize(event, dir);
+      },
+      true,
+    );
+    window.addEventListener(
+      "mousedown",
+      (event) => {
+        if (event.button !== 0) {
+          return;
+        }
+        const dir = resizeZone(event);
+        if (!dir) {
+          return;
+        }
+        event.preventDefault();
+        event.stopPropagation();
+        startResize(event, dir);
+      },
+      true,
+    );
     const hostHeader = document.querySelector<HTMLElement>("#card header");
     hostHeader?.addEventListener("pointerdown", (event) => {
       if (event.button !== 0 || dragBlocked(event.target)) {
@@ -299,8 +319,12 @@ export function mountChrome(ctx: StackCtx) {
       if (!ctx.fold.hostCollapsed || ctx.pointer.pressTravel > 8) {
         return;
       }
-      if (event.target instanceof Element &&
-        event.target.closest("textarea, button, input, #audience-pop, #color-pop, #format-pop, #md-toolbar, #editor-tools")) {
+      if (
+        event.target instanceof Element &&
+        event.target.closest(
+          "textarea, button, input, #audience-pop, #color-pop, #format-pop, #md-toolbar, #editor-tools",
+        )
+      ) {
         return;
       }
       if (ctx.api.holdCollapsed("host")) {
@@ -338,9 +362,10 @@ export function mountChrome(ctx: StackCtx) {
           ctx.fold.lastActiveSection = "host";
         }
       }
-      const field = target instanceof HTMLTextAreaElement || (target instanceof HTMLInputElement && target.type !== "range")
-        ? target
-        : editingHost(target);
+      const field =
+        target instanceof HTMLTextAreaElement || (target instanceof HTMLInputElement && target.type !== "range")
+          ? target
+          : editingHost(target);
       if (field) {
         const section = field.closest<HTMLElement>(".stack-note");
         const nextHold = section?.dataset.id ?? (ctx.deps.card.contains(field) ? "host" : null);
@@ -467,14 +492,14 @@ export function mountChrome(ctx: StackCtx) {
           const x = payload.position.x / factor;
           const y = payload.position.y / factor;
           const el = document.elementFromPoint(x, y);
-          const targetSection = el?.closest<HTMLElement>(".stack-note") ?? ctx.api.activeStackSection()?.section ?? null;
+          const targetSection =
+            el?.closest<HTMLElement>(".stack-note") ?? ctx.api.activeStackSection()?.section ?? null;
           void (async () => {
             for (const path of payload.paths) {
               try {
                 const md = await invoke<string>("save_media_file", { path });
                 ctx.deps.editor.insertSnippet(md, targetSection);
-              }
-              catch (error) {
+              } catch (error) {
                 console.error(error);
               }
             }

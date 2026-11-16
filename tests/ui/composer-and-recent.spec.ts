@@ -199,7 +199,9 @@ test("opening a recent memo loads it into the editor", async ({ page }) => {
   await openComposer(page, { notes });
   await page.locator("#recent-more").click();
   await page.locator("#recent .title", { hasText: "Opened memo" }).click();
-  await expect.poll(() => editorText(page.locator("#blocks .md-lines, #blocks textarea").first())).toMatch(/Opened memo/);
+  await expect
+    .poll(() => editorText(page.locator("#blocks .md-lines, #blocks textarea").first()))
+    .toMatch(/Opened memo/);
   await expect(page.locator("#recent li.selected")).toHaveCount(1);
 });
 
@@ -268,12 +270,14 @@ test("a task line shows a checkbox after the caret leaves it", async ({ page }) 
   await area.click();
   await page.keyboard.type("- [ ] milk");
   await expect(page.locator(".md-check")).toHaveCount(0);
-  await expect.poll(() =>
-    area.evaluate((el) => {
-      const node = el.ownerDocument.getSelection()?.anchorNode;
-      return node?.parentElement?.classList.contains("md-syntax") === true;
-    }),
-  ).toBe(false);
+  await expect
+    .poll(() =>
+      area.evaluate((el) => {
+        const node = el.ownerDocument.getSelection()?.anchorNode;
+        return node?.parentElement?.classList.contains("md-syntax") === true;
+      }),
+    )
+    .toBe(false);
   await page.keyboard.press("Enter");
   await expect(page.locator(".md-row").first().locator(".md-check")).toHaveCount(1);
   await expect(page.locator(".md-row.is-live")).toHaveText("- [ ]");
@@ -333,13 +337,18 @@ test("normal editor styles a heading line and keeps the markdown", async ({ page
   await expect.poll(() => page.locator(".md-row.is-h1 .md-syntax").evaluate((el) => el.textContent)).toBe("# ");
   await expect(page.locator(".md-row.is-done").first().locator(".md-check")).toBeChecked();
   await expect(page.locator(".md-row.is-done").first().locator(".md-strike")).toHaveText("milk");
-  await expect(page.locator(".md-row.is-done").first().locator(".md-strike")).toHaveCSS("text-decoration-line", "line-through");
+  await expect(page.locator(".md-row.is-done").first().locator(".md-strike")).toHaveCSS(
+    "text-decoration-line",
+    "line-through",
+  );
   await expect.poll(() => page.locator(".md-row.is-quote .md-syntax").evaluate((el) => el.textContent)).toBe("> ");
   await expect(page.locator(".md-row.is-hr")).toHaveText("---");
   const bare = page.locator(".md-row.is-done").nth(1);
   await expect(bare.locator(".md-check")).toBeChecked();
   await expect(bare.locator(".md-strike")).toHaveCount(0);
-  await expect.poll(() => editorText(area)).toBe("# Title\nhello **bold**\n- [x] milk\n> note\n---\n- [x]\n**see #ship**");
+  await expect
+    .poll(() => editorText(area))
+    .toBe("# Title\nhello **bold**\n- [x] milk\n> note\n---\n- [x]\n**see #ship**");
   await expect(page.locator(".md-strong .md-tag")).toHaveText("#ship");
   const row = page.locator(".md-row").nth(1);
   await row.evaluate((el) => {
@@ -403,21 +412,21 @@ test("coder toggle shows a line gutter on that memo", async ({ page }) => {
   const overlay = page.locator(".md-field[data-coder] .md-hl").first();
   const shared = ["padding-top", "padding-left", "line-height", "font-size", "white-space", "tab-size"] as const;
   for (const prop of shared) {
-    const value = await overlay.evaluate(
-      (el, name) => getComputedStyle(el).getPropertyValue(name),
-      prop,
-    );
+    const value = await overlay.evaluate((el, name) => getComputedStyle(el).getPropertyValue(name), prop);
     await expect(area).toHaveCSS(prop, value);
   }
   await area.fill("\thello\nhello");
   await expect(page.locator(".md-line-text").first()).toHaveCSS("white-space", "pre");
-  const tabExtra = await page.locator(".md-field[data-coder]").first().evaluate((field) => {
-    const lines = [...field.querySelectorAll(".md-line-text")];
-    if (lines.length < 2) {
-      return 0;
-    }
-    return lines[0].getBoundingClientRect().width - lines[1].getBoundingClientRect().width;
-  });
+  const tabExtra = await page
+    .locator(".md-field[data-coder]")
+    .first()
+    .evaluate((field) => {
+      const lines = [...field.querySelectorAll(".md-line-text")];
+      if (lines.length < 2) {
+        return 0;
+      }
+      return lines[0].getBoundingClientRect().width - lines[1].getBoundingClientRect().width;
+    });
   expect(tabExtra).toBeGreaterThan(8);
   await area.press("ControlOrMeta+A");
   await expect(page.locator(".md-hl").first()).toHaveCSS("visibility", "visible");
@@ -452,15 +461,21 @@ test("line wrap shows a long line and enter still adds one break", async ({ page
   await page.keyboard.press("Enter");
   await expect.poll(() => area.evaluate((el) => (el as HTMLTextAreaElement).value)).toBe(`${long}\n`);
   await expect(page.locator(".md-gutter-n")).toHaveText(["1", "2"]);
-  await expect.poll(() => page.evaluate(() => {
-    const rows = [...document.querySelectorAll<HTMLElement>(".md-gutter-n")];
-    return rows.length > 1 ? rows[1].offsetTop - rows[0].offsetTop : 0;
-  })).toBeGreaterThan(24);
+  await expect
+    .poll(() =>
+      page.evaluate(() => {
+        const rows = [...document.querySelectorAll<HTMLElement>(".md-gutter-n")];
+        return rows.length > 1 ? rows[1].offsetTop - rows[0].offsetTop : 0;
+      }),
+    )
+    .toBeGreaterThan(24);
   const first = page.locator(".md-gutter-n").first();
   const height = await first.evaluate((el) => el.getBoundingClientRect().height);
   await first.dblclick({ position: { x: 8, y: height - 4 } });
   await expect(page.locator(".md-line-ball")).toHaveCount(1);
-  const ballTop = await page.locator(".md-line-ball").evaluate((el) => Number.parseFloat((el as HTMLElement).style.top));
+  const ballTop = await page
+    .locator(".md-line-ball")
+    .evaluate((el) => Number.parseFloat((el as HTMLElement).style.top));
   expect(ballTop).toBeLessThan(height);
 });
 
@@ -556,10 +571,12 @@ test("line wrap, a fold, and a line mark reopen with the memo", async ({ page })
   await format.click();
   await page.locator('#format-pop button[data-format="wrap"]').click();
   await expect(page.locator("#card")).not.toHaveAttribute("data-wrap", "");
-  await expect.poll(async () => {
-    const stored = await getNotes(page);
-    return stored.find((note) => note.id === "note-0000");
-  }).toMatchObject({ lineWrap: false, folds: [[1]], marks: [[0]] });
+  await expect
+    .poll(async () => {
+      const stored = await getNotes(page);
+      return stored.find((note) => note.id === "note-0000");
+    })
+    .toMatchObject({ lineWrap: false, folds: [[1]], marks: [[0]] });
 });
 
 test("a brace block in the coder editor folds without dropping the text", async ({ page }) => {
@@ -640,7 +657,9 @@ test("backspace in an empty code block removes it", async ({ page }) => {
   await expect(page.locator("textarea[data-kind='code']")).toHaveCount(0);
   const lines = page.locator(".md-lines");
   await expect.poll(() => editorText(lines)).toBe("hello\nworld");
-  await expect.poll(() => lines.evaluate((el) => (el as HTMLElement & { selectionStart?: number }).selectionStart ?? -1)).toBe("hello".length);
+  await expect
+    .poll(() => lines.evaluate((el) => (el as HTMLElement & { selectionStart?: number }).selectionStart ?? -1))
+    .toBe("hello".length);
 });
 
 test("backspace at the start of a nonempty code block leaves it", async ({ page }) => {
@@ -665,7 +684,8 @@ test("a code block in the coder editor keeps both line numbers", async ({ page }
   await area.fill("intro\n```json\nconst x = 1\nline 2\n```\nbeta");
   const noteNumbers = () =>
     page.locator("#blocks .md-gutter:not(.md-gutter-code)").evaluateAll((els) => els.map((el) => el.textContent));
-  const codeNumbers = () => page.locator("#blocks .md-gutter-code").evaluateAll((els) => els.map((el) => el.textContent));
+  const codeNumbers = () =>
+    page.locator("#blocks .md-gutter-code").evaluateAll((els) => els.map((el) => el.textContent));
   await expect.poll(noteNumbers).toEqual(["1", "2\n3", "4"]);
   await expect.poll(codeNumbers).toEqual(["1\n2"]);
   const primary = page.locator("#blocks .md-field:has(textarea[data-kind='code']) .md-gutter:not(.md-gutter-code)");
@@ -679,7 +699,9 @@ test("a code block in the coder editor keeps both line numbers", async ({ page }
   const places = await page.evaluate(() => {
     const label = document.querySelector(".md-lang")!.getBoundingClientRect();
     const field = document.querySelector(".md-field:has(textarea[data-kind='code'])")!.getBoundingClientRect();
-    const main = document.querySelector(".md-field:has(textarea[data-kind='code']) .md-gutter:not(.md-gutter-code)")!.getBoundingClientRect();
+    const main = document
+      .querySelector(".md-field:has(textarea[data-kind='code']) .md-gutter:not(.md-gutter-code)")!
+      .getBoundingClientRect();
     const local = document.querySelector(".md-gutter-code")!.getBoundingClientRect();
     const code = document.querySelector("textarea[data-kind='code']")!.getBoundingClientRect();
     return {
@@ -703,8 +725,17 @@ test("a code block in the coder editor keeps both line numbers", async ({ page }
     const bar = document.querySelector(".md-mark-bar")!.getBoundingClientRect();
     const local = document.querySelector(".md-gutter-code")!.getBoundingClientRect();
     const ball = document.querySelector(".md-line-ball")!.getBoundingClientRect();
-    const main = document.querySelector(".md-field:has(textarea[data-kind='code']) .md-gutter:not(.md-gutter-code)")!.getBoundingClientRect();
-    return { barLeft: bar.left, localLeft: local.left, localRight: local.right, ballLeft: ball.left, mainLeft: main.left, mainRight: main.right };
+    const main = document
+      .querySelector(".md-field:has(textarea[data-kind='code']) .md-gutter:not(.md-gutter-code)")!
+      .getBoundingClientRect();
+    return {
+      barLeft: bar.left,
+      localLeft: local.left,
+      localRight: local.right,
+      ballLeft: ball.left,
+      mainLeft: main.left,
+      mainRight: main.right,
+    };
   });
   expect(marked.barLeft).toBeLessThanOrEqual(marked.localLeft + 1);
   expect(marked.ballLeft).toBeGreaterThanOrEqual(marked.mainLeft - 1);
@@ -737,18 +768,19 @@ test("cycling to the last memo restores the caret", async ({ page }) => {
   await emitEvent(page, "composer-cycle", 2);
   const area = await composerTextarea(page);
   await expect.poll(() => editorText(area)).toBe("abcdefghij");
-  await expect.poll(async () => {
-    const calls = await getInvocations(page);
-    return [...calls].reverse().find((item) => item.cmd === "apply_composer_size")?.args;
-  }).toEqual({ width: 640, height: 800 });
-  await expect.poll(async () => {
-    const calls = await getInvocations(page);
-    const applyAt = calls.reduce(
-      (index, item, at) => (item.cmd === "apply_composer_size" ? at : index),
-      -1,
-    );
-    return calls.slice(applyAt).some((item) => item.cmd === "slide_into_view");
-  }).toBe(true);
+  await expect
+    .poll(async () => {
+      const calls = await getInvocations(page);
+      return [...calls].reverse().find((item) => item.cmd === "apply_composer_size")?.args;
+    })
+    .toEqual({ width: 640, height: 800 });
+  await expect
+    .poll(async () => {
+      const calls = await getInvocations(page);
+      const applyAt = calls.reduce((index, item, at) => (item.cmd === "apply_composer_size" ? at : index), -1);
+      return calls.slice(applyAt).some((item) => item.cmd === "slide_into_view");
+    })
+    .toBe(true);
   await area.evaluate((el: HTMLTextAreaElement) => {
     el.focus();
     el.setSelectionRange(3, 3);
@@ -756,10 +788,12 @@ test("cycling to the last memo restores the caret", async ({ page }) => {
   });
   await emitEvent(page, "composer-cycle", 3);
   await expect.poll(() => editorText(page.locator("#blocks .md-lines, #blocks textarea").first())).toBe("");
-  await expect.poll(async () => {
-    const calls = await getInvocations(page);
-    return [...calls].reverse().find((item) => item.cmd === "apply_composer_size")?.args;
-  }).toEqual({ width: null, height: null });
+  await expect
+    .poll(async () => {
+      const calls = await getInvocations(page);
+      return [...calls].reverse().find((item) => item.cmd === "apply_composer_size")?.args;
+    })
+    .toEqual({ width: null, height: null });
   await emitEvent(page, "composer-cycle", 4);
   const again = await composerTextarea(page);
   await expect.poll(() => editorText(again)).toBe("abcdefghij");

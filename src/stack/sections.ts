@@ -1,6 +1,18 @@
 import { denseLines, memoUsesCoder, refreshEditorFields } from "../editor/editor-field";
 import { BlockHistory } from "../editor/history";
-import { applyCode, applyJsonFormat, applyList, applyOrdered, applyQuote, applyTask, applyTitle, noteTitle, parseBlocks, toggleTask, wrapText } from "../editor/markdown-edit";
+import {
+  applyCode,
+  applyJsonFormat,
+  applyList,
+  applyOrdered,
+  applyQuote,
+  applyTask,
+  applyTitle,
+  noteTitle,
+  parseBlocks,
+  toggleTask,
+  wrapText,
+} from "../editor/markdown-edit";
 import { resizeAllBlockTextareas } from "../editor/textarea";
 import { revealPressedChoice } from "../look/audience-ui";
 import { namedTheme } from "../look/look";
@@ -144,21 +156,23 @@ export function mountSections(ctx: StackCtx) {
 
   async function flushSectionSaves(ids?: Iterable<string>) {
     const targets = ids ? [...ids] : [...ctx.saveTimers.keys()];
-    await Promise.all(targets.map(async (id) => {
-      const timer = ctx.saveTimers.get(id);
-      if (!timer) {
-        return;
-      }
-      clearTimeout(timer);
-      ctx.saveTimers.delete(id);
-      const state = ctx.notes.get(id);
-      if (!state) {
-        return;
-      }
-      state.loaded = state.content;
-      await invoke("save_edit", { id, content: state.content });
-      await ctx.api.saveSectionEditorView(id, state);
-    }));
+    await Promise.all(
+      targets.map(async (id) => {
+        const timer = ctx.saveTimers.get(id);
+        if (!timer) {
+          return;
+        }
+        clearTimeout(timer);
+        ctx.saveTimers.delete(id);
+        const state = ctx.notes.get(id);
+        if (!state) {
+          return;
+        }
+        state.loaded = state.content;
+        await invoke("save_edit", { id, content: state.content });
+        await ctx.api.saveSectionEditorView(id, state);
+      }),
+    );
   }
 
   function buildSection(note: Note): HTMLElement {
@@ -235,7 +249,12 @@ export function mountSections(ctx: StackCtx) {
       if (!state || !state.collapsed || ctx.pointer.pressTravel > 8 || header.dataset.moved === "1") {
         return;
       }
-      if (event.target instanceof Element && event.target.closest("textarea, .md-lines, button, input, .color-pop, .audience-pop, .format-pop, .md-toolbar, .editor-tools")) {
+      if (
+        event.target instanceof Element &&
+        event.target.closest(
+          "textarea, .md-lines, button, input, .color-pop, .audience-pop, .format-pop, .md-toolbar, .editor-tools",
+        )
+      ) {
         return;
       }
       if (ctx.api.holdCollapsed(note.id)) {
@@ -254,7 +273,11 @@ export function mountSections(ctx: StackCtx) {
       if (!(target instanceof Element)) {
         return;
       }
-      if (target.closest("header, button, input, textarea, .md-lines, .media, .media-audio, .file-attachment, .color-pop, .audience-pop, .format-pop, .md-toolbar, .editor-tools, #resize-grip, .resize-handle")) {
+      if (
+        target.closest(
+          "header, button, input, textarea, .md-lines, .media, .media-audio, .file-attachment, .color-pop, .audience-pop, .format-pop, .md-toolbar, .editor-tools, #resize-grip, .resize-handle",
+        )
+      ) {
         return;
       }
       ctx.api.startWindowDrag(event);
@@ -351,25 +374,26 @@ export function mountSections(ctx: StackCtx) {
       }
       const { start, end } = ctx.api.sectionAreaSelection(field, state);
       const value = field.value;
-      const edit = kind === "bold"
-        ? wrapText(value, start, end, "**", "**")
-        : kind === "italic"
-          ? wrapText(value, start, end, "*", "*")
-          : kind === "title"
-            ? applyTitle(value, start, end)
-            : kind === "list"
-              ? applyList(value, start, end)
-              : kind === "ordered"
-                ? applyOrdered(value, start, end)
-                : kind === "task"
-                  ? applyTask(value, start, end)
-                  : kind === "quote"
-                    ? applyQuote(value, start, end)
-                    : kind === "code"
-                      ? applyCode(value, start, end)
-                      : kind === "json"
-                        ? applyJsonFormat(value)
-                        : null;
+      const edit =
+        kind === "bold"
+          ? wrapText(value, start, end, "**", "**")
+          : kind === "italic"
+            ? wrapText(value, start, end, "*", "*")
+            : kind === "title"
+              ? applyTitle(value, start, end)
+              : kind === "list"
+                ? applyList(value, start, end)
+                : kind === "ordered"
+                  ? applyOrdered(value, start, end)
+                  : kind === "task"
+                    ? applyTask(value, start, end)
+                    : kind === "quote"
+                      ? applyQuote(value, start, end)
+                      : kind === "code"
+                        ? applyCode(value, start, end)
+                        : kind === "json"
+                          ? applyJsonFormat(value)
+                          : null;
       if (!edit) {
         return;
       }
@@ -507,8 +531,10 @@ export function mountSections(ctx: StackCtx) {
       ctx.api.scheduleSectionSave(section, state);
     });
     preview?.addEventListener("dblclick", (event) => {
-      if (event.target instanceof Element &&
-        event.target.closest("a, input, img, video, audio, .media-audio, .file-attachment, button")) {
+      if (
+        event.target instanceof Element &&
+        event.target.closest("a, input, img, video, audio, .media-audio, .file-attachment, button")
+      ) {
         return;
       }
       const state = ctx.notes.get(note.id);
@@ -525,16 +551,12 @@ export function mountSections(ctx: StackCtx) {
     const delYes = section.querySelector<HTMLButtonElement>(".delete-yes");
     const spaceChoices = section.querySelector<HTMLElement>(".space-choices");
     const resetSectionDelete = () => {
-      if (delNote)
-        delNote.hidden = false;
-      if (delConfirm)
-        delConfirm.hidden = true;
-      if (delYes)
-        delYes.textContent = "Delete";
+      if (delNote) delNote.hidden = false;
+      if (delConfirm) delConfirm.hidden = true;
+      if (delYes) delYes.textContent = "Delete";
     };
     const closeSectionAudience = () => {
-      if (audPop)
-        audPop.hidden = true;
+      if (audPop) audPop.hidden = true;
       visLabel?.setAttribute("aria-expanded", "false");
       resetSectionDelete();
     };
@@ -554,18 +576,15 @@ export function mountSections(ctx: StackCtx) {
       closeSectionAudience();
     });
     delNote?.addEventListener("click", () => {
-      if (delNote)
-        delNote.hidden = true;
-      if (delConfirm)
-        delConfirm.hidden = false;
+      if (delNote) delNote.hidden = true;
+      if (delConfirm) delConfirm.hidden = false;
     });
     delNo?.addEventListener("click", () => {
       resetSectionDelete();
     });
     delYes?.addEventListener("click", () => {
       void (async () => {
-        if (delYes)
-          delYes.textContent = "Deleting…";
+        if (delYes) delYes.textContent = "Deleting…";
         const pending = ctx.saveTimers.get(note.id);
         if (pending) {
           clearTimeout(pending);
@@ -574,8 +593,7 @@ export function mountSections(ctx: StackCtx) {
         await invoke("delete_note", { id: note.id });
         closeSectionAudience();
       })().catch((error: unknown) => {
-        if (delYes)
-          delYes.textContent = "Could not delete";
+        if (delYes) delYes.textContent = "Could not delete";
         console.error(error);
       });
     });
@@ -652,8 +670,7 @@ export function mountSections(ctx: StackCtx) {
         swatches: [...note.swatches],
         opacity: note.opacity,
         theme: prev?.theme ?? namedTheme(note.theme),
-        coder: prev?.coder ??
-          (note.coder === true ? true : note.coder === false ? false : null),
+        coder: prev?.coder ?? (note.coder === true ? true : note.coder === false ? false : null),
         wrap: prev?.wrap ?? note.lineWrap === true,
         folds: prev?.folds ?? denseLines(note.folds),
         marks: prev?.marks ?? denseLines(note.marks),

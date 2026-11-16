@@ -48,7 +48,7 @@ jobs:
       - name: Setup Rust toolchain
         uses: dtolnay/rust-toolchain@stable
         with:
-          components: clippy
+          components: clippy, rustfmt
 
       - name: Cache Rust build artifacts
         uses: Swatinem/rust-cache@v2
@@ -61,11 +61,20 @@ jobs:
       - name: Verify version synchronization
         run: node release/sync-version.mjs --check
 
+      - name: Check TypeScript formatting
+        run: npm run format:check
+
+      - name: Lint TypeScript
+        run: npm run lint
+
       - name: Build frontend bundle
         run: npm run build
 
       - name: Run frontend unit & IPC contract tests
         run: npm run test:ts
+
+      - name: Check Rust formatting
+        run: npm run fmt:rust:check
 
       - name: Run Rust Clippy lints
         run: npm run lint:rust

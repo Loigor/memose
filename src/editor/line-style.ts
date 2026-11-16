@@ -247,7 +247,16 @@ function styledParts(text: string, mark: InlineMark, tags: boolean): RenderPart[
     return [{ text, cls: "md-tag" }];
   }
   const edges = edgesOf(text, mark);
-  const cls = mark === "strong" ? "md-strong" : mark === "em" ? "md-em" : mark === "code" ? "md-code" : mark === "link" ? "md-link" : "";
+  const cls =
+    mark === "strong"
+      ? "md-strong"
+      : mark === "em"
+        ? "md-em"
+        : mark === "code"
+          ? "md-code"
+          : mark === "link"
+            ? "md-link"
+            : "";
   if (!edges) {
     return [{ text, cls: cls || undefined }];
   }
@@ -256,7 +265,10 @@ function styledParts(text: string, mark: InlineMark, tags: boolean): RenderPart[
     parts.push({ text: edges.open, syntax: true });
   }
   if (edges.body) {
-    const bits = tags && (mark === "strong" || mark === "em") ? tagPieces(edges.body) : [{ text: edges.body, mark: "plain" as const }];
+    const bits =
+      tags && (mark === "strong" || mark === "em")
+        ? tagPieces(edges.body)
+        : [{ text: edges.body, mark: "plain" as const }];
     if (bits.length === 1 && bits[0]?.mark !== "tag") {
       parts.push({ text: edges.body, cls });
     } else {

@@ -175,9 +175,10 @@ function installBrowserHarness(seed: BrowserSeed) {
         ? Math.round(seed.settings.indentWidth)
         : 2,
     pinTabBarEnabled: seed.settings?.pinTabBarEnabled !== false,
-    pinTabScreen: seed.settings?.pinTabScreen === "all" || seed.settings?.pinTabScreen?.startsWith("display:")
-      ? seed.settings.pinTabScreen
-      : "cursor",
+    pinTabScreen:
+      seed.settings?.pinTabScreen === "all" || seed.settings?.pinTabScreen?.startsWith("display:")
+        ? seed.settings.pinTabScreen
+        : "cursor",
     pinTabEdge:
       seed.settings?.pinTabEdge === "bottom" ||
       seed.settings?.pinTabEdge === "left" ||
@@ -269,9 +270,7 @@ function installBrowserHarness(seed: BrowserSeed) {
 
   function listRecent(limit) {
     const requested = Number(limit) || 200;
-    const cap = state.listRecentLimit > 200
-      ? state.listRecentLimit
-      : Math.max(1, Math.min(200, requested));
+    const cap = state.listRecentLimit > 200 ? state.listRecentLimit : Math.max(1, Math.min(200, requested));
     return state.notes
       .filter((note) => note.syncState !== "draft")
       .sort((a, b) => b.updatedAt - a.updatedAt)
@@ -668,8 +667,7 @@ function installBrowserHarness(seed: BrowserSeed) {
         });
         return null;
       case "set_markdown_scheme":
-        state.settings.markdownScheme =
-          a.scheme === "cool" || a.scheme === "mono" ? a.scheme : "paper";
+        state.settings.markdownScheme = a.scheme === "cool" || a.scheme === "mono" ? a.scheme : "paper";
         emit("editor-prefs-changed", {
           coderEditor: state.settings.coderEditor,
           markdownHighlight: state.settings.markdownHighlight,

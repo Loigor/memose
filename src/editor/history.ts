@@ -41,11 +41,7 @@ export function readPlace(container: ParentNode, caret: Caret | null): EditorPla
   };
 }
 
-export function restorePlace(
-  container: ParentNode,
-  place: EditorPlace | null,
-  focus = true,
-): boolean {
+export function restorePlace(container: ParentNode, place: EditorPlace | null, focus = true): boolean {
   if (!place) {
     return false;
   }

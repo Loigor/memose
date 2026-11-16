@@ -117,7 +117,9 @@ function rewriteLines(value: string, start: number, end: number, rewrite: (line:
 }
 
 export function applyTitle(value: string, start: number, end: number): Edit {
-  return rewriteLines(value, start, end, (line) => withBlockPrefix(line, "# ", (item) => /^#{1,6}[ \t]/.test(item), false));
+  return rewriteLines(value, start, end, (line) =>
+    withBlockPrefix(line, "# ", (item) => /^#{1,6}[ \t]/.test(item), false),
+  );
 }
 
 export function applyTask(value: string, start: number, end: number): Edit {
@@ -253,7 +255,7 @@ export function renumberOrderedLists(value: string, start: number, end: number):
       continue;
     }
 
-    const indent = (isTask?.[1] ?? isList?.[1] ?? isOrdered?.[1]) ?? "";
+    const indent = isTask?.[1] ?? isList?.[1] ?? isOrdered?.[1] ?? "";
     const cols = indentCols(indent);
     for (const key of [...counters.keys()]) {
       if (key > cols) {
@@ -368,7 +370,7 @@ export function tabOnMarkdown(value: string, start: number, end: number, shiftKe
     const isOrdered = !isTask && !isList ? orderedListLine.exec(line) : null;
 
     if (isTask || isList || isOrdered) {
-      const currentIndent = (isTask?.[1] ?? isList?.[1] ?? isOrdered?.[1]) ?? "";
+      const currentIndent = isTask?.[1] ?? isList?.[1] ?? isOrdered?.[1] ?? "";
       if (!shiftKey) {
         const nextLine = listIndentUnit + line;
         const next = value.slice(0, lineStart) + nextLine + value.slice(lineEnd);
@@ -376,9 +378,7 @@ export function tabOnMarkdown(value: string, start: number, end: number, shiftKe
         return renumberOrderedLists(next, cursor, cursor);
       }
       if (currentIndent.length > 0) {
-        const removeCount = currentIndent.startsWith("\t")
-          ? 1
-          : Math.min(listIndentUnit.length, currentIndent.length);
+        const removeCount = currentIndent.startsWith("\t") ? 1 : Math.min(listIndentUnit.length, currentIndent.length);
         const nextLine = line.slice(removeCount);
         const next = value.slice(0, lineStart) + nextLine + value.slice(lineEnd);
         const cursor = Math.max(lineStart, start - removeCount);
@@ -442,7 +442,7 @@ export function tabOnMarkdown(value: string, start: number, end: number, shiftKe
       return line.slice(removeCount);
     }
     if (isTask || isList || isOrdered) {
-      const body = (isTask?.[4] ?? isList?.[3] ?? isOrdered?.[4]) ?? "";
+      const body = isTask?.[4] ?? isList?.[3] ?? isOrdered?.[4] ?? "";
       const prefixLen = line.length - body.length;
       if (idx === 0) firstDelta = -prefixLen;
       totalDelta -= prefixLen;
@@ -516,11 +516,7 @@ export function indentCode(value: string, start: number, end: number, shift: boo
       return unit + line;
     }
     const lead = /^[ \t]+/.exec(line)?.[0] ?? "";
-    const remove = lead.startsWith("\t")
-      ? 1
-      : lead.startsWith(unit)
-        ? unit.length
-        : Math.min(unit.length, lead.length);
+    const remove = lead.startsWith("\t") ? 1 : lead.startsWith(unit) ? unit.length : Math.min(unit.length, lead.length);
     if (index === 0) {
       firstDelta = -remove;
     }
@@ -715,7 +711,11 @@ export function parseMediaMeta(rawLabel?: string, rawFrag?: string): { label?: s
 }
 
 export function mediaMarkdown(name: string, label?: string, width?: number): string {
-  const cleanLabel = (label ?? "").replace(/[\r\n]/g, "").replace(/\[/g, "(").replace(/\]/g, ")").trim();
+  const cleanLabel = (label ?? "")
+    .replace(/[\r\n]/g, "")
+    .replace(/\[/g, "(")
+    .replace(/\]/g, ")")
+    .trim();
   const frag = width && width >= 40 ? `#w=${Math.round(width)}` : "";
   if (isPreviewableMedia(name)) {
     return `![${cleanLabel}](${mediaPrefix}${name}${frag})`;
@@ -766,10 +766,7 @@ export function ensureTextSlots(items: Block[]): Block[] {
   return next;
 }
 
-export function dropCodeBlock(
-  blocks: Block[],
-  index: number,
-): { blocks: Block[]; index: number; offset: number } {
+export function dropCodeBlock(blocks: Block[], index: number): { blocks: Block[]; index: number; offset: number } {
   let textOrdinal = -1;
   let offset = 0;
   for (let i = 0; i < index; i += 1) {
@@ -1035,5 +1032,3 @@ export function noteTitle(content: string): string {
   }
   return "Note";
 }
-
-

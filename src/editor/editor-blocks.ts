@@ -97,11 +97,7 @@ export function handleBlockMediaDeletion(
   return false;
 }
 
-export function handleBlockAreaNavigation(
-  container: HTMLElement,
-  area: Editable,
-  event: KeyboardEvent,
-): boolean {
+export function handleBlockAreaNavigation(container: HTMLElement, area: Editable, event: KeyboardEvent): boolean {
   if (event.shiftKey || event.altKey || event.metaKey || event.ctrlKey || event.isComposing) {
     return false;
   }
@@ -317,8 +313,7 @@ export function findMediaDropTarget(
   for (const area of areas) {
     const blockIndex = area.index;
     const lines = area.lines;
-    const boundaries =
-      area.value.length === 0 ? [lines[0].top] : [lines[0].top, ...lines.map((l) => l.bottom)];
+    const boundaries = area.value.length === 0 ? [lines[0].top] : [lines[0].top, ...lines.map((l) => l.bottom)];
     const maxLineIndex = boundaries.length - 1;
     boundaries.forEach((y, lineIndex) => {
       if (blockIndex === fromIndex - 1 && lineIndex === maxLineIndex) {

@@ -1,9 +1,39 @@
 import { activeField, type Editable, fieldAt, fieldsIn } from "../editor/editable";
-import { applyMediaFigureSize, focusLiftedCode, handleBlockAreaNavigation, handleBlockMediaDeletion, syncInlineLineSlot } from "../editor/editor-blocks";
-import { codeSurface, denseLines, memoUsesCoder, readFolds, readLineMarks, wrapEditorField, writeFolds, writeLineMarks } from "../editor/editor-field";
+import {
+  applyMediaFigureSize,
+  focusLiftedCode,
+  handleBlockAreaNavigation,
+  handleBlockMediaDeletion,
+  syncInlineLineSlot,
+} from "../editor/editor-blocks";
+import {
+  codeSurface,
+  denseLines,
+  memoUsesCoder,
+  readFolds,
+  readLineMarks,
+  wrapEditorField,
+  writeFolds,
+  writeLineMarks,
+} from "../editor/editor-field";
 import { cloneBlocks, remapBlockLines, restoreCaret } from "../editor/history";
 import { mountLineEditor } from "../editor/line-editor";
-import { type Block, closedFenceIn, completeOpenFence, dropCodeBlock, type Edit, ensureTextSlots, indentCode, isTypedBlock, mediaTokenRegex, noteTitle, parseBlocks, serializeBlocks, tabOnMarkdown, taskListOnEnter } from "../editor/markdown-edit";
+import {
+  type Block,
+  closedFenceIn,
+  completeOpenFence,
+  dropCodeBlock,
+  type Edit,
+  ensureTextSlots,
+  indentCode,
+  isTypedBlock,
+  mediaTokenRegex,
+  noteTitle,
+  parseBlocks,
+  serializeBlocks,
+  tabOnMarkdown,
+  taskListOnEnter,
+} from "../editor/markdown-edit";
 import { editorShell, resizeAllBlockTextareas, sizeBlockTextarea } from "../editor/textarea";
 import { createMedia, type MediaNoteMutator } from "../media/media-dnd";
 import { hydratePreviewContent } from "../media/media-elements";
@@ -31,12 +61,23 @@ export function mountEditor(ctx: StackCtx) {
       return;
     }
     const root = sectionMarkRoot(state);
-    state.history.push(state.blocks, state.caret, force, readLineMarks(root, state.marks), readFolds(root, state.folds));
+    state.history.push(
+      state.blocks,
+      state.caret,
+      force,
+      readLineMarks(root, state.marks),
+      readFolds(root, state.folds),
+    );
   }
 
   function undoSection(section: HTMLElement, state: SectionState): boolean {
     const container = section.querySelector<HTMLElement>(".stack-blocks");
-    const entry = state.history.takeUndo(state.blocks, state.caret, readLineMarks(container ?? section, state.marks), readFolds(container ?? section, state.folds));
+    const entry = state.history.takeUndo(
+      state.blocks,
+      state.caret,
+      readLineMarks(container ?? section, state.marks),
+      readFolds(container ?? section, state.folds),
+    );
     if (!entry) {
       return false;
     }
@@ -58,7 +99,12 @@ export function mountEditor(ctx: StackCtx) {
 
   function redoSection(section: HTMLElement, state: SectionState): boolean {
     const container = section.querySelector<HTMLElement>(".stack-blocks");
-    const entry = state.history.takeRedo(state.blocks, state.caret, readLineMarks(container ?? section, state.marks), readFolds(container ?? section, state.folds));
+    const entry = state.history.takeRedo(
+      state.blocks,
+      state.caret,
+      readLineMarks(container ?? section, state.marks),
+      readFolds(container ?? section, state.folds),
+    );
     if (!entry) {
       return false;
     }
@@ -89,7 +135,10 @@ export function mountEditor(ctx: StackCtx) {
     return null;
   }
 
-  function sectionAreaSelection(area: Editable, state: SectionState): {
+  function sectionAreaSelection(
+    area: Editable,
+    state: SectionState,
+  ): {
     start: number;
     end: number;
   } {
@@ -156,16 +205,19 @@ export function mountEditor(ctx: StackCtx) {
     if (pending) {
       clearTimeout(pending);
     }
-    ctx.saveTimers.set(id, setTimeout(() => {
-      ctx.saveTimers.delete(id);
-      state.loaded = content;
-      void invoke("save_edit", { id, content }).catch((error: unknown) => {
-        console.error(error);
-      });
-      void saveSectionEditorView(id, state).catch((error: unknown) => {
-        console.error(error);
-      });
-    }, 300));
+    ctx.saveTimers.set(
+      id,
+      setTimeout(() => {
+        ctx.saveTimers.delete(id);
+        state.loaded = content;
+        void invoke("save_edit", { id, content }).catch((error: unknown) => {
+          console.error(error);
+        });
+        void saveSectionEditorView(id, state).catch((error: unknown) => {
+          console.error(error);
+        });
+      }, 300),
+    );
   }
 
   async function saveSectionEditorView(id: string, state: SectionState) {
@@ -273,7 +325,8 @@ export function mountEditor(ctx: StackCtx) {
       if (isTypedBlock(block)) {
         const prevBlock = state.blocks[index - 1];
         const isAfterMedia = prevBlock?.kind === "media";
-        const canSitOnMediaLine = block.kind === "text" &&
+        const canSitOnMediaLine =
+          block.kind === "text" &&
           isAfterMedia &&
           currentRow !== null &&
           currentRowSideArea === null &&
@@ -427,7 +480,8 @@ export function mountEditor(ctx: StackCtx) {
         area.addEventListener("mouseup", rememberCaret);
         area.addEventListener("focus", rememberCaret);
         area.addEventListener("keydown", (event) => {
-          if (block.kind === "code" &&
+          if (
+            block.kind === "code" &&
             event.key === "Backspace" &&
             !event.shiftKey &&
             !event.altKey &&
@@ -435,7 +489,8 @@ export function mountEditor(ctx: StackCtx) {
             !event.ctrlKey &&
             !event.isComposing &&
             area.value.length === 0 &&
-            (area.selectionStart ?? 0) === (area.selectionEnd ?? 0)) {
+            (area.selectionStart ?? 0) === (area.selectionEnd ?? 0)
+          ) {
             event.preventDefault();
             pushSectionUndo(state, true);
             const dropped = dropCodeBlock(state.blocks, index);
@@ -452,31 +507,41 @@ export function mountEditor(ctx: StackCtx) {
             }
             return;
           }
-          if (handleBlockMediaDeletion(container, area, event, () => state.blocks, (mediaIndex, focusIdx, caretPos) => {
-            pushSectionUndo(state, true);
-            state.blocks = ensureTextSlots(state.blocks.filter((_, idx) => idx !== mediaIndex));
-            state.content = serializeBlocks(state.blocks);
-            renderSectionBlocks(section, state);
-            scheduleSectionSave(section, state);
-            const target = fieldAt(container, focusIdx);
-            if (target) {
-              target.focus();
-              const clamped = Math.min(caretPos, target.value.length);
-              target.setSelectionRange(clamped, clamped);
-            }
-          })) {
+          if (
+            handleBlockMediaDeletion(
+              container,
+              area,
+              event,
+              () => state.blocks,
+              (mediaIndex, focusIdx, caretPos) => {
+                pushSectionUndo(state, true);
+                state.blocks = ensureTextSlots(state.blocks.filter((_, idx) => idx !== mediaIndex));
+                state.content = serializeBlocks(state.blocks);
+                renderSectionBlocks(section, state);
+                scheduleSectionSave(section, state);
+                const target = fieldAt(container, focusIdx);
+                if (target) {
+                  target.focus();
+                  const clamped = Math.min(caretPos, target.value.length);
+                  target.setSelectionRange(clamped, clamped);
+                }
+              },
+            )
+          ) {
             return;
           }
           if (handleBlockAreaNavigation(container, area, event)) {
             return;
           }
-          if (event.key === "Enter" &&
+          if (
+            event.key === "Enter" &&
             !event.shiftKey &&
             !event.altKey &&
             !event.metaKey &&
             !event.ctrlKey &&
             !event.isComposing &&
-            area.classList.contains("inline-line-slot")) {
+            area.classList.contains("inline-line-slot")
+          ) {
             if (area.value.length === 0) {
               event.preventDefault();
               if (prevBlock?.kind === "media") {
@@ -516,27 +581,37 @@ export function mountEditor(ctx: StackCtx) {
             }
             return;
           }
-          if (event.key === "Tab" &&
+          if (
+            event.key === "Tab" &&
             !event.altKey &&
             !event.metaKey &&
             !event.ctrlKey &&
             !event.isComposing &&
-            codeSurface(area)) {
+            codeSurface(area)
+          ) {
             event.preventDefault();
-            applySectionEdit(section, state, area, indentCode(area.value, area.selectionStart ?? 0, area.selectionEnd ?? 0, event.shiftKey));
+            applySectionEdit(
+              section,
+              state,
+              area,
+              indentCode(area.value, area.selectionStart ?? 0, area.selectionEnd ?? 0, event.shiftKey),
+            );
             return;
           }
-          if (event.key === "Tab" &&
-            !event.altKey &&
-            !event.metaKey &&
-            !event.ctrlKey &&
-            !event.isComposing) {
+          if (event.key === "Tab" && !event.altKey && !event.metaKey && !event.ctrlKey && !event.isComposing) {
             event.preventDefault();
             const edit = tabOnMarkdown(area.value, area.selectionStart, area.selectionEnd, event.shiftKey);
             applySectionEdit(section, state, area, edit);
             return;
           }
-          if (event.key !== "Enter" || event.shiftKey || event.altKey || event.metaKey || event.ctrlKey || event.isComposing) {
+          if (
+            event.key !== "Enter" ||
+            event.shiftKey ||
+            event.altKey ||
+            event.metaKey ||
+            event.ctrlKey ||
+            event.isComposing
+          ) {
             return;
           }
           if (block.kind === "code") {
@@ -555,9 +630,11 @@ export function mountEditor(ctx: StackCtx) {
         area.addEventListener("input", (event) => {
           block.text = area.value;
           syncInlineLineSlot(area, prevBlock, assignedRow, container, index === lastIndex);
-          if (block.kind === "text" &&
+          if (
+            block.kind === "text" &&
             event instanceof InputEvent &&
-            (event.inputType === "insertLineBreak" || event.inputType === "insertParagraph")) {
+            (event.inputType === "insertLineBreak" || event.inputType === "insertParagraph")
+          ) {
             const closed = completeOpenFence(area.value, area.selectionStart);
             if (closed) {
               area.value = closed.value;
@@ -673,9 +750,13 @@ export function mountEditor(ctx: StackCtx) {
       const parsed = marked.parse(state.content, { async: false });
       const html = typeof parsed === "string" ? parsed : "";
       preview.innerHTML = DOMPurify.sanitize(html);
-      void hydratePreviewContent(preview, () => !preview.hidden, (name) => {
-        void ctx.deps.editor.openPreview(name);
-      });
+      void hydratePreviewContent(
+        preview,
+        () => !preview.hidden,
+        (name) => {
+          void ctx.deps.editor.openPreview(name);
+        },
+      );
     } else {
       renderSectionBlocks(section, state);
       sectionTargetArea(section, state)?.focus();
@@ -696,10 +777,18 @@ export function mountEditor(ctx: StackCtx) {
     if (!block || block.kind !== "text") {
       state.blocks.push({ kind: "media", name, label });
     } else {
-      const { start, end } = area ? sectionAreaSelection(area, state) : { start: block.text.length, end: block.text.length };
+      const { start, end } = area
+        ? sectionAreaSelection(area, state)
+        : { start: block.text.length, end: block.text.length };
       const before = block.text.slice(0, start).replace(/\n+$/, "");
       const after = block.text.slice(end).replace(/^\n+/, "");
-      state.blocks.splice(index, 1, { kind: "text", text: before }, { kind: "media", name, label }, { kind: "text", text: after });
+      state.blocks.splice(
+        index,
+        1,
+        { kind: "text", text: before },
+        { kind: "media", name, label },
+        { kind: "text", text: after },
+      );
     }
     state.blocks = ensureTextSlots(state.blocks);
     state.content = serializeBlocks(state.blocks);
@@ -710,9 +799,13 @@ export function mountEditor(ctx: StackCtx) {
       const parsed = marked.parse(state.content, { async: false });
       const html = typeof parsed === "string" ? parsed : "";
       preview.innerHTML = DOMPurify.sanitize(html);
-      void hydratePreviewContent(preview, () => !preview.hidden, (name) => {
-        void ctx.deps.editor.openPreview(name);
-      });
+      void hydratePreviewContent(
+        preview,
+        () => !preview.hidden,
+        (name) => {
+          void ctx.deps.editor.openPreview(name);
+        },
+      );
     }
   }
 
@@ -720,7 +813,9 @@ export function mountEditor(ctx: StackCtx) {
     if (!ctx.fold.lastActiveSection || ctx.fold.lastActiveSection === "host") {
       return false;
     }
-    const section = ctx.dom.stack?.querySelector<HTMLElement>(`.stack-note[data-id="${CSS.escape(ctx.fold.lastActiveSection)}"]`);
+    const section = ctx.dom.stack?.querySelector<HTMLElement>(
+      `.stack-note[data-id="${CSS.escape(ctx.fold.lastActiveSection)}"]`,
+    );
     const state = ctx.notes.get(ctx.fold.lastActiveSection);
     const container = section?.querySelector<HTMLElement>(".stack-blocks");
     if (!section || !state?.caret || !container) {
@@ -750,5 +845,20 @@ export function mountEditor(ctx: StackCtx) {
       scheduleSectionSave(section, held);
     }
   });
-  return { pushSectionUndo, undoSection, redoSection, sectionAreaSelection, sectionTargetArea, scheduleSectionSave, saveSectionEditorView, applySectionEdit, renderSectionBlocks, rerenderStackEditors, mediaMutatorForSection, toggleSectionPreview, insertSectionMedia, resumeStackEditor };
+  return {
+    pushSectionUndo,
+    undoSection,
+    redoSection,
+    sectionAreaSelection,
+    sectionTargetArea,
+    scheduleSectionSave,
+    saveSectionEditorView,
+    applySectionEdit,
+    renderSectionBlocks,
+    rerenderStackEditors,
+    mediaMutatorForSection,
+    toggleSectionPreview,
+    insertSectionMedia,
+    resumeStackEditor,
+  };
 }

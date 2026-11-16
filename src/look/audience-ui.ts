@@ -30,8 +30,7 @@ export function revealPressedChoice(container: HTMLElement) {
   if (!selected) {
     return;
   }
-  const scroller =
-    container.closest<HTMLElement>("#audience-pop, .audience-pop") ?? container;
+  const scroller = container.closest<HTMLElement>("#audience-pop, .audience-pop") ?? container;
   const delta = selected.getBoundingClientRect().top - scroller.getBoundingClientRect().top;
   if (delta < 0) {
     scroller.scrollTop += delta;

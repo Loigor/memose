@@ -1,11 +1,6 @@
 import type { Locator, Page } from "@playwright/test";
 
-import {
-  emitEvent,
-  installHarness,
-  waitForListener,
-  type HarnessSeed,
-} from "./tauri-harness";
+import { emitEvent, installHarness, waitForListener, type HarnessSeed } from "./tauri-harness";
 
 export async function openComposer(page: Page, seed: HarnessSeed = {}): Promise<void> {
   await installHarness(page, { windowLabel: "main", ...seed });

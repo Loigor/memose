@@ -224,7 +224,12 @@ function matchKey(event: KeyboardEvent, binding: string): boolean {
       shift = true;
     } else if (name === "super" || name === "command" || name === "cmd" || name === "meta") {
       meta = true;
-    } else if (name === "commandorcontrol" || name === "cmdorctrl" || name === "cmdorcontrol" || name === "commandorctrl") {
+    } else if (
+      name === "commandorcontrol" ||
+      name === "cmdorctrl" ||
+      name === "cmdorcontrol" ||
+      name === "commandorctrl"
+    ) {
       if (mac()) {
         meta = true;
       } else {

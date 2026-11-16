@@ -10,7 +10,13 @@ import {
   sourceToDisplay,
   type FoldView,
 } from "./code-fold.ts";
-import { copyIndentAfterBreak, indentWidthCols, remapLineMarks, setIndentWidth, taskListOnEnter } from "./markdown-edit.ts";
+import {
+  copyIndentAfterBreak,
+  indentWidthCols,
+  remapLineMarks,
+  setIndentWidth,
+  taskListOnEnter,
+} from "./markdown-edit.ts";
 import { highlightMarkdown } from "./md-highlight.ts";
 
 export type HighlightScheme = "paper" | "cool" | "mono";
@@ -200,9 +206,7 @@ function rowHeights(area: HTMLTextAreaElement, count: number, lineHeight: number
 
 export function refreshEditorFields(root: ParentNode = document) {
   applyEditorDataset();
-  for (const area of root.querySelectorAll<HTMLTextAreaElement>(
-    "#blocks textarea, .stack-blocks textarea",
-  )) {
+  for (const area of root.querySelectorAll<HTMLTextAreaElement>("#blocks textarea, .stack-blocks textarea")) {
     paintEditorField(area);
   }
 }
@@ -630,22 +634,30 @@ function gutterHit(area: HTMLTextAreaElement, event: MouseEvent): number | null 
   if (!note?.hasAttribute("data-coder")) {
     return null;
   }
-  const node = event.target instanceof Element ? event.target : event.target instanceof Node ? event.target.parentElement : null;
+  const node =
+    event.target instanceof Element ? event.target : event.target instanceof Node ? event.target.parentElement : null;
   const gutter = node?.closest(".md-gutter");
   if (!(gutter instanceof HTMLElement) || !area.closest(".md-field")?.contains(gutter)) {
     return null;
   }
-  const sources = (gutter.dataset.sources ?? "").split(",").filter((part) => part !== "").map(Number);
+  const sources = (gutter.dataset.sources ?? "")
+    .split(",")
+    .filter((part) => part !== "")
+    .map(Number);
   const rows = [...gutter.querySelectorAll<HTMLElement>(".md-gutter-n")];
-  const index = rows.length > 0
-    ? rows.findIndex((row) => {
-        const box = row.getBoundingClientRect();
-        return event.clientY >= box.top && event.clientY < box.bottom;
-      })
-    : Math.floor(
-        (event.clientY - gutter.getBoundingClientRect().top + gutter.scrollTop - (Number.parseFloat(getComputedStyle(gutter).paddingTop) || 0)) /
-          (Number.parseFloat(getComputedStyle(area).lineHeight) || 18),
-      );
+  const index =
+    rows.length > 0
+      ? rows.findIndex((row) => {
+          const box = row.getBoundingClientRect();
+          return event.clientY >= box.top && event.clientY < box.bottom;
+        })
+      : Math.floor(
+          (event.clientY -
+            gutter.getBoundingClientRect().top +
+            gutter.scrollTop -
+            (Number.parseFloat(getComputedStyle(gutter).paddingTop) || 0)) /
+            (Number.parseFloat(getComputedStyle(area).lineHeight) || 18),
+        );
   const line = sources[index];
   return Number.isInteger(line) ? line : null;
 }
@@ -770,9 +782,10 @@ function paintMarkBars(area: HTMLTextAreaElement, field: HTMLElement) {
     surface.prepend(layer);
   }
   const folded = foldState.get(area);
-  const sources = folded && folded.folds.size > 0
-    ? folded.view.numbers.map((number) => number - 1)
-    : Array.from({ length: sourceText(area).split("\n").length }, (_, index) => index);
+  const sources =
+    folded && folded.folds.size > 0
+      ? folded.view.numbers.map((number) => number - 1)
+      : Array.from({ length: sourceText(area).split("\n").length }, (_, index) => index);
   if (!sources.some((line) => marks.lines.has(line))) {
     existing?.remove();
     return;

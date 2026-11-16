@@ -52,7 +52,12 @@ test("measure coder alignment", async ({ page, browserName }) => {
     });
     const range = document.createRange();
     range.selectNodeContents(body);
-    const gutterLines = [...range.getClientRects()].map((rect) => ({ t: rect.top, h: rect.height, l: rect.left, w: rect.width }));
+    const gutterLines = [...range.getClientRects()].map((rect) => ({
+      t: rect.top,
+      h: rect.height,
+      l: rect.left,
+      w: rect.width,
+    }));
     const aBox = area.getBoundingClientRect();
     const hBox = hl.getBoundingClientRect();
     const canvas = document.createElement("canvas");

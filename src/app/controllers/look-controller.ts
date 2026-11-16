@@ -63,16 +63,7 @@ export function createLookController(
   input: LookInput,
   stack: LookStack,
 ): LookController {
-  const {
-    card,
-    themeToggle,
-    themeIcon,
-    colorPop,
-    hueSlider,
-    hueAdd,
-    hueSlots,
-    coderToggle,
-  } = context.dom;
+  const { card, themeToggle, themeIcon, colorPop, hueSlider, hueAdd, hueSlots, coderToggle } = context.dom;
 
   function currentTheme(): ThemeName {
     return state.value.theme ?? context.mode.pinnedThemeHint ?? state.appTheme;
@@ -279,11 +270,9 @@ export function createLookController(
     if (state.pinnedOpacityFrame === 0) {
       state.pinnedOpacityFrame = requestAnimationFrame(() => {
         state.pinnedOpacityFrame = 0;
-        void context.backend
-          .setPinnedOpacity(state.pinnedOpacityLive, false)
-          .catch((error: unknown) => {
-            console.error(error);
-          });
+        void context.backend.setPinnedOpacity(state.pinnedOpacityLive, false).catch((error: unknown) => {
+          console.error(error);
+        });
       });
     }
     clearTimeout(state.pinnedOpacityTimer);
@@ -389,12 +378,19 @@ export function createLookController(
     (event) => {
       const slot = hueSlots.find((item) => {
         const rect = item.getBoundingClientRect();
-        return event.clientX >= rect.left && event.clientX <= rect.right &&
-          event.clientY >= rect.top && event.clientY <= rect.bottom;
+        return (
+          event.clientX >= rect.left &&
+          event.clientX <= rect.right &&
+          event.clientY >= rect.top &&
+          event.clientY <= rect.bottom
+        );
       });
       const addRect = hueAdd.getBoundingClientRect();
-      const overAdd = event.clientX >= addRect.left && event.clientX <= addRect.right &&
-        event.clientY >= addRect.top && event.clientY <= addRect.bottom;
+      const overAdd =
+        event.clientX >= addRect.left &&
+        event.clientX <= addRect.right &&
+        event.clientY >= addRect.top &&
+        event.clientY <= addRect.bottom;
       if (!slot && !overAdd) {
         return;
       }

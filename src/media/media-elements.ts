@@ -500,11 +500,7 @@ export async function hydratePreviewContent(
   );
 }
 
-export async function showLightbox(
-  lightboxEl: HTMLElement,
-  lightboxImageEl: HTMLImageElement,
-  name: string,
-) {
+export async function showLightbox(lightboxEl: HTMLElement, lightboxImageEl: HTMLImageElement, name: string) {
   const src = await mediaSrc(name);
   const existing = lightboxEl.querySelector("video");
   if (isVideo(name)) {

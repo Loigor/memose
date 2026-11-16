@@ -15,10 +15,12 @@ export function mountLayout(ctx: StackCtx) {
     if (ctx.pointer.cursorPoint) {
       const rect = el.getBoundingClientRect();
       const bottom = Math.max(rect.bottom, rect.top + NOTE_BAR);
-      return (ctx.pointer.cursorPoint.x >= rect.left &&
+      return (
+        ctx.pointer.cursorPoint.x >= rect.left &&
         ctx.pointer.cursorPoint.x <= rect.right &&
         ctx.pointer.cursorPoint.y >= rect.top &&
-        ctx.pointer.cursorPoint.y <= bottom);
+        ctx.pointer.cursorPoint.y <= bottom
+      );
     }
     if (ctx.pointer.cursorKnown) {
       return false;
@@ -148,8 +150,7 @@ export function mountLayout(ctx: StackCtx) {
       const factor = await win.scaleFactor();
       const size = await win.innerSize();
       return Math.round(size.height / factor);
-    }
-    catch {
+    } catch {
       return window.innerHeight;
     }
   }
@@ -165,8 +166,7 @@ export function mountLayout(ctx: StackCtx) {
         label: getCurrentWindow().label,
         height: Math.max(96, Math.round(height)),
       });
-    }
-    finally {
+    } finally {
       ctx.size.sizingTimer = window.setTimeout(() => {
         ctx.size.sizingWindow = false;
       }, 220);
@@ -213,7 +213,8 @@ export function mountLayout(ctx: StackCtx) {
         header.classList.remove("compact-meta", "compact-tools");
         continue;
       }
-      const headerW = header.clientWidth || ctx.deps.card.clientWidth || (ctx.dom.frame?.clientWidth ?? window.innerWidth - 48);
+      const headerW =
+        header.clientWidth || ctx.deps.card.clientWidth || (ctx.dom.frame?.clientWidth ?? window.innerWidth - 48);
       if (headerW <= 0) {
         continue;
       }
@@ -396,7 +397,9 @@ export function mountLayout(ctx: StackCtx) {
       }
     }
     if (ctx.fold.lastActiveSection && ctx.fold.lastActiveSection !== "host") {
-      const section = ctx.dom.stack?.querySelector<HTMLElement>(`.stack-note[data-id="${CSS.escape(ctx.fold.lastActiveSection)}"]`);
+      const section = ctx.dom.stack?.querySelector<HTMLElement>(
+        `.stack-note[data-id="${CSS.escape(ctx.fold.lastActiveSection)}"]`,
+      );
       const state = ctx.notes.get(ctx.fold.lastActiveSection);
       if (section && state) {
         return { section, state };
@@ -405,7 +408,9 @@ export function mountLayout(ctx: StackCtx) {
     if (ctx.fold.lastActiveSection === "host") {
       return null;
     }
-    const hovered = [...(ctx.dom.stack?.querySelectorAll<HTMLElement>(".stack-note") ?? [])].find((section) => isElementHovered(section));
+    const hovered = [...(ctx.dom.stack?.querySelectorAll<HTMLElement>(".stack-note") ?? [])].find((section) =>
+      isElementHovered(section),
+    );
     const id = hovered?.dataset.id;
     const state = id ? ctx.notes.get(id) : undefined;
     if (hovered && state) {
@@ -438,5 +443,27 @@ export function mountLayout(ctx: StackCtx) {
     });
   }
 
-  return { setHostCollapsedFlag, isElementHovered, dismissAutoOpenNewSection, syncActiveNoteHeader, hostBarOnly, sectionBarOnly, holdCollapsed, hasStack, stackCounts, targetWindowHeight, applyOpenHeight, rememberOpenSlice, logicalHeight, setLogicalHeight, cancelHeightTween, syncHeaderCompact, paintChrome, setHostCollapsed, syncCollapsedPeek, activeStackSection, toggleSection };
+  return {
+    setHostCollapsedFlag,
+    isElementHovered,
+    dismissAutoOpenNewSection,
+    syncActiveNoteHeader,
+    hostBarOnly,
+    sectionBarOnly,
+    holdCollapsed,
+    hasStack,
+    stackCounts,
+    targetWindowHeight,
+    applyOpenHeight,
+    rememberOpenSlice,
+    logicalHeight,
+    setLogicalHeight,
+    cancelHeightTween,
+    syncHeaderCompact,
+    paintChrome,
+    setHostCollapsed,
+    syncCollapsedPeek,
+    activeStackSection,
+    toggleSection,
+  };
 }
