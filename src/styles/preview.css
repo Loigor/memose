@@ -31,6 +31,12 @@ textarea,
   margin-top: 0;
 }
 
+/* Fixed px --memo-line would clip larger heading glyphs at the scroll top. */
+#preview :is(h1, h2, h3, h4, h5, h6),
+.stack-preview :is(h1, h2, h3, h4, h5, h6) {
+  line-height: 1.25;
+}
+
 #preview .md-tag,
 .stack-preview .md-tag {
   color: var(--md-link);
