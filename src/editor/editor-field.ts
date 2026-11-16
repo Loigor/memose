@@ -12,13 +12,7 @@ import {
   type FoldSyntax,
   type FoldView,
 } from "./code-fold.ts";
-import {
-  copyIndentAfterBreak,
-  indentWidthCols,
-  remapLineMarks,
-  setIndentWidth,
-  taskListOnEnter,
-} from "./markdown-edit.ts";
+import { copyIndentAfterBreak, remapLineMarks, setIndentWidth, taskListOnEnter } from "./markdown-edit.ts";
 import { highlightMarkdown } from "./md-highlight.ts";
 
 export type HighlightScheme = "paper" | "cool" | "mono";
@@ -1262,38 +1256,11 @@ function overflowShift(surface: HTMLElement): HTMLElement {
   return shift;
 }
 
-let measureCtx: CanvasRenderingContext2D | null = null;
-
-function lineMeasure(font: string): CanvasRenderingContext2D | null {
-  if (typeof document === "undefined") {
-    return null;
-  }
-  if (!measureCtx) {
-    const canvas = document.createElement("canvas");
-    measureCtx = canvas.getContext("2d");
-  }
-  if (measureCtx) {
-    measureCtx.font = font;
-  }
-  return measureCtx;
-}
-
-function expandTabs(line: string, tab = 4): string {
-  let out = "";
-  let col = 0;
-  for (const char of line) {
-    if (char === "\t") {
-      const n = tab - (col % tab);
-      out += " ".repeat(n);
-      col += n;
-    } else {
-      out += char;
-      col += 1;
-    }
-  }
-  return out;
-}
-
+/**
+ * Marks lines wider than the field (line wrap off) with a dot at the right edge. Widths come from
+ * the overlay's own laid-out line spans, so tabs, fallback glyphs and the exact font all count;
+ * the computed `font` shorthand is empty here (font-kerning: none), so a canvas guess was wrong.
+ */
 function markLongLines(highlight: HTMLElement, coder: boolean) {
   const surface = highlight.parentElement;
   if (!(surface instanceof HTMLElement)) {
@@ -1302,7 +1269,11 @@ function markLongLines(highlight: HTMLElement, coder: boolean) {
   const shift = overflowShift(surface);
   const wrap = Boolean(highlight.closest(".md-field")?.hasAttribute("data-wrap"));
   const area = surface.querySelector("textarea");
-  if (!coder || wrap || !(area instanceof HTMLTextAreaElement)) {
+  const texts = [...highlight.querySelectorAll<HTMLElement>(".md-line-text")];
+  if (!coder || wrap || !(area instanceof HTMLTextAreaElement) || texts.length === 0) {
+    for (const text of texts) {
+      text.classList.remove("is-long");
+    }
     shift.replaceChildren();
     shift.style.transform = "";
     return;
@@ -1313,22 +1284,20 @@ function markLongLines(highlight: HTMLElement, coder: boolean) {
   const padTop = Number.parseFloat(style.paddingTop) || 0;
   const lineHeight = linePitch(style);
   const inner = highlight.clientWidth - padLeft - padRight;
-  const ctx = lineMeasure(style.font);
-  const lines = readNative(area).split("\n");
-  const texts = highlight.querySelectorAll<HTMLElement>(".md-line-text");
-  shift.replaceChildren();
-  for (let index = 0; index < lines.length; index += 1) {
-    const wide = ctx ? ctx.measureText(expandTabs(lines[index] ?? "", indentWidthCols())).width : 0;
-    const long = wide > inner + 1;
-    texts[index]?.classList.toggle("is-long", long);
-    if (!long) {
-      continue;
+  // Read every width before writing anything, so the browser lays out once.
+  const long = texts.map((text) => text.getBoundingClientRect().width > inner + 1);
+  const dots: HTMLElement[] = [];
+  long.forEach((isLong, index) => {
+    texts[index]?.classList.toggle("is-long", isLong);
+    if (!isLong) {
+      return;
     }
     const dot = document.createElement("span");
     dot.className = "md-overflow-dot";
     dot.style.top = `${padTop + (index + 0.5) * lineHeight}px`;
-    shift.append(dot);
-  }
+    dots.push(dot);
+  });
+  shift.replaceChildren(...dots);
   shift.style.transform = `translateY(${-highlight.scrollTop}px)`;
 }
 

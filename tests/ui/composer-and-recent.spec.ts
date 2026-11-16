@@ -443,6 +443,44 @@ test("coder toggle shows a line gutter on that memo", async ({ page }) => {
   await expect(page.locator(".md-overflow-dot")).toHaveCount(0);
 });
 
+test("long-line dots mark exactly the lines that overflow, also after a resize", async ({ page }) => {
+  const notes = sampleNotes(1);
+  notes[0] = {
+    ...notes[0],
+    content: Array.from({ length: 10 }, (_, i) => "x".repeat(30 + i * 8)).join("\n"),
+    coder: true,
+  };
+  await openComposer(page, { notes });
+  await page.locator("#recent .title").first().click();
+  const lines = () =>
+    page
+      .locator(".md-field[data-coder] .md-hl")
+      .first()
+      .evaluate((hl) => {
+        const style = getComputedStyle(hl);
+        const inner = hl.clientWidth - Number.parseFloat(style.paddingLeft) - Number.parseFloat(style.paddingRight);
+        const texts = [...hl.querySelectorAll(".md-line-text")];
+        return {
+          overflowing: texts.flatMap((text, i) => (text.getBoundingClientRect().width > inner + 1 ? [i] : [])),
+          marked: texts.flatMap((text, i) => (text.classList.contains("is-long") ? [i] : [])),
+          dots: hl.parentElement?.querySelectorAll(".md-overflow-dot").length ?? 0,
+        };
+      });
+  for (const width of [520, 380, 620]) {
+    await page.setViewportSize({ width, height: 720 });
+    await expect
+      .poll(async () => {
+        const seen = await lines();
+        return (
+          seen.overflowing.length > 0 &&
+          seen.marked.join() === seen.overflowing.join() &&
+          seen.dots === seen.marked.length
+        );
+      })
+      .toBe(true);
+  }
+});
+
 test("line wrap shows a long line and enter still adds one break", async ({ page }) => {
   await openComposer(page);
   const coder = page.locator("#coder-toggle");
