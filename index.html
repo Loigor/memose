@@ -3,8 +3,12 @@
   <head>
     <meta charset="UTF-8" />
     <style>
-      html.lightbox-window #card { display: none; }
-      html.lightbox-window #lightbox { display: flex !important; }
+      html.lightbox-window #card {
+        display: none;
+      }
+      html.lightbox-window #lightbox {
+        display: flex !important;
+      }
     </style>
     <link rel="stylesheet" href="/src/styles.css" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
@@ -13,124 +17,189 @@
   </head>
   <body>
     <div id="frame">
-    <div id="notes">
-    <main id="card">
-      <header>
-        <div class="brand">
-          <span id="brand-name" class="brand-name">Memose</span>
-          <span id="note-title" class="note-title"></span>
-          <span class="note-meta">
-            <span class="note-audience-row">
-              <span class="audience-anchor">
-                <button id="visibility-label" type="button" hidden>Private</button>
-                <div id="audience-pop" hidden>
-                  <p class="pop-label">Who can see this</p>
-                  <div id="visibility-choices"></div>
-                  <div id="space-block" hidden>
-                    <p class="pop-label">Space</p>
-                    <div id="space-choices"></div>
+      <div id="notes">
+        <main id="card">
+          <header>
+            <div class="brand">
+              <span id="brand-name" class="brand-name">Memose</span>
+              <span id="note-title" class="note-title"></span>
+              <span class="note-meta">
+                <span class="note-audience-row">
+                  <span class="audience-anchor">
+                    <button id="visibility-label" type="button" hidden>Private</button>
+                    <div id="audience-pop" hidden>
+                      <p class="pop-label">Who can see this</p>
+                      <div id="visibility-choices"></div>
+                      <div id="space-block" hidden>
+                        <p class="pop-label">Space</p>
+                        <div id="space-choices"></div>
+                      </div>
+                      <div class="audience-foot">
+                        <button id="delete-note" type="button">Delete memo</button>
+                        <div id="delete-confirm" hidden>
+                          <span>Delete this memo?</span>
+                          <span class="audience-confirm-actions">
+                            <button id="delete-no" type="button">Cancel</button>
+                            <button id="delete-yes" type="button">Delete</button>
+                          </span>
+                        </div>
+                      </div>
+                    </div>
+                  </span>
+                  <span id="note-sync" class="note-sync sync" hidden></span>
+                </span>
+                <span id="edited-sep" hidden>|</span>
+                <span id="edited-at" hidden></span>
+              </span>
+            </div>
+            <div class="header-actions">
+              <div class="editor-tools-anchor">
+                <button
+                  id="editor-menu-toggle"
+                  class="editor-menu-toggle icon-button"
+                  type="button"
+                  aria-label="Editor options"
+                  aria-expanded="false"
+                  title="Editor options"
+                >
+                  <span class="menu-glyph" aria-hidden="true"></span>
+                </button>
+                <div id="editor-tools" class="editor-tools">
+                  <div class="format-anchor">
+                    <button
+                      id="format-toggle"
+                      class="format-toggle icon-button"
+                      type="button"
+                      aria-label="Format"
+                      aria-expanded="false"
+                      title="Format"
+                    >
+                      Format
+                    </button>
+                    <div id="format-pop" class="format-pop" hidden>
+                      <button type="button" data-format="document">Format document</button>
+                      <button type="button" data-format="wrap" aria-pressed="false">
+                        <span class="format-check" aria-hidden="true"></span>Line wrap
+                      </button>
+                    </div>
                   </div>
-                  <div class="audience-foot">
-                    <button id="delete-note" type="button">Delete memo</button>
-                    <div id="delete-confirm" hidden>
-                      <span>Delete this memo?</span>
-                      <span class="audience-confirm-actions">
-                        <button id="delete-no" type="button">Cancel</button>
-                        <button id="delete-yes" type="button">Delete</button>
-                      </span>
+                  <button
+                    id="markdown-toggle"
+                    class="markdown-toggle icon-button"
+                    type="button"
+                    aria-label="Markdown toolbar"
+                    aria-pressed="false"
+                    title="Markdown toolbar"
+                  >
+                    <span class="markdown-glyph" aria-hidden="true"></span>
+                  </button>
+                  <button
+                    id="coder-toggle"
+                    class="coder-toggle icon-button"
+                    type="button"
+                    aria-label="Coder editor"
+                    aria-pressed="false"
+                    title="Coder editor"
+                  >
+                    { }
+                  </button>
+                  <button
+                    id="mode-toggle"
+                    class="mode-toggle icon-button"
+                    type="button"
+                    aria-label="Preview"
+                    aria-pressed="false"
+                    title="Preview"
+                  >
+                    <span class="preview-glyph" aria-hidden="true"></span>
+                  </button>
+                  <div class="theme-anchor">
+                    <button id="theme-toggle" class="theme-toggle icon-button" type="button" aria-label="Dark theme">
+                      <svg
+                        id="theme-icon"
+                        class="theme-icon"
+                        viewBox="0 0 16 16"
+                        width="14"
+                        height="14"
+                        aria-hidden="true"
+                      ></svg>
+                    </button>
+                    <div id="color-pop" class="color-pop" hidden>
+                      <div class="hue-track">
+                        <input id="hue-slider" type="range" min="0" max="359" value="48" aria-label="Hue" />
+                      </div>
+                      <div id="hue-slots">
+                        <button type="button" class="hue-slot" aria-label="Saved color 1"></button>
+                        <button type="button" class="hue-slot" aria-label="Saved color 2"></button>
+                        <button type="button" class="hue-slot" aria-label="Saved color 3"></button>
+                        <button type="button" class="hue-slot" aria-label="Saved color 4"></button>
+                        <button type="button" class="hue-slot" aria-label="Saved color 5"></button>
+                        <button type="button" class="hue-slot" aria-label="Saved color 6"></button>
+                        <button id="hue-add" type="button" aria-label="Save hue">+</button>
+                      </div>
                     </div>
                   </div>
                 </div>
-              </span>
-              <span id="note-sync" class="note-sync sync" hidden></span>
-            </span>
-            <span id="edited-sep" hidden>|</span>
-            <span id="edited-at" hidden></span>
-          </span>
-        </div>
-        <div class="header-actions">
-          <div class="editor-tools-anchor">
-            <button id="editor-menu-toggle" class="editor-menu-toggle icon-button" type="button" aria-label="Editor options" aria-expanded="false" title="Editor options">
-              <span class="menu-glyph" aria-hidden="true"></span>
+              </div>
+              <button
+                id="pin-toggle"
+                class="pin-toggle icon-button"
+                type="button"
+                aria-label="Pin"
+                aria-pressed="false"
+              >
+                <span class="pin-glyph" aria-hidden="true"></span>
+              </button>
+            </div>
+            <button
+              id="fold-toggle"
+              class="fold-toggle icon-button"
+              type="button"
+              aria-label="Fold memo"
+              title="Fold memo"
+            >
+              <span class="collapsed-chevron" aria-hidden="true"></span>
             </button>
-            <div id="editor-tools" class="editor-tools">
-              <div class="format-anchor">
-                <button id="format-toggle" class="format-toggle icon-button" type="button" aria-label="Format" aria-expanded="false" title="Format">Format</button>
-                <div id="format-pop" class="format-pop" hidden>
-                  <button type="button" data-format="document">Format document</button>
-                  <button type="button" data-format="wrap" aria-pressed="false"><span class="format-check" aria-hidden="true"></span>Line wrap</button>
-                </div>
-              </div>
-              <button id="markdown-toggle" class="markdown-toggle icon-button" type="button" aria-label="Markdown toolbar" aria-pressed="false" title="Markdown toolbar">
-                <span class="markdown-glyph" aria-hidden="true"></span>
-              </button>
-              <button id="coder-toggle" class="coder-toggle icon-button" type="button" aria-label="Coder editor" aria-pressed="false" title="Coder editor">
-                { }
-              </button>
-              <button id="mode-toggle" class="mode-toggle icon-button" type="button" aria-label="Preview" aria-pressed="false" title="Preview">
-                <span class="preview-glyph" aria-hidden="true"></span>
-              </button>
-              <div class="theme-anchor">
-                <button id="theme-toggle" class="theme-toggle icon-button" type="button" aria-label="Dark theme">
-                  <svg id="theme-icon" class="theme-icon" viewBox="0 0 16 16" width="14" height="14" aria-hidden="true"></svg>
-                </button>
-                <div id="color-pop" class="color-pop" hidden>
-                  <div class="hue-track">
-                    <input id="hue-slider" type="range" min="0" max="359" value="48" aria-label="Hue" />
-                  </div>
-                  <div id="hue-slots">
-                    <button type="button" class="hue-slot" aria-label="Saved color 1"></button>
-                    <button type="button" class="hue-slot" aria-label="Saved color 2"></button>
-                    <button type="button" class="hue-slot" aria-label="Saved color 3"></button>
-                    <button type="button" class="hue-slot" aria-label="Saved color 4"></button>
-                    <button type="button" class="hue-slot" aria-label="Saved color 5"></button>
-                    <button type="button" class="hue-slot" aria-label="Saved color 6"></button>
-                    <button id="hue-add" type="button" aria-label="Save hue">+</button>
-                  </div>
-                </div>
-              </div>
-            </div>
-          </div>
-          <button id="pin-toggle" class="pin-toggle icon-button" type="button" aria-label="Pin" aria-pressed="false">
-            <span class="pin-glyph" aria-hidden="true"></span>
-          </button>
-        </div>
-        <button id="fold-toggle" class="fold-toggle icon-button" type="button" aria-label="Fold memo" title="Fold memo">
-          <span class="collapsed-chevron" aria-hidden="true"></span>
-        </button>
-      </header>
+          </header>
 
-      <section id="composer-view">
-        <div id="note-pane">
-          <div id="conflict" hidden>
-            <p>This memo changed here and in useMemos.</p>
-            <div>
-              <button id="conflict-local" type="button">Keep this</button>
-              <button id="conflict-remote" type="button">Use server</button>
+          <section id="composer-view">
+            <div id="note-pane">
+              <div id="conflict" hidden>
+                <p>This memo changed here and in useMemos.</p>
+                <div>
+                  <button id="conflict-local" type="button">Keep this</button>
+                  <button id="conflict-remote" type="button">Use server</button>
+                </div>
+              </div>
+              <div id="md-toolbar" class="md-toolbar" hidden>
+                <button type="button" data-markdown="bold" aria-label="Bold">Bold</button>
+                <button type="button" data-markdown="italic" aria-label="Italic">Italic</button>
+                <button type="button" data-markdown="title" aria-label="Title">Title</button>
+                <button type="button" data-markdown="list" aria-label="Bullet list">List</button>
+                <button type="button" data-markdown="ordered" aria-label="Numbered list">Numbered</button>
+                <button type="button" data-markdown="task" aria-label="Task list">Task</button>
+                <button type="button" data-markdown="quote" aria-label="Quote">Quote</button>
+                <button type="button" data-markdown="code" aria-label="Code block">Code block</button>
+              </div>
+              <div id="blocks"></div>
+              <div id="preview" hidden></div>
             </div>
-          </div>
-          <div id="md-toolbar" class="md-toolbar" hidden>
-            <button type="button" data-markdown="bold" aria-label="Bold">Bold</button>
-            <button type="button" data-markdown="italic" aria-label="Italic">Italic</button>
-            <button type="button" data-markdown="title" aria-label="Title">Title</button>
-            <button type="button" data-markdown="list" aria-label="Bullet list">List</button>
-            <button type="button" data-markdown="ordered" aria-label="Numbered list">Numbered</button>
-            <button type="button" data-markdown="task" aria-label="Task list">Task</button>
-            <button type="button" data-markdown="quote" aria-label="Quote">Quote</button>
-            <button type="button" data-markdown="code" aria-label="Code block">Code block</button>
-          </div>
-          <div id="blocks"></div>
-          <div id="preview" hidden></div>
-        </div>
-        <div id="memo-list">
-          <input id="recent-search" type="search" placeholder="Search" aria-label="Search memos" autocomplete="off" hidden />
-          <ul id="recent"></ul>
-        </div>
-        <button id="recent-more" type="button" hidden>More</button>
-      </section>
-    </main>
-    <div id="stack"></div>
-    </div>
+            <div id="memo-list">
+              <input
+                id="recent-search"
+                type="search"
+                placeholder="Search"
+                aria-label="Search memos"
+                autocomplete="off"
+                hidden
+              />
+              <ul id="recent"></ul>
+            </div>
+            <button id="recent-more" type="button" hidden>More</button>
+          </section>
+        </main>
+        <div id="stack"></div>
+      </div>
     </div>
     <div id="resize-n" class="resize-handle" data-resize="n" aria-hidden="true"></div>
     <div id="resize-nw" class="resize-handle" data-resize="nw" aria-hidden="true"></div>
