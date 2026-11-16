@@ -579,6 +579,39 @@ test("line wrap, a fold, and a line mark reopen with the memo", async ({ page })
     .toMatchObject({ lineWrap: false, folds: [[1]], marks: [[0]] });
 });
 
+test("resizing refits wrapped coder text live and repaints overlays when it settles", async ({ page }) => {
+  const notes = sampleNotes(2);
+  const prose = Array.from(
+    { length: 12 },
+    (_, i) => `Line ${i} with enough words to wrap in a narrow memo window`,
+  ).join("\n");
+  const code = Array.from({ length: 8 }, (_, i) => `const value${i} = compute(${i}, "a fairly long argument");`).join(
+    "\n",
+  );
+  notes[0] = { ...notes[0], content: prose, coder: true, lineWrap: true };
+  notes[1] = { ...notes[1], content: code, coder: true };
+  await openComposer(page, { notes });
+  await page.locator("#recent .title", { hasText: "Line 0" }).click();
+  const area = page.locator("#blocks textarea").first();
+  const before = await area.evaluate((el) => el.getBoundingClientRect().height);
+  await page.setViewportSize({ width: 300, height: 720 });
+  // Wrapped prose grows on the next frame, without waiting for the resize to settle.
+  await page.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))));
+  const during = await area.evaluate((el) => ({
+    height: el.getBoundingClientRect().height,
+    fits: el.scrollHeight <= el.clientHeight + 1,
+  }));
+  expect(during.height).toBeGreaterThan(before);
+  expect(during.fits).toBe(true);
+  await page.setViewportSize({ width: 520, height: 720 });
+  await page.locator("#recent .title", { hasText: "const value0" }).click();
+  await expect(page.locator("#blocks .md-overflow-dot")).toHaveCount(0);
+  await page.setViewportSize({ width: 300, height: 720 });
+  // Long-line markers are layout work that waits for the drag to end.
+  await expect(page.locator("#blocks .md-overflow-dot")).toHaveCount(8);
+  await expect(page.locator("#blocks .md-gutter-body").first()).toHaveText(/^1\n2\n3/);
+});
+
 test("the coder editor detects, picks, and stores the memo language", async ({ page }) => {
   const notes = sampleNotes(3);
   notes[0] = { ...notes[0], content: "def go(x):\n    return x + 1", coder: true };

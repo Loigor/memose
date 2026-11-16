@@ -96,7 +96,8 @@ export function wrapEditorField(area: HTMLTextAreaElement): HTMLElement {
   });
   let resizeFrame = 0;
   new ResizeObserver(() => {
-    if (resizeFrame) {
+    // A window resize repaints every field once when it settles.
+    if (resizeFrame || editorResizing) {
       return;
     }
     resizeFrame = requestAnimationFrame(() => {
@@ -131,20 +132,26 @@ export function paintEditorField(area: HTMLTextAreaElement) {
   const shown = readNative(area);
   const memoLang = memoLanguage(area);
   if (area.dataset.kind === "code") {
-    highlight.innerHTML = showFoldMarks(highlightCode(shown, area.dataset.lang ?? ""));
+    const lang = area.dataset.lang ?? "";
+    paintHighlight(highlight, `code:${lang}`, shown, () => highlightCode(shown, lang));
   } else if (memoLang) {
-    highlight.innerHTML = showFoldMarks(highlightCode(shown, memoLang));
+    paintHighlight(highlight, `memo:${memoLang}`, shown, () => highlightCode(shown, memoLang));
   } else if (prefs.markdownHighlight || coder) {
-    highlight.innerHTML = showFoldMarks(highlightMarkdown(shown, { tags: !coder }));
+    paintHighlight(highlight, `md:${coder ? "coder" : "tags"}`, shown, () =>
+      highlightMarkdown(shown, { tags: !coder }),
+    );
   } else {
-    highlight.replaceChildren();
+    paintHighlight(highlight, "none", "", () => "");
   }
   paintLang(field, area);
   paintFoldMarks(area, field);
   paintMarkBars(area, field);
   paintCaretLine(area);
   const scope = area.closest("#blocks, .stack-blocks");
-  if (scope) {
+  if (scope && batchScopes) {
+    // Renumbered once for the whole batch; a scope's numbers depend on every block in it.
+    batchScopes.set(scope, Boolean(note?.hasAttribute("data-coder")));
+  } else if (scope) {
     renumberGutters(scope, Boolean(note?.hasAttribute("data-coder")));
   } else if (coder) {
     const numbers = gutterNumbers(area, 1);
@@ -159,6 +166,61 @@ export function paintEditorField(area: HTMLTextAreaElement) {
   placeLangBadge(field);
   if (field.hasAttribute("data-wrap") && !relayingWrap) {
     relayWrap(area);
+  }
+}
+
+/** What each overlay last rendered, so repaints that change nothing (resize, focus) skip the rebuild. */
+const paintedHighlight = new WeakMap<HTMLElement, string>();
+
+function paintHighlight(highlight: HTMLElement, mode: string, text: string, render: () => string) {
+  const key = `${mode}\u0001${text}`;
+  if (paintedHighlight.get(highlight) === key) {
+    return;
+  }
+  paintedHighlight.set(highlight, key);
+  if (mode === "none") {
+    highlight.replaceChildren();
+    return;
+  }
+  highlight.innerHTML = showFoldMarks(render());
+}
+
+let editorResizing = false;
+
+/** Set by the resize scheduler; per-field observers stand down while a resize is in progress. */
+export function setEditorResizing(on: boolean) {
+  editorResizing = on;
+}
+
+let batchScopes: Map<Element, boolean> | null = null;
+
+/**
+ * Runs `run` with gutter renumbering deferred: each scope is renumbered once at the end instead
+ * of once per painted field (which made repainting n blocks cost n² gutter passes).
+ */
+export function batchEditorPaint(run: () => void) {
+  if (batchScopes) {
+    run();
+    return;
+  }
+  batchScopes = new Map();
+  let scopes: Map<Element, boolean>;
+  try {
+    run();
+  } finally {
+    scopes = batchScopes;
+    batchScopes = null;
+  }
+  for (const [scope, coderNote] of scopes) {
+    renumberGutters(scope, coderNote);
+    // The code gutter may have just appeared or changed width; these depend on it.
+    for (const field of scope.querySelectorAll<HTMLElement>(".md-field")) {
+      const area = field.querySelector<HTMLTextAreaElement>(":scope > .md-surface > textarea");
+      placeLangBadge(field);
+      if (area) {
+        paintMarkBars(area, field);
+      }
+    }
   }
 }
 
@@ -226,9 +288,11 @@ function rowHeights(area: HTMLTextAreaElement, count: number, lineHeight: number
 
 export function refreshEditorFields(root: ParentNode = document) {
   applyEditorDataset();
-  for (const area of root.querySelectorAll<HTMLTextAreaElement>("#blocks textarea, .stack-blocks textarea")) {
-    paintEditorField(area);
-  }
+  batchEditorPaint(() => {
+    for (const area of root.querySelectorAll<HTMLTextAreaElement>("#blocks textarea, .stack-blocks textarea")) {
+      paintEditorField(area);
+    }
+  });
 }
 
 export function setEditorPrefs(next: EditorPrefs) {

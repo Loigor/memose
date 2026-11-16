@@ -1,4 +1,4 @@
-import { paintEditorField } from "./editor-field.ts";
+import { batchEditorPaint, paintEditorField, setEditorResizing } from "./editor-field.ts";
 
 export function editorShell(area: HTMLElement): HTMLElement {
   return area.closest(".md-field") ?? area;
@@ -12,7 +12,7 @@ export function withKeptScroll(roots: Array<HTMLElement | null | undefined>, run
   }
 }
 
-export function sizeBlockTextarea(area: HTMLTextAreaElement) {
+export function sizeBlockTextarea(area: HTMLTextAreaElement, paint = true) {
   // height:0 measurement would clamp parent overflow to the top.
   const blocks = area.closest<HTMLElement>("#blocks, .stack-blocks");
   const pane = area.closest<HTMLElement>("#note-pane");
@@ -24,20 +24,82 @@ export function sizeBlockTextarea(area: HTMLTextAreaElement) {
     area.classList.toggle("empty-slot", isEmpty && !isGrow && !isInline);
     if (isEmpty && !isGrow && !isInline) {
       area.style.height = "";
-      paintEditorField(area);
+      if (paint) {
+        paintEditorField(area);
+      }
       return;
     }
     area.style.height = "0px";
     const minH = isGrow ? 64 : 22;
     const needed = Math.max(minH, area.scrollHeight);
     area.style.height = `${needed}px`;
-    paintEditorField(area);
+    if (paint) {
+      paintEditorField(area);
+    }
   });
 }
 
 export function resizeAllBlockTextareas(root: ParentNode = document) {
-  for (const area of root.querySelectorAll<HTMLTextAreaElement>("#blocks textarea, .stack-blocks textarea")) {
-    sizeBlockTextarea(area);
+  batchEditorPaint(() => {
+    for (const area of root.querySelectorAll<HTMLTextAreaElement>("#blocks textarea, .stack-blocks textarea")) {
+      sizeBlockTextarea(area);
+    }
+  });
+}
+
+const RESIZE_SETTLE_MS = 160;
+let resizeFrame = 0;
+let resizeSettle: ReturnType<typeof setTimeout> | undefined;
+
+/**
+ * Call on every window or frame resize. While resizing, only wrapping textareas are refit (once
+ * per frame); the full repaint runs once when no resize has happened for a moment.
+ */
+export function scheduleEditorResize() {
+  setEditorResizing(true);
+  if (!resizeFrame) {
+    resizeFrame = requestAnimationFrame(() => {
+      resizeFrame = 0;
+      fitWrappingTextareas();
+    });
+  }
+  clearTimeout(resizeSettle);
+  resizeSettle = setTimeout(() => {
+    resizeSettle = undefined;
+    setEditorResizing(false);
+    resizeAllBlockTextareas();
+  }, RESIZE_SETTLE_MS);
+}
+
+const fittedWidth = new WeakMap<HTMLTextAreaElement, number>();
+
+/** Whether the textarea's height follows its width (its lines wrap). */
+function wrapsLines(area: HTMLTextAreaElement): boolean {
+  const field = area.closest(".md-field");
+  return !field?.hasAttribute("data-coder") || field.hasAttribute("data-wrap");
+}
+
+/**
+ * The cheap part of a window resize, run once per frame while dragging: refit only the
+ * textareas whose lines wrap and whose width actually changed. Highlighting, gutters and
+ * overlays wait for {@link resizeAllBlockTextareas} when the drag ends.
+ */
+export function fitWrappingTextareas(root: ParentNode = document) {
+  const areas = [...root.querySelectorAll<HTMLTextAreaElement>("#blocks textarea, .stack-blocks textarea")];
+  // Read every width first, then write: interleaving would force a layout per textarea.
+  const changed = areas.filter((area) => {
+    if (!wrapsLines(area)) {
+      return false;
+    }
+    const width = area.clientWidth;
+    if (fittedWidth.get(area) === width) {
+      return false;
+    }
+    fittedWidth.set(area, width);
+    return true;
+  });
+  for (const area of changed) {
+    sizeBlockTextarea(area, false);
   }
 }
 

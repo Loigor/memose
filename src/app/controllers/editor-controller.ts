@@ -49,7 +49,13 @@ import {
   type Block,
   type Edit,
 } from "../../editor/markdown-edit";
-import { charOffsetAtPoint, editorShell, resizeAllBlockTextareas, sizeBlockTextarea } from "../../editor/textarea";
+import {
+  charOffsetAtPoint,
+  editorShell,
+  resizeAllBlockTextareas,
+  scheduleEditorResize,
+  sizeBlockTextarea,
+} from "../../editor/textarea";
 import { createMedia } from "../../media/media-dnd";
 import { hydratePreviewContent, previewBodyTarget } from "../../media/media-elements";
 import { inTauri } from "../../platform";
@@ -1087,7 +1093,7 @@ export function createEditorController(
   }
 
   function resize() {
-    refreshEditorFields();
+    scheduleEditorResize();
   }
 
   function offsetInField(field: Editable, x: number, y: number): number | null {

@@ -1,6 +1,6 @@
 import { pointOnScrollGutter, type ScrollBox } from "../dom";
 import { editingHost } from "../editor/editable";
-import { resizeAllBlockTextareas } from "../editor/textarea";
+import { scheduleEditorResize } from "../editor/textarea";
 import { mediaPointer } from "../media/media-elements";
 import { inTauri, isPreviewWindow } from "../platform";
 import type { StackCtx } from "./context";
@@ -510,7 +510,7 @@ export function mountChrome(ctx: StackCtx) {
     if (ctx.dom.frame && typeof ResizeObserver !== "undefined") {
       const observer = new ResizeObserver(() => {
         ctx.api.syncHeaderCompact();
-        resizeAllBlockTextareas();
+        scheduleEditorResize();
         if (ctx.size.sizingWindow || !ctx.pointer.resizing || !ctx.pointer.resizingVertical) {
           return;
         }
