@@ -16,6 +16,7 @@ import { createSessionController, type SessionController } from "./app/controlle
 import { createAppContext } from "./app/context";
 import { createAppState } from "./app/state";
 import { memoUsesCoder, type EditorPrefs } from "./editor/editor-field";
+import { resizeAllBlockTextareas } from "./editor/textarea";
 import { bindMediaEditor } from "./media/media-dnd";
 import { initLightbox } from "./media/media-elements";
 import type { ThemeName } from "./look/memo-chrome";
@@ -162,6 +163,7 @@ const stackInput: StackInput = {
   startWindowDrag: (event) => stack.startWindowDrag(event),
   syncCollapsedPeek: () => stack.syncPeek(),
   refreshPreviewShortcut: (shortcut) => stack.refreshPreviewShortcut(shortcut),
+  stepFont: (section, key) => stack.stepFont(section, key),
 };
 
 inputController = createInputController(
@@ -234,6 +236,8 @@ if (inTauri() && !isPreviewWindow()) {
     if (editorController.applyPrefs(settings)) {
       stack.rerenderEditors();
     }
+    // Text sizes may have changed; stacked memos refit too.
+    resizeAllBlockTextareas();
   };
   void appBackend
     .getEditorPrefs()

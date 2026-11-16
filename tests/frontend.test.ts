@@ -14,6 +14,7 @@ import {
   stepOffset,
 } from "../src/editor/line-style.ts";
 import { detectLanguage, highlightCode } from "../src/editor/code-highlight.ts";
+import { clampFont, CODE_FONT, fontMetrics, MEMO_FONT, nextStep, stepRange, zoomKey } from "../src/editor/font-size.ts";
 import {
   braceFolds,
   displayToSource,
@@ -1084,4 +1085,54 @@ test("release versions and Tauri IPC command contracts stay in sync without dang
     invoked,
     "Every registered Tauri command must be used by the frontend and every frontend invoke() must be registered",
   );
+});
+
+test("font sizes keep whole-pixel line heights and clamp per memo", () => {
+  assert.deepEqual(fontMetrics(16, 13, 0), { memoFont: 16, memoLine: 22, codeFont: 13, codeLine: 19 });
+  for (let step = -10; step <= 40; step += 1) {
+    const metrics = fontMetrics(16, 13, step);
+    assert.ok(Number.isInteger(metrics.memoLine) && Number.isInteger(metrics.codeLine), `step ${step}`);
+    assert.ok(metrics.codeLine >= metrics.codeFont && metrics.memoLine >= metrics.memoFont);
+  }
+  // Both sizes move together and stop together at the limits.
+  assert.deepEqual(stepRange(16, 13), { min: -5, max: 32 });
+  assert.deepEqual(fontMetrics(16, 13, -20), fontMetrics(16, 13, -5));
+  assert.equal(fontMetrics(16, 13, -5).codeFont, 8);
+  assert.equal(fontMetrics(16, 13, 99).memoFont, 48);
+  assert.equal(clampFont("20", MEMO_FONT), 20);
+  assert.equal(clampFont(99, CODE_FONT), 13);
+  assert.equal(clampFont("nope", MEMO_FONT), 16);
+  assert.equal(nextStep(0, "bigger", 16, 13), 1);
+  assert.equal(nextStep(-5, "smaller", 16, 13), -5);
+  assert.equal(nextStep(32, "bigger", 16, 13), 32);
+  assert.equal(nextStep(5, "reset", 16, 13), 0);
+  // Pressing past the limit never piles up: one press back always shows a bigger size.
+  let step = 0;
+  for (let press = 0; press < 20; press += 1) {
+    step = nextStep(step, "smaller", 16, 13);
+  }
+  assert.equal(step, -5);
+  assert.ok(fontMetrics(16, 13, nextStep(step, "bigger", 16, 13)).codeFont > fontMetrics(16, 13, step).codeFont);
+  // A step saved under other defaults counts from the size it shows now.
+  assert.equal(nextStep(-12, "bigger", 16, 13), -4);
+});
+
+test("zoomKey reads cmd on macOS and ctrl elsewhere, across keyboard layouts", () => {
+  const key = (k: string, code: string, mods: Partial<Record<"metaKey" | "ctrlKey" | "altKey", boolean>>) => ({
+    key: k,
+    code,
+    metaKey: false,
+    ctrlKey: false,
+    altKey: false,
+    ...mods,
+  });
+  assert.equal(zoomKey(key("=", "Equal", { metaKey: true }), true), "bigger");
+  assert.equal(zoomKey(key("+", "Minus", { metaKey: true }), true), "bigger"); // Finnish/German "+" key
+  assert.equal(zoomKey(key("+", "NumpadAdd", { ctrlKey: true }), false), "bigger");
+  assert.equal(zoomKey(key("-", "Slash", { ctrlKey: true }), false), "smaller");
+  assert.equal(zoomKey(key("0", "Digit0", { ctrlKey: true }), false), "reset");
+  assert.equal(zoomKey(key("=", "Equal", { ctrlKey: true }), true), null); // ctrl is not the mac command key
+  assert.equal(zoomKey(key("=", "Equal", { metaKey: true }), false), null);
+  assert.equal(zoomKey(key("0", "Digit0", { metaKey: true, altKey: true }), true), null);
+  assert.equal(zoomKey(key("a", "KeyA", { metaKey: true }), true), null);
 });

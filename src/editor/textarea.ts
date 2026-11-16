@@ -1,5 +1,8 @@
 import { batchEditorPaint, paintEditorField, setEditorResizing } from "./editor-field.ts";
 
+/** Every editor field textarea: the block editors and read-only code views in previews. */
+const EDITOR_TEXTAREAS = "#blocks textarea, .stack-blocks textarea, .md-code-view textarea";
+
 export function editorShell(area: HTMLElement): HTMLElement {
   return area.closest(".md-field") ?? area;
 }
@@ -41,7 +44,7 @@ export function sizeBlockTextarea(area: HTMLTextAreaElement, paint = true) {
 
 export function resizeAllBlockTextareas(root: ParentNode = document) {
   batchEditorPaint(() => {
-    for (const area of root.querySelectorAll<HTMLTextAreaElement>("#blocks textarea, .stack-blocks textarea")) {
+    for (const area of root.querySelectorAll<HTMLTextAreaElement>(EDITOR_TEXTAREAS)) {
       sizeBlockTextarea(area);
     }
   });
@@ -85,7 +88,7 @@ function wrapsLines(area: HTMLTextAreaElement): boolean {
  * overlays wait for {@link resizeAllBlockTextareas} when the drag ends.
  */
 export function fitWrappingTextareas(root: ParentNode = document) {
-  const areas = [...root.querySelectorAll<HTMLTextAreaElement>("#blocks textarea, .stack-blocks textarea")];
+  const areas = [...root.querySelectorAll<HTMLTextAreaElement>(EDITOR_TEXTAREAS)];
   // Read every width first, then write: interleaving would force a layout per textarea.
   const changed = areas.filter((area) => {
     if (!wrapsLines(area)) {

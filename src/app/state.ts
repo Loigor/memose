@@ -30,6 +30,8 @@ export type EditorState = {
   coderWrap: boolean;
   /** Coder editor syntax language for this memo; null means auto-detect. */
   codeLang: string | null;
+  /** Text size offset in px for this memo (Cmd/Ctrl + "+" / "-"); 0 follows the defaults. */
+  fontStep: number;
   folds: number[][];
   marks: number[][];
   viewBlocks: Block[];
@@ -116,6 +118,7 @@ export function createAppState(): AppState {
       viewWrite: Promise.resolve(),
       coderWrap: false,
       codeLang: null,
+      fontStep: 0,
       folds: [],
       marks: [],
       viewBlocks: [],

@@ -427,8 +427,9 @@ impl Db {
         folds: &[Vec<u32>],
         marks: &[Vec<u32>],
         code_lang: Option<&str>,
+        font_step: i8,
     ) -> Result<(), AppError> {
-        let stored = encode_editor_view(line_wrap, folds, marks, code_lang);
+        let stored = encode_editor_view(line_wrap, folds, marks, code_lang, font_step);
         self.with(|conn| {
             conn.execute(
                 "UPDATE notes SET editor_view = ?1 WHERE id = ?2",
@@ -590,6 +591,8 @@ pub const SHOW_IN_SWITCHER: &str = "show_in_switcher";
 pub const PINNED_ALWAYS_ON_TOP: &str = "pinned_always_on_top";
 pub const CODER_EDITOR: &str = "coder_editor";
 pub const INDENT_WIDTH: &str = "indent_width";
+pub const MEMO_FONT_SIZE: &str = "memo_font_size";
+pub const CODE_FONT_SIZE: &str = "code_font_size";
 pub const MARKDOWN_HIGHLIGHT: &str = "markdown_highlight";
 pub const MARKDOWN_SCHEME: &str = "markdown_scheme";
 pub const HUE_SWATCHES: &str = "hue_swatches";
@@ -814,6 +817,7 @@ fn map_note(row: &rusqlite::Row<'_>) -> rusqlite::Result<Note> {
         folds: editor_view.folds,
         marks: editor_view.marks,
         code_lang: editor_view.code_lang,
+        font_step: editor_view.font_step,
     })
 }
 
@@ -832,6 +836,18 @@ struct EditorView {
     marks: Vec<Vec<u32>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     code_lang: Option<String>,
+    #[serde(default, skip_serializing_if = "is_zero")]
+    font_step: i8,
+}
+
+fn is_zero(value: &i8) -> bool {
+    *value == 0
+}
+
+/// Per-memo text size offset in px, as the Cmd/Ctrl + "+" / "-" shortcuts set it. The editor
+/// keeps it within what the default sizes can show; this only bounds what is stored.
+fn font_step(value: i8) -> i8 {
+    value.clamp(-40, 40)
 }
 
 fn parse_editor_view(raw: Option<String>) -> EditorView {
@@ -846,6 +862,7 @@ fn parse_editor_view(raw: Option<String>) -> EditorView {
         folds: bound_lines(view.folds),
         marks: bound_lines(view.marks),
         code_lang: code_lang(view.code_lang.as_deref()),
+        font_step: font_step(view.font_step),
     }
 }
 
@@ -881,12 +898,14 @@ fn encode_editor_view(
     folds: &[Vec<u32>],
     marks: &[Vec<u32>],
     lang: Option<&str>,
+    step: i8,
 ) -> String {
     serde_json::to_string(&EditorView {
         line_wrap,
         folds: bound_lines(folds.to_vec()),
         marks: bound_lines(marks.to_vec()),
         code_lang: code_lang(lang),
+        font_step: font_step(step),
     })
     .unwrap_or_else(|_| "{}".into())
 }
@@ -1066,14 +1085,22 @@ mod tests {
         assert!(draft.folds.is_empty());
         assert!(draft.marks.is_empty());
         assert_eq!(draft.code_lang, None);
-        db.save_editor_view(&draft.id, true, &[vec![0]], &[vec![1, 1, 3]], Some(" TS "))
-            .unwrap();
+        db.save_editor_view(
+            &draft.id,
+            true,
+            &[vec![0]],
+            &[vec![1, 1, 3]],
+            Some(" TS "),
+            3,
+        )
+        .unwrap();
         db.save_edit(&draft.id, "{\n  \"a\": 1\n}").unwrap();
         let note = db.get(&draft.id).unwrap().unwrap();
         assert!(note.line_wrap);
         assert_eq!(note.folds, vec![vec![0]]);
         assert_eq!(note.marks, vec![vec![1, 3]]);
         assert_eq!(note.code_lang.as_deref(), Some("ts"));
+        assert_eq!(note.font_step, 3);
         assert_eq!(note.content, "{\n  \"a\": 1\n}");
         let broken = parse_editor_view(Some("nope".into()));
         assert!(!broken.line_wrap);
@@ -1083,9 +1110,12 @@ mod tests {
         let old = parse_editor_view(Some(r#"{"lineWrap":true,"folds":[],"marks":[]}"#.into()));
         assert!(old.line_wrap);
         assert_eq!(old.code_lang, None);
-        db.save_editor_view(&draft.id, false, &[], &[], Some("<script>"))
+        assert_eq!(old.font_step, 0);
+        db.save_editor_view(&draft.id, false, &[], &[], Some("<script>"), 120)
             .unwrap();
-        assert_eq!(db.get(&draft.id).unwrap().unwrap().code_lang, None);
+        let cleaned = db.get(&draft.id).unwrap().unwrap();
+        assert_eq!(cleaned.code_lang, None);
+        assert_eq!(cleaned.font_step, 40);
     }
 
     #[test]

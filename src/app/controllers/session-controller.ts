@@ -36,7 +36,13 @@ export interface SessionController {
   loadPinned(id: string): Promise<void>;
 }
 
-const emptyEditorView = { lineWrap: false, folds: [] as number[][], marks: [] as number[][], codeLang: null };
+const emptyEditorView = {
+  lineWrap: false,
+  folds: [] as number[][],
+  marks: [] as number[][],
+  codeLang: null,
+  fontStep: 0,
+};
 
 export function createSessionController(
   context: AppContext,

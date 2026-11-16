@@ -1,6 +1,7 @@
 import { expect, test } from "@playwright/test";
 
 import { invokedCmds, openSettings } from "./helpers";
+import { getInvocations } from "./tauri-harness";
 
 test("settings tabs switch by click", async ({ page }) => {
   await openSettings(page);
@@ -126,4 +127,19 @@ test("sync save, test connection, and disconnect", async ({ page }) => {
   expect(cmds).toContain("save_settings");
   expect(cmds).toContain("test_memos");
   expect(cmds).toContain("clear_memos");
+});
+
+test("default text sizes are saved and clamped", async ({ page }) => {
+  await openSettings(page, { settings: { memoFontSize: 18, codeFontSize: 14 } });
+  await page.locator("#tab-editor").click();
+  await expect(page.locator("#memo-font-size")).toHaveValue("18");
+  await expect(page.locator("#code-font-size")).toHaveValue("14");
+  await page.locator("#memo-font-size").fill("20");
+  await page.locator("#memo-font-size").dispatchEvent("change");
+  await expect(page.locator("#settings-status")).toHaveText("Text is 20px, coder text is 14px.");
+  await page.locator("#code-font-size").fill("99");
+  await page.locator("#code-font-size").dispatchEvent("change");
+  await expect(page.locator("#code-font-size")).toHaveValue("13");
+  const saved = (await getInvocations(page)).filter((call) => call.cmd === "set_font_sizes").map((call) => call.args);
+  expect(saved.at(-1)).toMatchObject({ memo: 20, code: 13 });
 });

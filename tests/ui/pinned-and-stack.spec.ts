@@ -102,3 +102,16 @@ test("a stacked coder memo keeps its own language", async ({ page }) => {
   await expect.poll(async () => (await getNotes(page)).find((note) => note.id === "guest-1")?.codeLang).toBe("python");
   await expect(page.locator("#card")).not.toHaveAttribute("data-code-lang");
 });
+
+test("cmd/ctrl plus resizes only the stacked memo being edited", async ({ page }) => {
+  const { host, guests } = stackNotes();
+  await openPinned(page, "host-1", { notes: [host, ...guests] });
+  const guest = page.locator(".stack-note[data-id='guest-1']");
+  await guest.locator(".md-lines").first().click();
+  await page.keyboard.press("ControlOrMeta+=");
+  await page.keyboard.press("ControlOrMeta+=");
+  await expect(guest.locator(".md-lines").first()).toHaveCSS("font-size", "18px");
+  await expect(page.locator("#blocks .md-lines").first()).toHaveCSS("font-size", "16px");
+  await expect(page.locator(".stack-note[data-id='guest-2'] .md-lines").first()).toHaveCSS("font-size", "16px");
+  await expect.poll(async () => (await getNotes(page)).find((note) => note.id === "guest-1")?.fontStep).toBe(2);
+});

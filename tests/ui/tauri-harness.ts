@@ -25,6 +25,7 @@ export type NoteSeed = {
   folds?: number[][];
   marks?: number[][];
   codeLang?: string | null;
+  fontStep?: number;
   serverContent?: string | null;
 };
 
@@ -41,6 +42,8 @@ export type HarnessSettings = {
   markdownHighlight?: boolean;
   markdownScheme?: string;
   indentWidth?: number;
+  memoFontSize?: number;
+  codeFontSize?: number;
   pinTabBarEnabled?: boolean;
   pinTabScreen?: string;
   pinTabEdge?: string;
@@ -130,6 +133,7 @@ function installBrowserHarness(seed: BrowserSeed) {
       folds: Array.isArray(partial.folds) ? partial.folds : [],
       marks: Array.isArray(partial.marks) ? partial.marks : [],
       codeLang: partial.codeLang ?? null,
+      fontStep: partial.fontStep ?? 0,
       serverContent: partial.serverContent ?? null,
     };
   }
@@ -176,6 +180,8 @@ function installBrowserHarness(seed: BrowserSeed) {
       seed.settings?.indentWidth != null && seed.settings.indentWidth >= 1 && seed.settings.indentWidth <= 8
         ? Math.round(seed.settings.indentWidth)
         : 2,
+    memoFontSize: seed.settings?.memoFontSize ?? 16,
+    codeFontSize: seed.settings?.codeFontSize ?? 13,
     pinTabBarEnabled: seed.settings?.pinTabBarEnabled !== false,
     pinTabScreen:
       seed.settings?.pinTabScreen === "all" || seed.settings?.pinTabScreen?.startsWith("display:")
@@ -646,8 +652,23 @@ function installBrowserHarness(seed: BrowserSeed) {
           markdownHighlight: state.settings.markdownHighlight,
           markdownScheme: state.settings.markdownScheme,
           indentWidth: state.settings.indentWidth,
+          memoFontSize: state.settings.memoFontSize,
+          codeFontSize: state.settings.codeFontSize,
         });
         return null;
+      case "set_font_sizes": {
+        state.settings.memoFontSize = Number(a.memo);
+        state.settings.codeFontSize = Number(a.code);
+        emit("editor-prefs-changed", {
+          coderEditor: state.settings.coderEditor,
+          markdownHighlight: state.settings.markdownHighlight,
+          markdownScheme: state.settings.markdownScheme,
+          indentWidth: state.settings.indentWidth,
+          memoFontSize: state.settings.memoFontSize,
+          codeFontSize: state.settings.codeFontSize,
+        });
+        return null;
+      }
       case "set_indent_width": {
         const width = Math.round(Number(a.width));
         state.settings.indentWidth = width >= 1 && width <= 8 ? width : 2;
@@ -656,6 +677,8 @@ function installBrowserHarness(seed: BrowserSeed) {
           markdownHighlight: state.settings.markdownHighlight,
           markdownScheme: state.settings.markdownScheme,
           indentWidth: state.settings.indentWidth,
+          memoFontSize: state.settings.memoFontSize,
+          codeFontSize: state.settings.codeFontSize,
         });
         return null;
       }
@@ -666,6 +689,8 @@ function installBrowserHarness(seed: BrowserSeed) {
           markdownHighlight: state.settings.markdownHighlight,
           markdownScheme: state.settings.markdownScheme,
           indentWidth: state.settings.indentWidth,
+          memoFontSize: state.settings.memoFontSize,
+          codeFontSize: state.settings.codeFontSize,
         });
         return null;
       case "set_markdown_scheme":
@@ -675,6 +700,8 @@ function installBrowserHarness(seed: BrowserSeed) {
           markdownHighlight: state.settings.markdownHighlight,
           markdownScheme: state.settings.markdownScheme,
           indentWidth: state.settings.indentWidth,
+          memoFontSize: state.settings.memoFontSize,
+          codeFontSize: state.settings.codeFontSize,
         });
         return null;
       case "set_collapsed": {
@@ -704,6 +731,7 @@ function installBrowserHarness(seed: BrowserSeed) {
           note.folds = Array.isArray(a.folds) ? a.folds : [];
           note.marks = Array.isArray(a.marks) ? a.marks : [];
           note.codeLang = typeof a.codeLang === "string" ? a.codeLang : null;
+          note.fontStep = typeof a.fontStep === "number" ? a.fontStep : 0;
         }
         return null;
       }

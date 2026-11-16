@@ -24,7 +24,7 @@ export function mountChrome(ctx: StackCtx) {
       target instanceof Element &&
       Boolean(
         target.closest(
-          "button, a, input, textarea, .md-lines, select, audio, video, .media, .media-audio, .file-attachment, #media-context-menu, #resize-grip, .resize-handle, #color-pop, #audience-pop, #format-pop, #md-toolbar, #editor-tools, .color-pop, .audience-pop, .format-pop, .md-toolbar, .editor-tools, .md-tag",
+          "button, a, input, textarea, .md-lines, select, audio, video, .media, .media-audio, .file-attachment, #media-context-menu, #resize-grip, .resize-handle, #color-pop, #audience-pop, #format-pop, #md-toolbar, #editor-tools, .color-pop, .audience-pop, .format-pop, .md-toolbar, .editor-tools, .md-tag, #preview, .stack-preview",
         ),
       )
     );
@@ -195,7 +195,9 @@ export function mountChrome(ctx: StackCtx) {
       return false;
     }
     const el = document.activeElement;
-    return el instanceof HTMLTextAreaElement || el instanceof HTMLInputElement || editingHost(el) != null;
+    return (
+      (el instanceof HTMLTextAreaElement && !el.readOnly) || el instanceof HTMLInputElement || editingHost(el) != null
+    );
   }
 
   function slideOut() {
@@ -363,7 +365,8 @@ export function mountChrome(ctx: StackCtx) {
         }
       }
       const field =
-        target instanceof HTMLTextAreaElement || (target instanceof HTMLInputElement && target.type !== "range")
+        (target instanceof HTMLTextAreaElement && !target.readOnly) ||
+        (target instanceof HTMLInputElement && target.type !== "range")
           ? target
           : editingHost(target);
       if (field) {

@@ -1,4 +1,7 @@
+import { nextFontStep, paintFontStep } from "../editor/editor-field";
+import type { ZoomKey } from "../editor/font-size";
 import { restoreCaret } from "../editor/history";
+import { resizeAllBlockTextareas } from "../editor/textarea";
 import { darkHue, lightHue } from "../look/look";
 import type { MediaNoteMutator } from "../media/media-dnd";
 import { mountAudience } from "./audience";
@@ -35,6 +38,7 @@ export type StackController = {
   startWindowDrag(event: MouseEvent): void;
   syncPeek(): void;
   refreshPreviewShortcut(shortcut: string): void;
+  stepFont(section: HTMLElement, key: ZoomKey): void;
   wire(): void;
 };
 
@@ -149,6 +153,21 @@ export function createStackController(deps: StackDeps): StackController {
         const open = btn.getAttribute("aria-pressed") === "true";
         btn.title = open ? `Edit (${shortcut})` : `Preview (${shortcut})`;
       });
+    },
+    stepFont(section, key) {
+      const id = section.dataset.id;
+      const state = id ? ctx.notes.get(id) : undefined;
+      if (!state) {
+        return;
+      }
+      const next = nextFontStep(state.fontStep, key);
+      if (next === state.fontStep) {
+        return;
+      }
+      state.fontStep = next;
+      paintFontStep(section, next);
+      resizeAllBlockTextareas(section);
+      editor.scheduleSectionSave(section, state);
     },
     wire: () => chrome.wireChrome(),
   };

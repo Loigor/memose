@@ -276,7 +276,7 @@ export function mountSections(ctx: StackCtx) {
       }
       if (
         target.closest(
-          "header, button, input, textarea, .md-lines, .media, .media-audio, .file-attachment, .color-pop, .audience-pop, .format-pop, .md-toolbar, .editor-tools, #resize-grip, .resize-handle",
+          "header, button, input, textarea, .md-lines, .stack-preview, .media, .media-audio, .file-attachment, .color-pop, .audience-pop, .format-pop, .md-toolbar, .editor-tools, #resize-grip, .resize-handle",
         )
       ) {
         return;
@@ -694,6 +694,7 @@ export function mountSections(ctx: StackCtx) {
         coder: prev?.coder ?? (note.coder === true ? true : note.coder === false ? false : null),
         wrap: prev?.wrap ?? note.lineWrap === true,
         codeLang: prev ? prev.codeLang : note.codeLang || null,
+        fontStep: prev ? prev.fontStep : (note.fontStep ?? 0),
         folds: prev?.folds ?? denseLines(note.folds),
         marks: prev?.marks ?? denseLines(note.marks),
         mdBar: prev?.mdBar ?? false,

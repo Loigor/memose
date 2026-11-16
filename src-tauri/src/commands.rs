@@ -27,6 +27,8 @@ pub(crate) struct SettingsView {
     markdown_highlight: bool,
     markdown_scheme: String,
     indent_width: u8,
+    memo_font_size: u8,
+    code_font_size: u8,
     show_in_switcher: bool,
     pinned_always_on_top: bool,
 }
@@ -174,6 +176,8 @@ pub fn get_settings(app: AppHandle, state: State<AppState>) -> Result<SettingsVi
         markdown_highlight: state.db.get_meta(notes::MARKDOWN_HIGHLIGHT)?.as_deref() != Some("0"),
         markdown_scheme: markdown_scheme(state.db.get_meta(notes::MARKDOWN_SCHEME)?.as_deref()),
         indent_width: indent_width(state.db.get_meta(notes::INDENT_WIDTH)?),
+        memo_font_size: font_size(state.db.get_meta(notes::MEMO_FONT_SIZE)?, MEMO_FONT),
+        code_font_size: font_size(state.db.get_meta(notes::CODE_FONT_SIZE)?, CODE_FONT),
         show_in_switcher: window_ctl::show_in_switcher(&app),
         pinned_always_on_top: window_ctl::pinned_always_on_top(&app),
     })
@@ -183,6 +187,17 @@ fn indent_width(raw: Option<String>) -> u8 {
     match raw.as_deref().and_then(|value| value.parse::<u8>().ok()) {
         Some(width) if (1..=8).contains(&width) => width,
         _ => 2,
+    }
+}
+
+/// (min, max, default) text size in px.
+const MEMO_FONT: (u8, u8, u8) = (10, 32, 16);
+const CODE_FONT: (u8, u8, u8) = (9, 28, 13);
+
+fn font_size(raw: Option<String>, (min, max, fallback): (u8, u8, u8)) -> u8 {
+    match raw.as_deref().and_then(|value| value.parse::<u8>().ok()) {
+        Some(size) if (min..=max).contains(&size) => size,
+        _ => fallback,
     }
 }
 
@@ -201,6 +216,8 @@ struct EditorPrefsView {
     markdown_highlight: bool,
     markdown_scheme: String,
     indent_width: u8,
+    memo_font_size: u8,
+    code_font_size: u8,
 }
 
 fn emit_editor_prefs(app: &AppHandle, state: &State<AppState>) -> Result<(), AppError> {
@@ -212,6 +229,8 @@ fn emit_editor_prefs(app: &AppHandle, state: &State<AppState>) -> Result<(), App
                 != Some("0"),
             markdown_scheme: markdown_scheme(state.db.get_meta(notes::MARKDOWN_SCHEME)?.as_deref()),
             indent_width: indent_width(state.db.get_meta(notes::INDENT_WIDTH)?),
+            memo_font_size: font_size(state.db.get_meta(notes::MEMO_FONT_SIZE)?, MEMO_FONT),
+            code_font_size: font_size(state.db.get_meta(notes::CODE_FONT_SIZE)?, CODE_FONT),
         },
     );
     Ok(())
@@ -322,6 +341,24 @@ pub fn set_indent_width(app: AppHandle, state: State<AppState>, width: u8) -> Re
 }
 
 #[tauri::command]
+pub fn set_font_sizes(
+    app: AppHandle,
+    state: State<AppState>,
+    memo: u8,
+    code: u8,
+) -> Result<(), AppError> {
+    let memo = font_size(Some(memo.to_string()), MEMO_FONT);
+    let code = font_size(Some(code.to_string()), CODE_FONT);
+    state
+        .db
+        .set_meta(notes::MEMO_FONT_SIZE, &memo.to_string())?;
+    state
+        .db
+        .set_meta(notes::CODE_FONT_SIZE, &code.to_string())?;
+    emit_editor_prefs(&app, &state)
+}
+
+#[tauri::command]
 pub fn set_coder_editor(
     app: AppHandle,
     state: State<AppState>,
@@ -400,10 +437,16 @@ pub fn save_editor_view(
     folds: Vec<Vec<u32>>,
     marks: Vec<Vec<u32>>,
     code_lang: Option<String>,
+    font_step: Option<i8>,
 ) -> Result<(), AppError> {
-    state
-        .db
-        .save_editor_view(&id, line_wrap, &folds, &marks, code_lang.as_deref())
+    state.db.save_editor_view(
+        &id,
+        line_wrap,
+        &folds,
+        &marks,
+        code_lang.as_deref(),
+        font_step.unwrap_or(0),
+    )
 }
 
 #[tauri::command]

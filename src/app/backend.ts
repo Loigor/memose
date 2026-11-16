@@ -37,6 +37,7 @@ export interface EditorBackend {
     folds: number[][],
     marks: number[][],
     codeLang: string | null,
+    fontStep: number,
   ): Promise<void>;
   getEditorPrefs(): Promise<EditorPrefs>;
 }
@@ -106,8 +107,8 @@ export function createAppBackend(): AppBackend {
     saveMedia(bytes, filename, mime) {
       return invoke<string>("save_media", { bytes, filename, mime });
     },
-    saveEditorView(id, lineWrap, folds, marks, codeLang) {
-      return invoke("save_editor_view", { id, lineWrap, folds, marks, codeLang });
+    saveEditorView(id, lineWrap, folds, marks, codeLang, fontStep) {
+      return invoke("save_editor_view", { id, lineWrap, folds, marks, codeLang, fontStep });
     },
     getEditorPrefs() {
       return invoke<EditorPrefs>("get_settings");

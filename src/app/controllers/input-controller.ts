@@ -1,9 +1,10 @@
 import { editingHost, type Editable } from "../../editor/editable";
+import { zoomKey, type ZoomKey } from "../../editor/font-size";
 import { tagAtOffset } from "../../editor/md-tags";
 import { filesFromTransfer, uniqueFiles } from "../../media/files";
 import { isDraggingMedia } from "../../media/media-dnd";
 import { closeMediaContextMenu, mediaContextMenuOpen } from "../../media/media-elements";
-import { inTauri, isPreviewWindow } from "../../platform";
+import { inTauri, isMac, isPreviewWindow } from "../../platform";
 import {
   domMouseButton,
   formatBind,
@@ -37,6 +38,7 @@ export interface StackInput {
   startWindowDrag(event: MouseEvent): void;
   syncCollapsedPeek(): void;
   refreshPreviewShortcut(shortcut: string): void;
+  stepFont(section: HTMLElement, key: ZoomKey): void;
 }
 
 export interface InputController {
@@ -497,6 +499,21 @@ export function createInputController(
             tools.parentElement
               ?.querySelector<HTMLElement>(".editor-menu-toggle")
               ?.setAttribute("aria-expanded", "false");
+          }
+          event.preventDefault();
+          event.stopPropagation();
+          return;
+        }
+        const zoom = zoomKey(event, isMac());
+        if (zoom && !event.isComposing) {
+          // Text size of the memo being edited: a stacked guest, or the window's own memo.
+          const target = event.target;
+          const section =
+            (target instanceof Element ? target.closest<HTMLElement>(".stack-note") : null) ?? stack.activeSection();
+          if (section) {
+            stack.stepFont(section, zoom);
+          } else {
+            editor.stepFont(zoom);
           }
           event.preventDefault();
           event.stopPropagation();

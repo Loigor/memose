@@ -301,10 +301,11 @@ html[data-theme="dark"][data-mdhl-scheme="mono"] {
   border-radius: 2px;
   background: color-mix(in srgb, color-mix(in srgb, black 14%, var(--paper)) var(--paper-alpha), transparent);
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-  font-size: 13px;
-  /* Whole pixels: a fractional pitch (13px × 1.45 = 18.85) rounds differently in the textarea,
-     the highlight overlay and the gutter, and the error grows with every line. */
-  line-height: 19px;
+  /* Set from settings and per-memo zoom (font-size.ts). The line height is always whole pixels:
+     a fractional pitch (13px × 1.45 = 18.85) rounds differently in the textarea, the highlight
+     overlay and the gutter, and the error grows with every line. */
+  font-size: var(--code-font);
+  line-height: var(--code-line);
   tab-size: var(--indent-ch, 2);
 }
 
@@ -499,7 +500,7 @@ html[data-theme="dark"][data-mdhl-scheme="mono"] {
 #blocks .md-field[data-coder] textarea,
 .stack-blocks .md-field[data-coder] .md-hl,
 .stack-blocks .md-field[data-coder] textarea {
-  padding: 6px 14px 6px 8px;
+  padding: 6px 14px 6px 5px;
   font: inherit;
   font-size: inherit;
   line-height: inherit;
