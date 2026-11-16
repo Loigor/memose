@@ -19,8 +19,8 @@ Do not add a UI framework. HTML stays the component tree.
 | --- | --- | --- |
 | Flat frontend tree | `src/*.ts` beside the page entries | The next file split has nowhere to land, and a new module looks the same as an app entry. |
 | IPC test assumes that flat tree | `tests/frontend.test.ts` listed only `src/*.ts` | A file moved into a folder would drop its `invoke()` calls out of the contract check. Fixed in step 1. |
-| God files | `window_ctl/mod.rs` (3033), `main.ts` (2773), `stack.ts` (2341), `styles.css` (2027), `notes/db.rs` (1915), `notes/sync.rs` (1831), `media.rs` (1035) | A change to drag, sync, or the editor requires reading an unrelated half of the file. |
-| Two block renderers | `renderBlocks` in `main.ts`, `renderSectionBlocks` in `stack.ts` | Same media-row idea, different details (composer placeholder, host state vs section state). Merge only after a line-by-line diff, in its own step. |
+| God files | `window_ctl/mod.rs`, `styles.css`, `notes/db.rs`, `notes/sync.rs`, `media.rs` | A change to drag, sync, or the editor requires reading an unrelated half of the file. `main.ts` and `stack.ts` were split in steps 5 and 6. |
+| Two block renderers | `renderBlocks` in `src/app/controllers/editor-controller.ts`, `renderSectionBlocks` in `src/stack/editor.ts` | Same media-row idea, different details (composer placeholder, host state vs section state). Merge only after a line-by-line diff, in its own step. |
 | One stylesheet, no sections | `src/styles.css` | Safe to split only by cutting rules into files that `styles.css` imports in today's order. |
 
 `commands.rs` (760 lines) stays the IPC surface. Splitting it does not make the app easier to follow.
@@ -75,26 +75,17 @@ Imported in this order:
 
 `styles.css` continues at `#memo-list`. The selection check reads `src/styles.css` and the slices it imports, in that order.
 
-### 5. `stack.ts` — left in place
+### 5. `stack.ts` — done
 
-Checked the three cuts. None is a closed set, and a new controller type is out of scope.
+The first cut left this file in place. Window height, section rendering, and chrome drag shared module-level `let`s, and TypeScript cannot assign an imported `let`, so moving the functions alone would have cycled.
 
-1. Window height. `targetWindowHeight` through `tweenWindowHeight` read `stackState`, `hostCollapsed`, and the tween timers. `loadStack`, `paintChrome`, `setHostCollapsed`, and resize write `openNoteHeight`, `savedHostHeight`, `chromeSignature`, and `initialSizeSynced`, and call the helpers back.
-2. Section block render. `renderSectionBlocks` and the save/edit helpers are called from `buildSection`, undo/redo, and section preview.
-3. Chrome drag and resize. `startWindowDrag` reads `sectionLift`, which `buildSection` writes.
+The architecture pass closed that with one stack context in `src/stack/`. `src/stack/index.ts` creates it and mounts layout, guest editing, guest look, guest audience, section loading, and window chrome. `main.ts` calls `createStackController`. Guest block rendering stays in `src/stack/editor.ts`, separate from the host editor.
 
-TypeScript cannot assign an imported `let`. Moving the lets with the functions still leaves those callers writing them, which is a circular module. They stay in `src/stack.ts`. `bindStack` and the exports `main.ts` uses stay there too.
+### 6. `main.ts` — done
 
-### 6. `main.ts` — left in place
+The first cut left this file in place for the same reason: recent list, look, audience, and draft persist wrote the same module-level `let`s.
 
-Checked the four cuts. None is a closed set, and a new bag of callbacks is out of scope.
-
-1. Recent list. `refreshRecent` writes `chosenSyncState`, `chosenVisibility`, and `chosenSyncError`, and the row click calls `openRecent`.
-2. Look paint. `paintLook` calls the coder chrome, the theme icon, and stack recolor, and `adoptLook` plus the boot path call it back.
-3. Audience menu. `paintAudience` is called from `openRecent`, `loadDraft`, and the delete path, and it paints the look.
-4. Draft persist. `scheduleDraft` and `persistDraft` read `editingId`, `noteContent`, `lookUnsaved`, and `audienceDirty`. Undo, the editor, and `openRecent` call them.
-
-TypeScript cannot assign an imported `let`. Moving the lets with the functions still leaves those callers writing them. They stay in `src/main.ts`. The boot at the bottom (composer vs pinned vs media preview) stays there too.
+The architecture pass moved those into `src/app/controllers/`. `src/main.ts` detects the mode, creates the context, mounts the controllers, and wires Tauri lifecycle events. Draft save is `scheduleDraft` in `src/app/controllers/session-controller.ts`. The recent cap is `fetchLimit` in `src/app/controllers/recent-controller.ts`.
 
 ### 7. `window_ctl`, leaves first
 
@@ -151,8 +142,8 @@ Do not add `vercel-react-best-practices`. This app is vanilla TypeScript.
 - [x] 2. `src/media/`
 - [x] 3. `src/look/`
 - [x] 4. Stylesheet split, same cascade
-- [x] 5. `stack.ts` — left in place (not a closed extract)
-- [x] 6. `main.ts` — left in place (not a closed extract)
+- [x] 5. `src/stack/` — context plus layout, editor, look, audience, sections, and chrome
+- [x] 6. `src/main.ts` composition root and `src/app/controllers/`
 - [x] 7. `window_ctl` leaves (preview stays; pin, composer, and drag moved)
 - [x] 8. `Db` impl groups
 - [x] 9. Sync parsers

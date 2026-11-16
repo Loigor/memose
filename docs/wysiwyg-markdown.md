@@ -6,7 +6,7 @@ The typing surface is the markdown string already stored and synced. A rich-text
 
 ## What the app stores
 
-A note is a markdown string in SQLite. Drafts, edits, and publish all send that string (`scheduleDraft` in `src/main.ts`, `content` in `src-tauri/src/notes`). When a useMemos server is configured, the same string is the memo body. A push longer than 8,192 characters is rejected.
+A note is a markdown string in SQLite. Drafts, edits, and publish all send that string (`scheduleDraft` in `src/app/controllers/session-controller.ts`, `content` in `src-tauri/src/notes`). When a useMemos server is configured, the same string is the memo body. A push longer than 8,192 characters is rejected.
 
 Each pinned memo is its own Tauri webview. JavaScript heaps are not shared across those windows. Media paths `![](memose-media/…)` stay in the string.
 
