@@ -45,42 +45,138 @@ textarea,
   text-underline-offset: 2px;
 }
 
-#preview pre,
 #preview code,
-.stack-preview pre,
 .stack-preview code {
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   font-size: var(--code-font);
 }
 
-#preview pre,
-.stack-preview pre {
-  position: relative;
+/* Fenced code renders as a read-only editor field (editor/code-view.ts). */
+.md-code-view {
+  margin: 0.9em 0;
 }
 
-#preview pre,
-.stack-preview pre {
-  margin: 0.9em 0;
-  padding: 8px 2.5em 8px 10px;
+/* Room for the language label and copy button on the top border. */
+#preview > .md-code-view:first-child {
+  margin-top: 10px;
+}
+
+/* Bordered like editor code blocks, also in coder memos, whose editor fields run edge to edge. */
+#preview .md-code-view .md-field[data-coder],
+.stack-preview .md-code-view .md-field[data-coder] {
+  position: relative;
   border: 1px solid color-mix(in srgb, var(--ink) 22%, transparent);
   border-radius: 2px;
-  background: color-mix(in srgb, color-mix(in srgb, black 14%, var(--paper)) var(--paper-alpha), transparent);
 }
 
-/* Keep the language label on the top border clear of the scroll edge. */
-#preview > pre:first-child {
-  margin-top: 8px;
+/* Same metrics as editor code fields (highlight.css), so the overlay sits on the textarea's grid. */
+#preview .md-code-view textarea,
+#preview .md-code-view .md-hl,
+.stack-preview .md-code-view textarea,
+.stack-preview .md-code-view .md-hl {
+  min-height: 22px;
+  margin: 0;
+  padding: 6px 52px 6px 8px;
+  font: inherit;
+  font-size: inherit;
+  line-height: inherit;
+  letter-spacing: inherit;
+  font-kerning: none;
+  font-variant-ligatures: none;
+  tab-size: inherit;
+  white-space: pre;
+  word-wrap: normal;
+  overflow-wrap: normal;
+}
+
+/* Long lines scroll sideways (trackpad, or by selecting) without a scrollbar changing the height. */
+#preview .md-code-view textarea,
+.stack-preview .md-code-view textarea {
+  flex: 0 0 auto;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: none;
+  caret-color: transparent;
+  cursor: text;
+}
+
+#preview .md-code-view textarea::-webkit-scrollbar,
+.stack-preview .md-code-view textarea::-webkit-scrollbar {
+  display: none;
+}
+
+#preview .md-code-view .md-field[data-wrap] textarea,
+#preview .md-code-view .md-field[data-wrap] .md-hl,
+.stack-preview .md-code-view .md-field[data-wrap] textarea,
+.stack-preview .md-code-view .md-field[data-wrap] .md-hl {
+  white-space: pre-wrap;
+  word-wrap: break-word;
+  overflow-wrap: break-word;
+  overflow-x: hidden;
+}
+
+.md-hover-layer {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  overflow: hidden;
+  pointer-events: none;
+}
+
+.md-hover-layer[hidden] {
+  display: none;
+}
+
+.md-hover-block,
+.md-hover-line {
+  position: absolute;
+  left: 0;
+  right: 0;
+}
+
+.md-hover-block[hidden] {
+  display: none;
+}
+
+.md-hover-block {
+  background: color-mix(in srgb, var(--ink) 5%, transparent);
+  box-shadow: inset 2px 0 0 color-mix(in srgb, var(--ink) 28%, transparent);
+}
+
+.md-hover-line {
+  background: color-mix(in srgb, var(--ink) 7%, transparent);
+}
+
+.md-hover-layer.is-block-focus .md-hover-block {
+  background: color-mix(in srgb, var(--ink) 10%, transparent);
+}
+
+.md-hover-layer.is-block-focus .md-hover-line {
+  background: transparent;
+}
+
+.md-hover-layer.is-line-focus .md-hover-line {
+  background: color-mix(in srgb, var(--ink) 13%, transparent);
+}
+
+.md-hover-actions {
+  position: absolute;
+  right: 4px;
+  z-index: 4;
+  display: flex;
+  gap: 2px;
+  transform: translateY(-50%);
+}
+
+.md-hover-actions[hidden] {
+  display: none;
 }
 
 .md-copy {
-  position: absolute;
-  top: 4px;
-  right: 6px;
-  z-index: 3;
   display: grid;
   place-items: center;
-  width: 22px;
-  height: 22px;
+  width: 20px;
+  height: 20px;
   padding: 0;
   border: 0;
   border-radius: 4px;
@@ -91,8 +187,23 @@ textarea,
   -webkit-user-select: none;
 }
 
-.md-copy:hover {
+.md-copy[hidden] {
+  display: none;
+}
+
+.md-copy:hover,
+.md-copy.is-copied {
   color: var(--ink);
+}
+
+/* Sits on the top border, opposite the language label. */
+.md-code-copy {
+  position: absolute;
+  z-index: 4;
+  transform: translateY(-50%);
+  top: 0;
+  right: 8px;
+  background: inherit;
 }
 
 .md-copy svg {

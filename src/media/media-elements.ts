@@ -10,7 +10,7 @@ import {
   mediaPrefix,
   parseMediaMeta,
 } from "../editor/markdown-edit";
-import { highlightCode } from "../editor/code-highlight";
+import { mountCodeViews } from "../editor/code-view";
 import { linkTagsIn } from "../editor/md-tags";
 import { inTauri } from "../platform";
 
@@ -315,41 +315,6 @@ export function createFileAttachmentChip(name: string, label?: string): HTMLAnch
   return link;
 }
 
-const COPY_ICON =
-  '<svg viewBox="0 0 16 16" aria-hidden="true"><rect x="5.5" y="5.5" width="8" height="8" rx="1.5"/><path d="M10.5 3.5v-.5A1.5 1.5 0 0 0 9 1.5H4A1.5 1.5 0 0 0 2.5 3v5A1.5 1.5 0 0 0 4 9.5h.5"/></svg>';
-const COPIED_ICON = '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M3 8.5l3 3 7-7"/></svg>';
-
-function codeCopyButton(source: string): HTMLButtonElement {
-  const button = document.createElement("button");
-  button.type = "button";
-  button.className = "md-copy";
-  button.title = "Copy code";
-  button.setAttribute("aria-label", "Copy code");
-  button.innerHTML = COPY_ICON;
-  let reset = 0;
-  button.addEventListener("click", (event) => {
-    event.preventDefault();
-    event.stopPropagation();
-    void navigator.clipboard.writeText(source.replace(/\n$/, "")).then(
-      () => {
-        button.innerHTML = COPIED_ICON;
-        button.classList.add("is-copied");
-        button.title = "Copied";
-        window.clearTimeout(reset);
-        reset = window.setTimeout(() => {
-          button.innerHTML = COPY_ICON;
-          button.classList.remove("is-copied");
-          button.title = "Copy code";
-        }, 1200);
-      },
-      (error: unknown) => {
-        console.error(error);
-      },
-    );
-  });
-  return button;
-}
-
 export function previewBodyTarget(target: EventTarget | null): target is Element {
   return (
     target instanceof Element &&
@@ -364,27 +329,7 @@ export async function hydratePreviewContent(
   onPreview?: (name: string) => void,
 ) {
   linkTagsIn(container);
-  for (const code of container.querySelectorAll("pre > code")) {
-    const named = /language-([^\s]+)/.exec(code.className)?.[1] ?? "";
-    const label = named.trim().split(/\s+/)[0] || "text";
-    const pre = code.parentElement;
-    if (pre instanceof HTMLElement) {
-      pre.dataset.lang = label;
-      let badge = pre.querySelector(":scope > .md-lang");
-      if (!(badge instanceof HTMLElement)) {
-        badge = document.createElement("span");
-        badge.className = "md-lang is-side";
-        badge.setAttribute("aria-hidden", "true");
-        pre.append(badge);
-      }
-      badge.textContent = label;
-    }
-    const source = code.textContent ?? "";
-    code.innerHTML = highlightCode(source, named);
-    if (pre instanceof HTMLElement && !pre.querySelector(":scope > .md-copy")) {
-      pre.append(codeCopyButton(source));
-    }
-  }
+  mountCodeViews(container);
   for (const box of container.querySelectorAll("input[type='checkbox']")) {
     if (box instanceof HTMLInputElement) {
       box.disabled = false;

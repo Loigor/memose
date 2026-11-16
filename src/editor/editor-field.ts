@@ -1,5 +1,6 @@
 import { detectLanguage, highlightCode, resolvedLanguage } from "./code-highlight.ts";
 import {
+  braceFolds,
   displayToSource,
   expandFolds,
   FOLD_SENTINEL,
@@ -68,8 +69,21 @@ export function memoUsesCoder(explicit: boolean | null | undefined): boolean {
   return prefs.coderEditor;
 }
 
-export function wrapEditorField(area: HTMLTextAreaElement): HTMLElement {
-  area.setAttribute("data-block-field", "");
+export type EditorFieldOptions = {
+  /**
+   * False mounts a read-only view (markdown preview): text can be selected and blocks folded, but
+   * not edited. It is not a block field, so editor navigation and shortcuts skip it.
+   */
+  editable?: boolean;
+};
+
+export function wrapEditorField(area: HTMLTextAreaElement, options: EditorFieldOptions = {}): HTMLElement {
+  const editable = options.editable !== false;
+  if (editable) {
+    area.setAttribute("data-block-field", "");
+  } else {
+    area.readOnly = true;
+  }
   attachFolding(area);
   const existing = area.closest(".md-field");
   if (existing instanceof HTMLElement) {
@@ -79,6 +93,7 @@ export function wrapEditorField(area: HTMLTextAreaElement): HTMLElement {
   }
   const field = document.createElement("div");
   field.className = "md-field";
+  field.toggleAttribute("data-readonly", !editable);
   const folds = document.createElement("div");
   folds.className = "md-folds";
   folds.hidden = true;
@@ -92,7 +107,9 @@ export function wrapEditorField(area: HTMLTextAreaElement): HTMLElement {
   highlight.setAttribute("aria-hidden", "true");
   surface.append(highlight, area, overflowLayer(surface));
   field.append(gutter, folds, surface);
-  attachLineMarks(field, area);
+  if (editable) {
+    attachLineMarks(field, area);
+  }
   folds.addEventListener("mousedown", (event) => toggleFold(area, event));
   area.addEventListener("scroll", () => syncEditorScroll(area));
   const caretLine = () => paintCaretLine(area);
@@ -254,6 +271,7 @@ function keepWrapEnter(area: HTMLTextAreaElement, event: KeyboardEvent) {
     event.metaKey ||
     event.ctrlKey ||
     event.isComposing ||
+    area.readOnly ||
     !area.closest(".md-field")?.hasAttribute("data-wrap")
   ) {
     return;
@@ -298,7 +316,9 @@ function rowHeights(area: HTMLTextAreaElement, count: number, lineHeight: number
 export function refreshEditorFields(root: ParentNode = document) {
   applyEditorDataset();
   batchEditorPaint(() => {
-    for (const area of root.querySelectorAll<HTMLTextAreaElement>("#blocks textarea, .stack-blocks textarea")) {
+    for (const area of root.querySelectorAll<HTMLTextAreaElement>(
+      "#blocks textarea, .stack-blocks textarea, .md-code-view textarea",
+    )) {
       paintEditorField(area);
     }
   });
@@ -355,7 +375,9 @@ export function paintFontStep(note: HTMLElement, step: number) {
 }
 
 function paintLang(field: HTMLElement, area: HTMLTextAreaElement) {
-  const label = (area.dataset.lang ?? "").trim().split(/\s+/)[0] ?? "";
+  const tagged = (area.dataset.lang ?? "").trim().split(/\s+/)[0] ?? "";
+  // Read-only code always names its language; untagged code reads as plain text.
+  const label = tagged || (area.readOnly && area.dataset.kind === "code" ? "text" : "");
   if (label) {
     field.dataset.lang = label;
   } else {
@@ -387,7 +409,8 @@ function placeLangBadge(field: HTMLElement) {
   }
   const note = field.closest("#card, .stack-note");
   const codeGutter = field.querySelector(":scope > .md-gutter-code");
-  const nested = Boolean(note?.hasAttribute("data-coder") && codeGutter);
+  // Read-only views keep the label on the border, clear of the per-line copy buttons.
+  const nested = field.hasAttribute("data-readonly") || Boolean(note?.hasAttribute("data-coder") && codeGutter);
   badge.classList.toggle("is-side", nested);
   if (nested) {
     if (badge.parentElement !== field) {
@@ -636,7 +659,7 @@ function attachFolding(area: HTMLTextAreaElement) {
   area.dataset.folding = "1";
   area.addEventListener("keydown", (event) => {
     const state = foldState.get(area);
-    if (!state || state.folds.size === 0 || foldWrite) {
+    if (!state || state.folds.size === 0 || foldWrite || area.readOnly) {
       return;
     }
     const native = readNative(area);
@@ -745,6 +768,40 @@ function toggleFold(area: HTMLTextAreaElement, event: MouseEvent) {
   }
   showFolded(area, area.selectionStart ?? 0);
   notifyEditorView(area);
+}
+
+export type FieldRow = { line: number; top: number; height: number };
+
+/**
+ * The rows the field shows, top to bottom: each row's source line (folded lines are skipped) and
+ * its offset from the textarea's content top, in px, before scrolling.
+ */
+export function fieldRows(area: HTMLTextAreaElement): FieldRow[] {
+  const style = getComputedStyle(area);
+  const lineHeight = linePitch(style);
+  const state = foldState.get(area);
+  const lines =
+    state && state.folds.size > 0
+      ? state.view.numbers.map((number) => number - 1)
+      : contiguous(0, lineCount(readNative(area)));
+  const heights = rowHeights(area, lines.length, lineHeight);
+  let top = Number.parseFloat(style.paddingTop) || 0;
+  return lines.map((line, index) => {
+    const height = heights[index] ?? lineHeight;
+    const row = { line, top, height };
+    top += height;
+    return row;
+  });
+}
+
+/** The field's full text, folded parts included. */
+export function fieldSourceText(area: HTMLTextAreaElement): string {
+  return sourceText(area);
+}
+
+/** The field's foldable ranges in source lines, each from its opener to its closer line. */
+export function foldRanges(area: HTMLTextAreaElement): Array<{ start: number; end: number }> {
+  return braceFolds(sourceText(area), foldSyntax(area));
 }
 
 function notifyEditorView(area: HTMLTextAreaElement) {
@@ -977,6 +1034,7 @@ function paintCaretLine(area: HTMLTextAreaElement) {
   const at = nativeStart(area);
   const show =
     field.hasAttribute("data-coder") &&
+    !area.readOnly &&
     !area.classList.contains("inline-line-slot") &&
     document.activeElement === area &&
     at === nativeEnd(area);

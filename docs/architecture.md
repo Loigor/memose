@@ -58,7 +58,7 @@ These are helpers, not a component framework:
 | `stack/layout.ts` | Fold, peek, header chrome, and window height |
 | `stack/sections.ts` | Guest section DOM and stack-chain loading |
 | `stack/chrome.ts` | Drag, resize, snap, cursor, and native file drop |
-| `editor/` (`markdown-edit.ts`, `editor-blocks.ts`, `editor-field.ts`, `textarea.ts`, `history.ts`, `md-highlight.ts`) | Block editor, markdown transforms, undo |
+| `editor/` (`markdown-edit.ts`, `editor-blocks.ts`, `editor-field.ts`, `code-view.ts`, `textarea.ts`, `history.ts`, `md-highlight.ts`) | Block editor, read-only code views in preview, markdown transforms, undo |
 | `media/` (`media-dnd.ts`, `media-elements.ts`, `files.ts`) | Paste/drop, resize, lightbox, attachments |
 | `look/` (`look.ts`, `memo-chrome.ts`, `hue-pop.ts`, `audience-ui.ts`, `visibility.ts`, `sync-status.ts`) | Hue, theme, audience, sync icon |
 | `shortcuts.ts` | Shortcut matching (shared with settings) |

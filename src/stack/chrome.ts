@@ -195,7 +195,9 @@ export function mountChrome(ctx: StackCtx) {
       return false;
     }
     const el = document.activeElement;
-    return el instanceof HTMLTextAreaElement || el instanceof HTMLInputElement || editingHost(el) != null;
+    return (
+      (el instanceof HTMLTextAreaElement && !el.readOnly) || el instanceof HTMLInputElement || editingHost(el) != null
+    );
   }
 
   function slideOut() {
@@ -363,7 +365,8 @@ export function mountChrome(ctx: StackCtx) {
         }
       }
       const field =
-        target instanceof HTMLTextAreaElement || (target instanceof HTMLInputElement && target.type !== "range")
+        (target instanceof HTMLTextAreaElement && !target.readOnly) ||
+        (target instanceof HTMLInputElement && target.type !== "range")
           ? target
           : editingHost(target);
       if (field) {
