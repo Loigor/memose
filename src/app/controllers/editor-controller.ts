@@ -13,6 +13,8 @@ import {
   codeSurface,
   denseLines,
   detectedMemoLanguage,
+  nextFontStep,
+  paintFontStep,
   readFolds,
   readLineMarks,
   refreshEditorFields,
@@ -63,6 +65,7 @@ import type { AppContext } from "../context";
 import type { EditorState } from "../state";
 import type { EditorView, LookEditor } from "./look-controller";
 import { paintLanguageMenu, pickedLanguage, toggleLanguageList } from "../../look/language-menu";
+import { clampStep, type ZoomKey } from "../../editor/font-size";
 
 const maxMediaBytes = 32 * 1024 * 1024;
 
@@ -132,6 +135,7 @@ export interface EditorController extends LookEditor {
   applyPrefs(settings: EditorPrefs): boolean;
   resize(): void;
   refreshPreviewShortcut(): void;
+  stepFont(key: ZoomKey): void;
   closeFormatMenu(): void;
   mediaHost: EditorMediaHost;
   offsetInField(field: Editable, x: number, y: number): number | null;
@@ -1019,9 +1023,10 @@ export function createEditorController(
     const folds = denseLines(state.folds);
     const marks = denseLines(state.marks);
     const codeLang = state.codeLang;
+    const fontStep = state.fontStep;
     state.viewUnsaved = false;
     state.viewWrite = state.viewWrite
-      .then(() => context.backend.saveEditorView(id, lineWrap, folds, marks, codeLang))
+      .then(() => context.backend.saveEditorView(id, lineWrap, folds, marks, codeLang, fontStep))
       .then(() => undefined)
       .catch((error: unknown) => {
         console.error(error);
@@ -1033,6 +1038,8 @@ export function createEditorController(
     state.coderWrap = view.lineWrap === true;
     state.codeLang = view.codeLang || null;
     paintCodeLang();
+    state.fontStep = clampStep(view.fontStep ?? 0);
+    paintFontStep(card, state.fontStep);
     state.folds = denseLines(view.folds);
     state.marks = denseLines(view.marks);
     if (restore) {
@@ -1071,6 +1078,8 @@ export function createEditorController(
     state.coderWrap = false;
     state.codeLang = null;
     paintCodeLang();
+    state.fontStep = 0;
+    paintFontStep(card, 0);
     state.folds = [];
     state.marks = [];
     state.viewUnsaved = false;
@@ -1083,6 +1092,8 @@ export function createEditorController(
       markdownHighlight: settings.markdownHighlight !== false,
       markdownScheme: settings.markdownScheme,
       indentWidth: settings.indentWidth,
+      memoFontSize: settings.memoFontSize,
+      codeFontSize: settings.codeFontSize,
     });
     const after = look.usesCoder();
     paintCoder(after);
@@ -1094,6 +1105,18 @@ export function createEditorController(
 
   function resize() {
     scheduleEditorResize();
+  }
+
+  /** Cmd/Ctrl + "+", "-" or "0" on the open memo; saved with the memo's editor view. */
+  function stepFont(key: ZoomKey) {
+    const next = nextFontStep(state.fontStep, key);
+    if (next === state.fontStep) {
+      return;
+    }
+    state.fontStep = next;
+    paintFontStep(card, next);
+    resizeAllBlockTextareas(card);
+    scheduleView();
   }
 
   function offsetInField(field: Editable, x: number, y: number): number | null {
@@ -1297,6 +1320,7 @@ export function createEditorController(
     resetView,
     applyPrefs,
     resize,
+    stepFont,
     refreshPreviewShortcut,
     adoptView,
     paintCoder,

@@ -1,4 +1,4 @@
-import { memoUsesCoder } from "../editor/editor-field";
+import { memoUsesCoder, paintFontStep } from "../editor/editor-field";
 import { paintSurface, paintThemeButton, paperAt, type ThemeName } from "../look/memo-chrome";
 import { toggleLanguageList } from "../look/language-menu";
 import { hueSwatches, onHueSwatches } from "../look/swatches";
@@ -28,6 +28,7 @@ export function mountLook(ctx: StackCtx) {
 
   function paintSectionCoder(section: HTMLElement, state: SectionState) {
     const on = memoUsesCoder(state.coder);
+    paintFontStep(section, state.fontStep);
     if (state.codeLang) {
       section.dataset.codeLang = state.codeLang;
     } else {

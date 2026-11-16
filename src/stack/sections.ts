@@ -694,6 +694,7 @@ export function mountSections(ctx: StackCtx) {
         coder: prev?.coder ?? (note.coder === true ? true : note.coder === false ? false : null),
         wrap: prev?.wrap ?? note.lineWrap === true,
         codeLang: prev ? prev.codeLang : note.codeLang || null,
+        fontStep: prev ? prev.fontStep : (note.fontStep ?? 0),
         folds: prev?.folds ?? denseLines(note.folds),
         marks: prev?.marks ?? denseLines(note.marks),
         mdBar: prev?.mdBar ?? false,

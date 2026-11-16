@@ -54,6 +54,10 @@ All shortcuts and the on-memo gesture modifier can be changed in **Settings**, i
 | **Move memo from anywhere on the card** | Hold `Opt` + drag | Hold `Alt` + drag |
 | **Adjust memo transparency** | Hold `Opt` + scroll | Hold `Alt` + scroll |
 | **Adjust all pinned memos** | Hold `Opt+Cmd` + scroll | Hold `Alt+Win` + scroll |
+| **Larger / smaller text in the current memo** | `Cmd+Plus` / `Cmd+Minus` | `Ctrl+Plus` / `Ctrl+Minus` |
+| **Reset text size** | `Cmd+0` | `Ctrl+0` |
+
+Text size is saved per memo. Default sizes for the normal and coder editors are set in **Settings → Editor**. The text size keys are fixed.
 
 ## Development
 

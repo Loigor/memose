@@ -233,6 +233,7 @@ export function mountEditor(ctx: StackCtx) {
       folds: denseLines(state.folds),
       marks: denseLines(state.marks),
       codeLang: state.codeLang,
+      fontStep: state.fontStep,
     });
   }
 

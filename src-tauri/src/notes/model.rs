@@ -49,6 +49,8 @@ pub struct Note {
     pub marks: Vec<Vec<u32>>,
     /// Syntax language of the coder editor, such as `ts`. Empty means auto-detect.
     pub code_lang: Option<String>,
+    /// Text size offset in px for this memo. Zero follows the default sizes.
+    pub font_step: i8,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]

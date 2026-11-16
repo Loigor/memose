@@ -73,8 +73,8 @@
   margin: 0;
   overflow: hidden;
   font: inherit;
-  font-size: 16px;
-  line-height: 1.4;
+  font-size: var(--memo-font);
+  line-height: var(--memo-line);
   letter-spacing: inherit;
   tab-size: var(--indent-ch, 2);
   white-space: pre-wrap;
@@ -92,8 +92,8 @@
 .stack-blocks .md-field:not([data-coder]) .md-hl {
   padding: 0;
   font: inherit;
-  font-size: 16px;
-  line-height: 1.4;
+  font-size: var(--memo-font);
+  line-height: var(--memo-line);
   letter-spacing: inherit;
   tab-size: var(--indent-ch, 2);
   white-space: pre-wrap;
@@ -111,8 +111,8 @@
   color: inherit;
   caret-color: var(--ink);
   font: inherit;
-  font-size: 16px;
-  line-height: 1.4;
+  font-size: var(--memo-font);
+  line-height: var(--memo-line);
   letter-spacing: inherit;
   tab-size: var(--indent-ch, 2);
   white-space: pre-wrap;
@@ -291,7 +291,7 @@
   color: var(--muted);
   font-style: normal;
   font-weight: 400;
-  font-size: 16px;
-  line-height: 1.4;
+  font-size: var(--memo-font);
+  line-height: var(--memo-line);
   pointer-events: none;
 }

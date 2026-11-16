@@ -1,4 +1,9 @@
 :root {
+  /* Editor text metrics; settings and per-memo zoom override these (src/editor/font-size.ts). */
+  --memo-font: 16px;
+  --memo-line: 22px;
+  --code-font: 13px;
+  --code-line: 19px;
   color-scheme: light;
   --paper: #fff4b8;
   --ink: #3d3420;

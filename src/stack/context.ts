@@ -27,6 +27,8 @@ export type SectionState = {
   wrap: boolean;
   /** Coder editor syntax language; null means auto-detect. */
   codeLang: string | null;
+  /** Text size offset in px (Cmd/Ctrl + "+" / "-"); 0 follows the defaults. */
+  fontStep: number;
   folds: number[][];
   marks: number[][];
   mdBar: boolean;

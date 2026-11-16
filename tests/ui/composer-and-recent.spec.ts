@@ -443,6 +443,117 @@ test("coder toggle shows a line gutter on that memo", async ({ page }) => {
   await expect(page.locator(".md-overflow-dot")).toHaveCount(0);
 });
 
+test("cmd/ctrl plus, minus and zero resize one memo and keep every layer aligned", async ({ page }) => {
+  const notes = sampleNotes(1);
+  const code = Array.from({ length: 90 }, (_, i) =>
+    i % 10 === 0 ? `if (x${i}) {` : i % 10 === 9 ? "}" : `  call(${i});`,
+  );
+  notes[0] = { ...notes[0], content: code.join("\n"), coder: true };
+  await openComposer(page, { notes });
+  await page.locator("#recent .title", { hasText: "if (x0)" }).click();
+  const area = page.locator("#blocks textarea").first();
+  await area.click();
+  const metrics = () =>
+    page.evaluate(() => {
+      const area = document.querySelector<HTMLTextAreaElement>("#blocks textarea")!;
+      const field = area.closest(".md-field")!;
+      const hl = field.querySelector<HTMLElement>(".md-hl")!;
+      const top = area.getBoundingClientRect().top;
+      const lineTop = (index: number) => {
+        const text = hl.querySelectorAll(".md-line-text")[index]!;
+        return text.getBoundingClientRect().top - top;
+      };
+      const gutterBody = field.querySelector(".md-gutter-body")!.firstChild!;
+      const numberTop = (index: number) => {
+        const offset = (gutterBody.textContent ?? "").split("\n").slice(0, index).join("\n").length + (index ? 1 : 0);
+        const range = document.createRange();
+        range.setStart(gutterBody, offset);
+        range.setEnd(gutterBody, offset + 1);
+        return range.getBoundingClientRect().top - top;
+      };
+      const fold = [...field.querySelectorAll<HTMLElement>(".md-fold")].find((button) => button.dataset.line === "80");
+      return {
+        font: getComputedStyle(area).fontSize,
+        line: getComputedStyle(area).lineHeight,
+        hlLine: getComputedStyle(hl).lineHeight,
+        textDrift: lineTop(89) - lineTop(0) - 89 * Number.parseFloat(getComputedStyle(area).lineHeight),
+        numberDrift: numberTop(89) - lineTop(89) - (numberTop(0) - lineTop(0)),
+        foldDrift: fold ? fold.getBoundingClientRect().top - top - (lineTop(80) - lineTop(0)) - 6 : null,
+      };
+    });
+  const base = await metrics();
+  expect(base).toMatchObject({ font: "13px", line: "19px", hlLine: "19px" });
+  await page.keyboard.press("ControlOrMeta+=");
+  await page.keyboard.press("ControlOrMeta+=");
+  await page.keyboard.press("ControlOrMeta+=");
+  await expect.poll(async () => (await metrics()).font).toBe("16px");
+  const zoomed = await metrics();
+  expect(zoomed.line).toBe("23px");
+  expect(zoomed.hlLine).toBe("23px");
+  expect(Math.abs(zoomed.textDrift)).toBeLessThan(0.5);
+  expect(Math.abs(zoomed.numberDrift)).toBeLessThan(0.5);
+  expect(Math.abs(zoomed.foldDrift ?? 99)).toBeLessThan(0.5);
+  await expect.poll(async () => (await getNotes(page)).find((note) => note.id === "note-0000")?.fontStep).toBe(3);
+  await page.keyboard.press("ControlOrMeta+-");
+  await expect.poll(async () => (await metrics()).font).toBe("15px");
+  await page.keyboard.press("ControlOrMeta+0");
+  await expect.poll(async () => (await metrics()).font).toBe("13px");
+  await expect.poll(async () => (await getNotes(page)).find((note) => note.id === "note-0000")?.fontStep).toBe(0);
+});
+
+test("pressing past the smallest size never delays growing again", async ({ page }) => {
+  const notes = sampleNotes(1);
+  notes[0] = { ...notes[0], content: "const a = 1;", coder: true };
+  await openComposer(page, { notes });
+  await page.locator("#recent .title").first().click();
+  const area = page.locator("#blocks textarea").first();
+  await area.click();
+  for (let press = 0; press < 12; press += 1) {
+    await page.keyboard.press("ControlOrMeta+-");
+  }
+  await expect(area).toHaveCSS("font-size", "8px");
+  await page.keyboard.press("ControlOrMeta+=");
+  await expect(area).toHaveCSS("font-size", "9px");
+  await expect.poll(async () => (await getNotes(page)).find((note) => note.id === "note-0000")?.fontStep).toBe(-4);
+});
+
+test("cmd/ctrl minus shrinks the normal editor on whole-pixel lines", async ({ page }) => {
+  const notes = sampleNotes(1);
+  notes[0] = { ...notes[0], content: "Plain words\nand more" };
+  await openComposer(page, { notes });
+  await page.locator("#recent .title").first().click();
+  const lines = page.locator("#blocks .md-lines").first();
+  await expect(lines).toHaveCSS("font-size", "16px");
+  await expect(lines).toHaveCSS("line-height", "22px");
+  await lines.click();
+  await page.keyboard.press("ControlOrMeta+-");
+  await page.keyboard.press("ControlOrMeta+-");
+  await expect(lines).toHaveCSS("font-size", "14px");
+  await expect(lines).toHaveCSS("line-height", "20px");
+  await expect(lines).toContainText("Plain words");
+  await expect.poll(async () => (await getNotes(page)).find((note) => note.id === "note-0000")?.fontStep).toBe(-2);
+});
+
+test("changing the default text sizes moves default and zoomed memos alike", async ({ page }) => {
+  const notes = sampleNotes(1);
+  notes[0] = { ...notes[0], content: "const a = 1;", coder: true, fontStep: 2 };
+  await openComposer(page, { notes });
+  await page.locator("#recent .title").first().click();
+  const area = page.locator("#blocks textarea").first();
+  await expect(area).toHaveCSS("font-size", "15px");
+  await emitEvent(page, "editor-prefs-changed", {
+    coderEditor: false,
+    markdownHighlight: true,
+    markdownScheme: "paper",
+    indentWidth: 2,
+    memoFontSize: 18,
+    codeFontSize: 15,
+  });
+  await expect(area).toHaveCSS("font-size", "17px");
+  await expect(area).toHaveCSS("line-height", "25px");
+  await expect(page.locator("#blocks .md-gutter").first()).toHaveCSS("line-height", "25px");
+});
+
 test("long-line dots mark exactly the lines that overflow, also after a resize", async ({ page }) => {
   const notes = sampleNotes(1);
   notes[0] = {

@@ -10,6 +10,7 @@ export type EditorView = {
   folds?: number[][];
   marks?: number[][];
   codeLang?: string | null;
+  fontStep?: number;
 };
 
 export interface LookEditor {

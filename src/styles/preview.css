@@ -14,8 +14,8 @@ textarea,
   background: transparent;
   color: inherit;
   font: inherit;
-  font-size: 16px;
-  line-height: 1.4;
+  font-size: var(--memo-font);
+  line-height: var(--memo-line);
   tab-size: var(--indent-ch, 2);
   resize: none;
   outline: none;
@@ -44,7 +44,7 @@ textarea,
 .stack-preview pre,
 .stack-preview code {
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-size: 13px;
+  font-size: var(--code-font);
 }
 
 #preview pre,

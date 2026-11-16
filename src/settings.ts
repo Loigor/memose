@@ -15,6 +15,8 @@ import {
   type ShortcutBinds,
 } from "./shortcuts";
 import { isOfflinePrivate, visibilityOptions } from "./look/visibility";
+import { clampFont, CODE_FONT, MEMO_FONT } from "./editor/font-size";
+import { isMac } from "./platform";
 
 type Settings = {
   baseUrl: string;
@@ -30,6 +32,8 @@ type Settings = {
   markdownHighlight: boolean;
   markdownScheme: string;
   indentWidth: number;
+  memoFontSize: number;
+  codeFontSize: number;
   showInSwitcher: boolean;
   pinnedAlwaysOnTop: boolean;
 };
@@ -50,6 +54,8 @@ const pinTabScreen = document.querySelector<HTMLSelectElement>("#pin-tab-screen"
 const pinTabEdge = document.querySelector<HTMLSelectElement>("#pin-tab-edge");
 const coderEditor = document.querySelector<HTMLInputElement>("#coder-editor");
 const indentWidth = document.querySelector<HTMLInputElement>("#indent-width");
+const memoFontSize = document.querySelector<HTMLInputElement>("#memo-font-size");
+const codeFontSize = document.querySelector<HTMLInputElement>("#code-font-size");
 const markdownHighlight = document.querySelector<HTMLInputElement>("#markdown-highlight");
 const markdownSchemes = document.querySelector<HTMLDivElement>("#markdown-schemes");
 const audience = document.querySelector<HTMLDivElement>("#memos-audience");
@@ -80,6 +86,8 @@ if (
   !pinTabEdge ||
   !coderEditor ||
   !indentWidth ||
+  !memoFontSize ||
+  !codeFontSize ||
   !markdownHighlight ||
   !markdownSchemes ||
   !shortcuts ||
@@ -112,6 +120,8 @@ const pinTabScreenEl = pinTabScreen;
 const pinTabEdgeEl = pinTabEdge;
 const coderEditorEl = coderEditor;
 const indentWidthEl = indentWidth;
+const memoFontSizeEl = memoFontSize;
+const codeFontSizeEl = codeFontSize;
 const markdownHighlightEl = markdownHighlight;
 const markdownSchemesEl = markdownSchemes;
 let chosenScheme = "paper";
@@ -300,6 +310,8 @@ async function loadSettings() {
   await loadPinPlace(settings);
   coderEditorEl.checked = settings.coderEditor;
   indentWidthEl.value = String(settings.indentWidth >= 1 && settings.indentWidth <= 8 ? settings.indentWidth : 2);
+  memoFontSizeEl.value = String(clampFont(settings.memoFontSize, MEMO_FONT));
+  codeFontSizeEl.value = String(clampFont(settings.codeFontSize, CODE_FONT));
   markdownHighlightEl.checked = settings.markdownHighlight !== false;
   chosenScheme =
     settings.markdownScheme === "cool" || settings.markdownScheme === "mono" ? settings.markdownScheme : "paper";
@@ -760,6 +772,29 @@ indentWidthEl.addEventListener("change", () => {
       statusEl.textContent = String(error);
     });
 });
+
+function saveFontSizes() {
+  const memo = clampFont(memoFontSizeEl.value, MEMO_FONT);
+  const code = clampFont(codeFontSizeEl.value, CODE_FONT);
+  memoFontSizeEl.value = String(memo);
+  codeFontSizeEl.value = String(code);
+  void invoke("set_font_sizes", { memo, code })
+    .then(() => {
+      statusEl.textContent = `Text is ${memo}px, coder text is ${code}px.`;
+    })
+    .catch((error: unknown) => {
+      statusEl.textContent = String(error);
+    });
+}
+
+const zoomHint = document.querySelector<HTMLElement>(".font-zoom-hint");
+if (zoomHint) {
+  const key = isMac() ? "⌘" : "Ctrl";
+  zoomHint.textContent = `Change one memo with ${key} + and ${key} −, reset with ${key} 0.`;
+}
+
+memoFontSizeEl.addEventListener("change", saveFontSizes);
+codeFontSizeEl.addEventListener("change", saveFontSizes);
 
 coderEditorEl.addEventListener("change", () => {
   const enabled = coderEditorEl.checked;

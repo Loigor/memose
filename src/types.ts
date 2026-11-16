@@ -23,6 +23,7 @@ export type Note = {
   folds?: number[][];
   marks?: number[][];
   codeLang?: string | null;
+  fontStep?: number;
 };
 
 export type MemoSpace = {

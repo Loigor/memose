@@ -13,6 +13,17 @@ import {
   type FoldView,
 } from "./code-fold.ts";
 import { copyIndentAfterBreak, remapLineMarks, setIndentWidth, taskListOnEnter } from "./markdown-edit.ts";
+import {
+  applyFontVars,
+  clampFont,
+  clearFontVars,
+  CODE_FONT,
+  fontMetrics,
+  MEMO_FONT,
+  nextStep,
+  usableStep,
+  type ZoomKey,
+} from "./font-size.ts";
 import { highlightMarkdown } from "./md-highlight.ts";
 
 export type HighlightScheme = "paper" | "cool" | "mono";
@@ -22,6 +33,8 @@ export type EditorPrefs = {
   markdownHighlight: boolean;
   markdownScheme: HighlightScheme;
   indentWidth?: number;
+  memoFontSize?: number;
+  codeFontSize?: number;
 };
 
 let prefs: EditorPrefs = {
@@ -29,6 +42,8 @@ let prefs: EditorPrefs = {
   markdownHighlight: true,
   markdownScheme: "paper",
   indentWidth: 2,
+  memoFontSize: MEMO_FONT.fallback,
+  codeFontSize: CODE_FONT.fallback,
 };
 
 export function editorPrefs(): EditorPrefs {
@@ -296,12 +311,47 @@ export function setEditorPrefs(next: EditorPrefs) {
     markdownHighlight: next.markdownHighlight !== false,
     markdownScheme: namedScheme(next.markdownScheme),
     indentWidth: width >= 1 && width <= 8 ? width : 2,
+    memoFontSize: clampFont(next.memoFontSize, MEMO_FONT),
+    codeFontSize: clampFont(next.codeFontSize, CODE_FONT),
   };
   setIndentWidth(prefs.indentWidth ?? 2);
   if (typeof document !== "undefined") {
     document.documentElement.style.setProperty("--indent-ch", String(prefs.indentWidth ?? 2));
+    applyFontVars(document.documentElement, defaultFontMetrics(0));
+    // Zoomed memos are relative to the defaults, so they follow a changed default.
+    for (const note of document.querySelectorAll<HTMLElement>("[data-font-step]")) {
+      paintFontStep(note, Number(note.dataset.fontStep));
+    }
   }
   refreshEditorFields();
+}
+
+function fontDefaults(): [memo: number, code: number] {
+  return [prefs.memoFontSize ?? MEMO_FONT.fallback, prefs.codeFontSize ?? CODE_FONT.fallback];
+}
+
+function defaultFontMetrics(step: number) {
+  return fontMetrics(...fontDefaults(), step);
+}
+
+/** A memo's step after a zoom key, counted from the size it shows under the current defaults. */
+export function nextFontStep(step: number, key: ZoomKey): number {
+  return nextStep(step, key, ...fontDefaults());
+}
+
+/**
+ * Sets one memo's text size: `step` px over the default sizes, 0 for the defaults. Callers refit
+ * the memo's textareas afterwards, since every line height changes.
+ */
+export function paintFontStep(note: HTMLElement, step: number) {
+  const next = usableStep(step, ...fontDefaults());
+  if (next === 0) {
+    delete note.dataset.fontStep;
+    clearFontVars(note);
+    return;
+  }
+  note.dataset.fontStep = String(next);
+  applyFontVars(note, defaultFontMetrics(next));
 }
 
 function paintLang(field: HTMLElement, area: HTMLTextAreaElement) {
