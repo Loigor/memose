@@ -1,6 +1,6 @@
 import { expect, test } from "@playwright/test";
 
-import { composerTextarea, editorText, invokedCmds, openComposer, openSettings } from "./helpers";
+import { composerTextarea, editorText, invokedCmds, openComposer, openPinned, openSettings } from "./helpers";
 
 const localModel = { llmEnabled: true, llmBaseUrl: "http://localhost:11434/v1", llmModel: "qwen2.5:7b" };
 
@@ -225,4 +225,76 @@ test("a saved key can be removed in settings", async ({ page }) => {
   await expect(page.locator("#settings-status")).toHaveText("Key removed.");
   await expect(page.locator("#llm-key-remove")).toBeHidden();
   await expect(page.locator("#llm-key-hint")).toContainText("No key saved");
+});
+
+test("a stacked memo has its own AI prompt that edits only that memo", async ({ page }) => {
+  await page.setViewportSize({ width: 420, height: 900 });
+  await openPinned(page, "host-1", {
+    notes: [
+      { id: "host-1", content: "# Host memo\nhost body", pinned: true, updatedAt: Date.now() },
+      { id: "guest-1", content: "teh guest line", stackHost: "host-1", updatedAt: Date.now() - 10 },
+    ],
+    ai: { ...localModel, llmReply: "the guest line" },
+  });
+  const guest = page.locator(".stack-note[data-id='guest-1']");
+  await expect(guest.locator(".ai-anchor")).toBeVisible();
+  await guest.locator(".ai-toggle").click();
+  const bubble = guest.locator(".ai-bubble");
+  await expect(bubble).toBeVisible();
+  await expect(page.locator("#card > .ai-bubble")).toHaveCount(0);
+  await expect(bubble.locator(".ai-head-note")).toHaveText("teh guest line");
+  await bubble.locator(".ai-chip", { hasText: "Clean up wording" }).click();
+  await expect(bubble.locator(".ai-removed")).toHaveText("teh guest line");
+  await bubble.locator("button", { hasText: "Accept all" }).click();
+  await expect(guest.locator(".stack-blocks")).toContainText("the guest line");
+  await expect(page.locator("#blocks")).toContainText("host body");
+  await expect
+    .poll(async () =>
+      page.evaluate(
+        () =>
+          window.__memoseHarness
+            ?.getInvocations()
+            .filter((item) => item.cmd === "save_edit")
+            .pop()?.args,
+      ),
+    )
+    .toMatchObject({ id: "guest-1", content: "the guest line" });
+});
+
+test("a code block has an AI tab that works on that block only", async ({ page }) => {
+  await openComposer(page, {
+    draft: { content: "intro text\n```js\nvar a = 1\nvar b = 2\n```\noutro text" },
+    ai: { ...localModel, llmReply: "const a = 1;\nconst b = 2;" },
+  });
+  const code = page.locator('#blocks textarea[data-kind="code"]');
+  await code.hover();
+  const float = page.locator("#card .ai-float");
+  await expect(float).toBeVisible();
+  await float.click();
+  const bubble = page.locator("#card .ai-bubble");
+  await expect(bubble.locator(".ai-scope-label")).toHaveText("Code block, lines 3–4");
+  await bubble.locator(".ai-mode").selectOption("edit");
+  await bubble.locator(".ai-input").fill("Use const and semicolons");
+  await page.keyboard.press("Enter");
+  await expect(bubble.locator(".ai-removed").first()).toHaveText("var a = 1");
+  await bubble.locator("button", { hasText: "Accept all" }).click();
+  await expect
+    .poll(async () =>
+      page.evaluate(
+        () =>
+          window.__memoseHarness
+            ?.getInvocations()
+            .filter((item) => item.cmd === "upsert_draft")
+            .pop()?.args,
+      ),
+    )
+    .toMatchObject({ content: "intro text\n```js\nconst a = 1;\nconst b = 2;\n```\noutro text" });
+  const sent = await page.evaluate(
+    () =>
+      window.__memoseHarness
+        ?.getInvocations()
+        .filter((item) => item.cmd === "llm_ask")
+        .pop()?.args,
+  );
+  expect(sent).toMatchObject({ text: "var a = 1\nvar b = 2", lineStart: 3, lineEnd: 4 });
 });

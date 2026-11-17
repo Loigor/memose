@@ -10,6 +10,7 @@ import {
   applyTitle,
   noteTitle,
   parseBlocks,
+  serializeBlocks,
   toggleTask,
   wrapText,
 } from "../editor/markdown-edit";
@@ -17,6 +18,7 @@ import { resizeAllBlockTextareas } from "../editor/textarea";
 import { revealPressedChoice } from "../look/audience-ui";
 import { paintLanguageMenu, pickedLanguage, toggleLanguageList } from "../look/language-menu";
 import { namedTheme } from "../look/look";
+import { mountLlmBubble } from "../ai/llm-edit";
 import { markdownToolbarHtml, stackHeaderHtml } from "../look/memo-chrome";
 import { hueSwatches, saveHueSwatches } from "../look/swatches";
 import { filesFromTransfer } from "../media/files";
@@ -618,6 +620,34 @@ export function mountSections(ctx: StackCtx) {
         console.error(error);
       });
     });
+    const aiAnchor = section.querySelector<HTMLElement>(".ai-anchor");
+    if (aiAnchor && !isPreviewWindow()) {
+      mountLlmBubble(aiAnchor, {
+        host: section,
+        noteId: () => note.id,
+        ensureNoteId: () => Promise.resolve(note.id),
+        title: () => noteTitle(ctx.notes.get(note.id)?.content ?? ""),
+        text: () => ctx.notes.get(note.id)?.content ?? "",
+        replace(next) {
+          const held = ctx.notes.get(note.id);
+          if (!held) {
+            return;
+          }
+          ctx.api.pushSectionUndo(held, true);
+          held.blocks = parseBlocks(next);
+          held.content = serializeBlocks(held.blocks);
+          ctx.api.renderSectionBlocks(section, held);
+          ctx.api.scheduleSectionSave(section, held);
+        },
+        visibility: () => ctx.notes.get(note.id)?.visibility || null,
+        selectionRoots: () =>
+          [".stack-blocks", ".stack-preview"].flatMap((selector) => {
+            const root = section.querySelector<HTMLElement>(selector);
+            return root ? [root] : [];
+          }),
+        onAvailability: () => ctx.api.syncHeaderCompact(),
+      });
+    }
     section.querySelector<HTMLButtonElement>(".pin-toggle")?.addEventListener("click", () => {
       void (async () => {
         await flushSectionSaves([note.id]);

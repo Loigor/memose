@@ -208,7 +208,9 @@ Safeguards:
 - An offline-only memo asks once before its text goes to a non-local host.
 - A warning shows when the accepted result would exceed the server's content limit.
 
-Still open: the AI button on stack sections, prompts scoped to one code block or one speech block, follow-up prompts that include earlier answers, and Ollama pull from settings.
+Stack sections have the same AI button and bubble as the host memo, each with its own chat. A code block shows the AI tab in its top right corner on hover, and the prompt then works on that block only ("Code block, lines 3–4").
+
+Still open: Ollama pull from settings.
 
 ## Tests
 

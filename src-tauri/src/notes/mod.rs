@@ -3,6 +3,7 @@ mod model;
 mod pin_tabs;
 mod sync;
 
+pub(crate) use db::now_ms;
 pub use db::{
     canonical_visibility, Db, API_FLAVOR, BASE_URL, CODER_EDITOR, CODE_FONT_SIZE, INDENT_WIDTH,
     KEYCHAIN_IMPORTED, MARKDOWN_HIGHLIGHT, MARKDOWN_SCHEME, MEMO_FONT_SIZE, MEMO_SPACE,

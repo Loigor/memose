@@ -126,6 +126,13 @@ function markdownButtonsHtml(): string {
     <button type="button" data-markdown="code" aria-label="Code block">Code block</button>`;
 }
 
+/** The AI button of a memo header. Hidden until model prompts are turned on. */
+export function aiAnchorHtml(): string {
+  return `<div class="ai-anchor" hidden>
+    <button class="ai-toggle icon-button" type="button" aria-label="AI prompt" aria-expanded="false" title="AI prompt">AI</button>
+  </div>`;
+}
+
 export function formatMenuHtml(): string {
   return `<div class="format-anchor">
     <button class="format-toggle icon-button" type="button" aria-label="Format" aria-expanded="false" title="Format">Format</button>
@@ -187,6 +194,7 @@ export function stackHeaderHtml(): string {
         </span>
       </div>
       <div class="header-actions">
+        ${aiAnchorHtml()}
         <div class="editor-tools-anchor">
           <button class="editor-menu-toggle icon-button" type="button" aria-label="Editor options" aria-expanded="false" title="Editor options">
             <span class="menu-glyph" aria-hidden="true"></span>

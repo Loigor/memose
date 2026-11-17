@@ -1105,13 +1105,6 @@ fn chats(state: &AppState) -> std::sync::MutexGuard<'_, HashMap<String, Vec<llm:
         .unwrap_or_else(|poisoned| poisoned.into_inner())
 }
 
-fn now_ms() -> i64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|duration| duration.as_millis() as i64)
-        .unwrap_or(0)
-}
-
 /// Sends one prompt about a memo and records it in that memo's chat.
 /// The result is an answer or a proposed edit. `llm_cancel` with the same id stops it.
 #[tauri::command]
@@ -1188,7 +1181,7 @@ pub async fn llm_ask(
         line_start,
         line_end,
         selection: context.is_some(),
-        started_at: now_ms(),
+        started_at: notes::now_ms(),
         finished_at: None,
     };
     {
@@ -1232,7 +1225,7 @@ pub async fn llm_ask(
         found.map(|item| {
             item.status = status.into();
             item.text = body;
-            item.finished_at = Some(now_ms());
+            item.finished_at = Some(notes::now_ms());
             item.clone()
         })
     };

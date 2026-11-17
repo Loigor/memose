@@ -630,7 +630,8 @@ pub const THEME: &str = "theme";
 pub const ACCESS_TOKEN: &str = "access_token";
 pub const KEYCHAIN_IMPORTED: &str = "keychain_imported";
 
-fn now_ms() -> i64 {
+/// Milliseconds since the Unix epoch. The one clock helper of the app.
+pub(crate) fn now_ms() -> i64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map(|duration| duration.as_millis() as i64)

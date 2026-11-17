@@ -10,7 +10,9 @@ use crate::error::AppError;
 use crate::media;
 use crate::state::AppState;
 
-use super::db::{canonical_visibility, Db, API_FLAVOR, BASE_URL, MEMO_SPACE, MEMO_VISIBILITY};
+use super::db::{
+    canonical_visibility, now_ms, Db, API_FLAVOR, BASE_URL, MEMO_SPACE, MEMO_VISIBILITY,
+};
 use super::model::{is_offline_private, MemoSpace, Note, REMOTE};
 
 pub mod limits;
@@ -613,13 +615,6 @@ async fn sync_context(
         None => ApiFlavor::V1,
     };
     Ok((base, token, flavor))
-}
-
-fn now_ms() -> i64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|duration| duration.as_millis() as i64)
-        .unwrap_or(0)
 }
 
 async fn detect_and_store(

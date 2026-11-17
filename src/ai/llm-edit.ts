@@ -17,6 +17,7 @@ import {
   type DiffPart,
   type LineRange,
 } from "../editor/line-diff";
+import { fieldSourceText } from "../editor/editor-field";
 import { isOfflinePrivate } from "../look/visibility";
 
 export type AiMode = "auto" | "ask" | "edit";
@@ -147,6 +148,8 @@ function seconds(from: number, to: number): string {
 
 type Picked = {
   text: string;
+  /** The source is one code block, picked with the tab on the block. */
+  code?: boolean;
   /** Memo lines of the selection, or null when its place in the memo is not clear. */
   range: LineRange | null;
 };
@@ -156,11 +159,12 @@ type ModelList = {
   ollama: boolean;
 };
 
-function scopeLabel(start: number | null, end: number | null): string {
+function scopeLabel(start: number | null, end: number | null, code = false): string {
   if (start == null || end == null) {
-    return "Selected text";
+    return code ? "Code block" : "Selected text";
   }
-  return start === end ? `Line ${start}` : `Lines ${start}–${end}`;
+  const lines = start === end ? `Line ${start}` : `Lines ${start}–${end}`;
+  return code ? `Code block, ${lines.toLowerCase()}` : lines;
 }
 
 type Decisions = {
@@ -633,7 +637,9 @@ export function mountLlmBubble(anchor: HTMLElement, target: LlmTarget): { close(
     const form = el("form", "ai-composer");
     if (picked) {
       const scope = el("div", "ai-scope");
-      const label = picked.range ? scopeLabel(picked.range.start + 1, picked.range.end + 1) : "Selected text";
+      const label = picked.range
+        ? scopeLabel(picked.range.start + 1, picked.range.end + 1, picked.code)
+        : scopeLabel(null, null, picked.code);
       const preview = picked.text.replace(/\s+/g, " ").trim();
       scope.append(
         el("span", "ai-scope-label", label),
@@ -649,9 +655,11 @@ export function mountLlmBubble(anchor: HTMLElement, target: LlmTarget): { close(
     }
     const input = el("textarea", "ai-input");
     input.rows = 2;
-    input.placeholder = picked
-      ? "Ask about the selection, or ask for a change…"
-      : "Ask about this memo, or ask for a change…";
+    input.placeholder = picked?.code
+      ? "Ask about this code, or ask for a change…"
+      : picked
+        ? "Ask about the selection, or ask for a change…"
+        : "Ask about this memo, or ask for a change…";
     input.setAttribute("aria-label", "Prompt");
     input.value = draftInstruction;
     const fit = () => {
@@ -838,7 +846,7 @@ export function mountLlmBubble(anchor: HTMLElement, target: LlmTarget): { close(
     bubble.setAttribute("aria-label", "AI prompt");
     const header = target.host.querySelector<HTMLElement>(":scope > header");
     bubble.style.setProperty("--ai-top", `${(header?.offsetHeight ?? 36) + 2}px`);
-    for (const type of ["mousedown", "dblclick", "wheel"] as const) {
+    for (const type of ["mousedown", "pointerdown", "dblclick", "wheel"] as const) {
       bubble.addEventListener(type, (event) => {
         event.stopPropagation();
       });
@@ -891,13 +899,25 @@ export function mountLlmBubble(anchor: HTMLElement, target: LlmTarget): { close(
 
   // --- Selected text as the source of a prompt ---
 
+  /** The code block the pointer is over, when the tab stands for that block and not for a selection. */
+  let hoverCode: HTMLTextAreaElement | null = null;
+
   const float = button("ai-float", "AI", () => {
     const found = selectedText();
-    if (!found) {
+    if (found) {
+      picked = { text: found.text, range: resolveSelection(target.text(), found.text) };
+    } else if (hoverCode) {
+      const code = fieldSourceText(hoverCode);
+      const at = locateBlock(splitLines(target.text()), splitLines(code));
+      picked = {
+        text: code,
+        code: true,
+        range: at < 0 ? null : { start: at, end: at + splitLines(code).length - 1 },
+      };
+    } else {
       hideFloat();
       return;
     }
-    picked = { text: found.text, range: resolveSelection(target.text(), found.text) };
     hideFloat();
     if (isOpen()) {
       paintFoot();
@@ -906,18 +926,59 @@ export function mountLlmBubble(anchor: HTMLElement, target: LlmTarget): { close(
     }
   });
   float.hidden = true;
-  float.title = "Ask the model about the selection";
-  float.setAttribute("aria-label", "Ask the model about the selection");
-  float.addEventListener("mousedown", (event) => {
-    event.preventDefault();
-    event.stopPropagation();
-  });
+  for (const type of ["mousedown", "pointerdown"] as const) {
+    float.addEventListener(type, (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+    });
+  }
   target.host.append(float);
   let pointer = { x: 0, y: 0 };
   let floatTimer: number | undefined;
 
   function hideFloat() {
     float.hidden = true;
+    hoverCode = null;
+  }
+
+  const describeFloat = (label: string) => {
+    float.title = label;
+    float.setAttribute("aria-label", label);
+  };
+
+  /** Puts the tab in the top right corner of a code block while the pointer is over it. */
+  function hoverFloat(event: MouseEvent) {
+    if (anchor.hidden || isOpen() || selectedText()) {
+      return;
+    }
+    const hit = event.target;
+    if (!(hit instanceof Element) || float.contains(hit)) {
+      return;
+    }
+    const field = hit.closest(".md-field");
+    const area = field?.querySelector<HTMLTextAreaElement>('textarea[data-kind="code"]') ?? null;
+    const inside = area !== null && target.selectionRoots().some((root) => root.contains(area));
+    if (!field || !area || !inside || area.value.trim() === "") {
+      if (hoverCode) {
+        hideFloat();
+      }
+      return;
+    }
+    if (hoverCode === area && !float.hidden) {
+      return;
+    }
+    hoverCode = area;
+    describeFloat("Ask the model about this code block");
+    const host = target.host.getBoundingClientRect();
+    const box = field.getBoundingClientRect();
+    const header = target.host.querySelector<HTMLElement>(":scope > header");
+    const top = (header?.offsetHeight ?? 36) + 2;
+    float.hidden = false;
+    // Left of the corner, where the preview keeps its copy button.
+    const x = box.right - host.left - float.offsetWidth - 34;
+    const y = box.top - host.top + 3;
+    float.style.left = `${Math.max(4, Math.min(x, host.width - float.offsetWidth - 6))}px`;
+    float.style.top = `${Math.max(top, Math.min(y, host.height - float.offsetHeight - 6))}px`;
   }
 
   function selectedText(): { text: string; rect: DOMRect | null } | null {
@@ -950,9 +1011,13 @@ export function mountLlmBubble(anchor: HTMLElement, target: LlmTarget): { close(
     }
     const found = selectedText();
     if (!found) {
-      hideFloat();
+      if (!hoverCode) {
+        hideFloat();
+      }
       return;
     }
+    hoverCode = null;
+    describeFloat("Ask the model about the selection");
     const host = target.host.getBoundingClientRect();
     const header = target.host.querySelector<HTMLElement>(":scope > header");
     const top = (header?.offsetHeight ?? 36) + 2;
@@ -968,16 +1033,28 @@ export function mountLlmBubble(anchor: HTMLElement, target: LlmTarget): { close(
     floatTimer = window.setTimeout(placeFloat, 140);
   }
 
-  document.addEventListener("selectionchange", scheduleFloat);
-  document.addEventListener("mouseup", (event) => {
-    pointer = { x: event.clientX, y: event.clientY };
-    scheduleFloat();
-  });
-  document.addEventListener("keyup", (event) => {
-    if (event.shiftKey || event.key.startsWith("Arrow")) {
+  // Listeners outside the memo end with it. Stack sections come and go while the window stays.
+  const life = new AbortController();
+  const until = { signal: life.signal };
+  document.addEventListener("selectionchange", scheduleFloat, until);
+  document.addEventListener(
+    "mouseup",
+    (event) => {
+      pointer = { x: event.clientX, y: event.clientY };
       scheduleFloat();
-    }
-  });
+    },
+    until,
+  );
+  document.addEventListener(
+    "keyup",
+    (event) => {
+      if (event.shiftKey || event.key.startsWith("Arrow")) {
+        scheduleFloat();
+      }
+    },
+    until,
+  );
+  document.addEventListener("mouseover", hoverFloat, until);
 
   // Escape closes the bubble before anything else in the memo reacts to it.
   window.addEventListener(
@@ -994,7 +1071,7 @@ export function mountLlmBubble(anchor: HTMLElement, target: LlmTarget): { close(
         close();
       }
     },
-    true,
+    { capture: true, signal: life.signal },
   );
   // A click on the memo outside the bubble closes it.
   document.addEventListener(
@@ -1011,7 +1088,7 @@ export function mountLlmBubble(anchor: HTMLElement, target: LlmTarget): { close(
         close();
       }
     },
-    true,
+    { capture: true, signal: life.signal },
   );
 
   toggleEl.addEventListener("mousedown", (event) => {
@@ -1025,15 +1102,24 @@ export function mountLlmBubble(anchor: HTMLElement, target: LlmTarget): { close(
     }
   });
 
-  settingsWatchers.add(paintAvailability);
-  chatWatchers.add(() => {
+  const onChat = () => {
     void refresh(true);
-  });
+  };
+  settingsWatchers.add(paintAvailability);
+  chatWatchers.add(onChat);
+  // A stack section is mounted after the settings were read, so it paints from what is known.
+  if (settings) {
+    paintAvailability();
+  }
   ensureListening();
   void settingsFlight?.then(() => refresh());
 
   // Follows the composer when it shows another memo, and keeps the running times moving.
   const timer = window.setInterval(() => {
+    if (!target.host.isConnected) {
+      destroy();
+      return;
+    }
     if (anchor.hidden) {
       return;
     }
@@ -1053,7 +1139,18 @@ export function mountLlmBubble(anchor: HTMLElement, target: LlmTarget): { close(
       paintJobs();
     }
   }, 1000);
-  window.addEventListener("pagehide", () => window.clearInterval(timer));
+  function destroy() {
+    window.clearInterval(timer);
+    window.clearTimeout(floatTimer);
+    life.abort();
+    settingsWatchers.delete(paintAvailability);
+    chatWatchers.delete(onChat);
+    presetWatch?.disconnect();
+    float.remove();
+    bubble?.remove();
+    bubble = null;
+  }
+  window.addEventListener("pagehide", destroy, until);
 
   return { close };
 }
