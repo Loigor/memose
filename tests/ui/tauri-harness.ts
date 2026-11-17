@@ -603,6 +603,7 @@ function installBrowserHarness(seed: BrowserSeed) {
         const entry = (chats.get(String(a.noteId ?? "")) ?? []).find((item) => item.id === a.requestId);
         if (entry && entry.status === "edit") {
           entry.status = String(a.status);
+          (entry as { accepted?: number[] }).accepted = Array.isArray(a.accepted) ? a.accepted : [];
         }
         emit("llm-changed", String(a.noteId ?? ""));
         return null;

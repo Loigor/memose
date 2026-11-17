@@ -1184,6 +1184,7 @@ pub async fn llm_ask(
         selection: context.is_some(),
         started_at: notes::now_ms(),
         finished_at: None,
+        accepted: Vec::new(),
     };
     {
         let mut all = chats(&state);
@@ -1268,7 +1269,7 @@ pub fn llm_jobs(state: State<AppState>) -> Vec<llm::ChatEntry> {
     jobs
 }
 
-/// Records what happened to a proposed edit: `applied` or `dismissed`.
+/// Records what happened to a proposed edit: `applied` or `dismissed`, and which changes were taken.
 #[tauri::command]
 pub fn llm_mark(
     app: AppHandle,
@@ -1276,6 +1277,7 @@ pub fn llm_mark(
     note_id: String,
     request_id: String,
     status: String,
+    accepted: Option<Vec<u32>>,
 ) -> Result<(), AppError> {
     if status != "applied" && status != "dismissed" {
         return Err(AppError::Message("unknown prompt state".into()));
@@ -1288,6 +1290,7 @@ pub fn llm_mark(
         if let Some(item) = found {
             if item.status == "edit" {
                 item.status = status;
+                item.accepted = accepted.unwrap_or_default();
             }
         }
     }

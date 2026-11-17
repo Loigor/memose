@@ -56,6 +56,8 @@ export type ChatEntry = {
   selection: boolean;
   startedAt: number;
   finishedAt: number | null;
+  /** Ids of the changes taken from a proposed edit, once it is applied. */
+  accepted?: number[];
 };
 
 /** The memo a bubble belongs to. */
@@ -200,6 +202,9 @@ export function mountLlmBubble(anchor: HTMLElement, target: LlmTarget): { close(
   let picked: Picked | null = null;
   let menuEl: HTMLElement | null = null;
   let presetWatch: ResizeObserver | null = null;
+  /** The log follows new content until the user scrolls up to read. */
+  let stuckToEnd = true;
+  let logWatch: ResizeObserver | null = null;
   /** The spoken prompt being recorded, and the box it is written into. */
   let voiceSession: string | null = null;
   let voiceStarting = false;
@@ -304,13 +309,85 @@ export function mountLlmBubble(anchor: HTMLElement, target: LlmTarget): { close(
 
   const sourceNow = () => splitProtected(target.text(), isProtectedLine);
 
+  /** A folded section in the chat. */
+  function fold(label: string, content: HTMLElement, open = false): HTMLElement {
+    const details = el("details", "ai-fold");
+    details.open = open;
+    details.append(el("summary", "", label), content);
+    return details;
+  }
+
+  /** The model's reply as it came, for an edit. */
+  function modelOutput(entry: ChatEntry, open = false): HTMLElement {
+    return fold("Model output", el("div", "ai-answer ai-raw", entry.text), open);
+  }
+
+  /** A diff that shows what was decided. Changes in `accepted` are shown applied, the rest as kept. */
+  function decidedDiff(parts: DiffPart[], accepted: ReadonlySet<number>): HTMLElement {
+    const list = el("div", "ai-diff");
+    for (const part of parts) {
+      if (part.kind === "same") {
+        const lines = part.lines;
+        const shown = lines.length > 4 ? [lines[0], null, lines[lines.length - 1]] : lines;
+        for (const line of shown) {
+          list.append(
+            line === null
+              ? el("div", "ai-line ai-gap", `${lines.length - 2} unchanged lines`)
+              : el("div", "ai-line", line === "" ? " " : line),
+          );
+        }
+        continue;
+      }
+      const { hunk } = part;
+      const item = el("div", "ai-hunk");
+      item.dataset.decided = accepted.has(hunk.id) ? "accepted" : "rejected";
+      if (accepted.has(hunk.id)) {
+        // Both sides stay visible here, so the record shows what was replaced.
+        item.dataset.shown = "both";
+      }
+      for (const line of hunk.removed) {
+        item.append(el("div", "ai-line ai-removed", line === "" ? " " : line));
+      }
+      for (const line of hunk.added) {
+        item.append(el("div", "ai-line ai-added", line === "" ? " " : line));
+      }
+      list.append(item);
+    }
+    return list;
+  }
+
+  /** A proposed edit after it was applied or dismissed: a line, then the changes folded. */
+  function decidedBody(entry: ChatEntry): HTMLElement {
+    const box = el("div", "ai-diff-box");
+    const parts = diffLines(splitLines(entry.source), splitLines(entry.text));
+    const all = hunksOf(parts);
+    const taken = new Set(entry.status === "applied" ? (entry.accepted ?? all.map((hunk) => hunk.id)) : []);
+    const count = all.filter((hunk) => taken.has(hunk.id)).length;
+    const summary =
+      entry.status === "applied"
+        ? count === all.length
+          ? `Applied ${count} ${count === 1 ? "change" : "changes"}.`
+          : `Applied ${count} of ${all.length} changes.`
+        : "Changes dismissed.";
+    box.append(el("p", "ai-note", summary));
+    if (all.length > 0) {
+      box.append(
+        fold(entry.status === "applied" ? "Show changes" : "Show proposed changes", decidedDiff(parts, taken)),
+      );
+    }
+    box.append(modelOutput(entry));
+    return box;
+  }
+
   function diffBody(entry: ChatEntry): HTMLElement {
     const box = el("div", "ai-diff-box");
     const before = splitLines(entry.source);
     const parts: DiffPart[] = diffLines(before, splitLines(entry.text));
     const all = hunksOf(parts);
     if (all.length === 0) {
-      box.append(el("p", "ai-note", "The model suggested no changes."));
+      // The reply matched the memo, or was not a rewrite of it. Either way the words are shown.
+      box.append(el("p", "ai-note", "The model suggested no changes. Its reply:"));
+      box.append(el("div", "ai-answer", entry.text));
       return box;
     }
     let state = decisions.get(entry.id);
@@ -341,7 +418,12 @@ export function mountLlmBubble(anchor: HTMLElement, target: LlmTarget): { close(
       decisions.delete(entry.id);
       asEdit.delete(entry.id);
       if (entry.status === "edit") {
-        void invoke("llm_mark", { noteId: entry.noteId, requestId: entry.id, status });
+        void invoke("llm_mark", {
+          noteId: entry.noteId,
+          requestId: entry.id,
+          status,
+          accepted: [...accepted],
+        });
       } else {
         notice = status === "applied" ? "Changes applied." : "";
         paintLog(false);
@@ -364,22 +446,6 @@ export function mountLlmBubble(anchor: HTMLElement, target: LlmTarget): { close(
       }),
       button("", accepted.size === 0 ? "Dismiss" : "Done", finish),
     );
-    box.append(bar);
-
-    const now = sourceNow();
-    const place = Math.max(0, locateBlock(now.lines, before, entry.lineStart ? entry.lineStart - 1 : 0));
-    const everything = new Set(all.map((hunk) => hunk.id));
-    const size = byteLength(applyToBlock(now.lines, place, before.length, parts, everything, now.kept));
-    if (contentLimit > 0 && size > contentLimit) {
-      box.append(
-        el(
-          "p",
-          "ai-warning",
-          `With every change the memo is ${formatKilobytes(size)}. This server accepts ${formatKilobytes(contentLimit)}, so it would stay on this computer until shortened.`,
-        ),
-      );
-    }
-
     const list = el("div", "ai-diff");
     for (const part of parts) {
       if (part.kind === "same") {
@@ -427,6 +493,23 @@ export function mountLlmBubble(anchor: HTMLElement, target: LlmTarget): { close(
       list.append(item);
     }
     box.append(list);
+    // The decision comes after the changes, where reading them ends.
+    box.append(bar);
+
+    const now = sourceNow();
+    const place = Math.max(0, locateBlock(now.lines, before, entry.lineStart ? entry.lineStart - 1 : 0));
+    const everything = new Set(all.map((hunk) => hunk.id));
+    const size = byteLength(applyToBlock(now.lines, place, before.length, parts, everything, now.kept));
+    if (contentLimit > 0 && size > contentLimit) {
+      box.append(
+        el(
+          "p",
+          "ai-warning",
+          `With every change the memo is ${formatKilobytes(size)}. This server accepts ${formatKilobytes(contentLimit)}, so it would stay on this computer until shortened.`,
+        ),
+      );
+    }
+    box.append(modelOutput(entry));
     return box;
   }
 
@@ -474,13 +557,11 @@ export function mountLlmBubble(anchor: HTMLElement, target: LlmTarget): { close(
       body.append(button("", "Run again", () => send(entry.instruction, entry.mode)));
       return body;
     }
-    const text =
-      entry.status === "applied"
-        ? "Changes applied."
-        : entry.status === "dismissed"
-          ? "Changes dismissed."
-          : "Cancelled.";
-    body.append(el("p", "ai-note", text));
+    if (entry.status === "applied" || entry.status === "dismissed") {
+      body.append(decidedBody(entry));
+      return body;
+    }
+    body.append(el("p", "ai-note", "Cancelled."));
     return body;
   }
 
@@ -517,7 +598,29 @@ export function mountLlmBubble(anchor: HTMLElement, target: LlmTarget): { close(
     if (notice) {
       logEl.append(el("p", "ai-note ai-notice", notice));
     }
-    logEl.scrollTop = scroll ? logEl.scrollHeight : top;
+    if (scroll || stuckToEnd) {
+      scrollToEnd();
+    } else {
+      logEl.scrollTop = top;
+    }
+  }
+
+  /**
+   * Keeps the newest entry in view. The footer and the preset row settle a frame later and
+   * shrink the log, so the end is set again once the layout is done.
+   */
+  function scrollToEnd() {
+    stuckToEnd = true;
+    const log = logEl;
+    if (!log) {
+      return;
+    }
+    log.scrollTop = log.scrollHeight;
+    requestAnimationFrame(() => {
+      if (logEl === log && stuckToEnd) {
+        log.scrollTop = log.scrollHeight;
+      }
+    });
   }
 
   function send(instruction: string, mode: AiMode, consented = false) {
@@ -951,6 +1054,19 @@ export function mountLlmBubble(anchor: HTMLElement, target: LlmTarget): { close(
     head.querySelector(".ai-close")?.setAttribute("aria-label", "Close AI prompt");
     jobsEl = el("div", "ai-jobs");
     logEl = el("div", "ai-log");
+    const log = logEl;
+    log.addEventListener("scroll", () => {
+      stuckToEnd = log.scrollHeight - log.scrollTop - log.clientHeight < 24;
+    });
+    // When the log gets smaller (the prompt box grows), the end stays in view.
+    logWatch?.disconnect();
+    logWatch = new ResizeObserver(() => {
+      if (stuckToEnd) {
+        log.scrollTop = log.scrollHeight;
+      }
+    });
+    logWatch.observe(log);
+    stuckToEnd = true;
     footEl = el("div", "ai-foot");
     bubble.append(head, jobsEl, logEl, footEl);
     target.host.append(bubble);
@@ -976,6 +1092,8 @@ export function mountLlmBubble(anchor: HTMLElement, target: LlmTarget): { close(
     menuEl = null;
     presetWatch?.disconnect();
     presetWatch = null;
+    logWatch?.disconnect();
+    logWatch = null;
     pendingConsent = null;
     picked = null;
     inputEl = null;

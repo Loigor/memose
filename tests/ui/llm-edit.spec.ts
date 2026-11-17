@@ -24,7 +24,16 @@ test("an edit prompt shows a diff in the bubble and accept all applies it", asyn
   await expect(bubble.locator(".ai-added")).toHaveText("the first line");
   await expect(bubble.locator(".ai-diff")).not.toContainText("memose-media");
   await bubble.locator("button", { hasText: "Accept all" }).click();
-  await expect(bubble.locator(".ai-entry")).toContainText("Changes applied.");
+  const entry = bubble.locator(".ai-entry");
+  await expect(entry).toContainText("Applied 1 change.");
+  const changes = entry.locator("details.ai-fold", { hasText: "Show changes" });
+  await expect(changes).not.toHaveAttribute("open", "");
+  await changes.locator("summary").click();
+  await expect(changes.locator(".ai-removed")).toHaveText("teh first line");
+  await expect(changes.locator(".ai-added")).toHaveText("the first line");
+  const output = entry.locator("details.ai-fold", { hasText: "Model output" });
+  await output.locator("summary").click();
+  await expect(output.locator(".ai-raw")).toHaveText("the first line\nkept line");
   await expect.poll(async () => editorText(composerTextarea(page))).toContain("the first line");
   await expect(page.locator("#blocks")).toContainText("kept line");
   await expect.poll(async () => invokedCmds(page)).toContain("llm_mark");
@@ -60,6 +69,7 @@ test("dismissing a proposed edit leaves the memo as it was", async ({ page }) =>
   await expect(bubble.locator(".ai-added")).toHaveText("ONE");
   await bubble.locator("button", { hasText: "Dismiss" }).click();
   await expect(bubble.locator(".ai-entry")).toContainText("Changes dismissed.");
+  await expect(bubble.locator("details.ai-fold", { hasText: "Show proposed changes" })).toHaveCount(1);
   await expect.poll(async () => editorText(composerTextarea(page))).toContain("one");
 });
 
@@ -297,4 +307,71 @@ test("a code block has an AI tab that works on that block only", async ({ page }
         .pop()?.args,
   );
   expect(sent).toMatchObject({ text: "var a = 1\nvar b = 2", lineStart: 3, lineEnd: 4 });
+});
+
+test("a partly accepted edit records which changes were taken", async ({ page }) => {
+  await openComposer(page, {
+    draft: { content: "one\nkeep\ntwo" },
+    ai: { ...localModel, llmReply: "ONE\nkeep\nTWO" },
+  });
+  await page.locator("#ai-anchor .ai-toggle").click();
+  const bubble = page.locator("#card .ai-bubble");
+  await bubble.locator(".ai-mode").selectOption("edit");
+  await bubble.locator(".ai-input").fill("Shout");
+  await page.keyboard.press("Enter");
+  await bubble.locator(".ai-hunk").first().locator("button", { hasText: "Accept" }).click();
+  await bubble.locator(".ai-hunk").nth(1).locator("button", { hasText: "Keep original" }).click();
+  await expect(bubble.locator(".ai-entry")).toContainText("Applied 1 of 2 changes.");
+  await bubble.locator("details.ai-fold summary", { hasText: "Show changes" }).click();
+  const hunks = bubble.locator("details.ai-fold .ai-hunk");
+  await expect(hunks.nth(0)).toHaveAttribute("data-decided", "accepted");
+  await expect(hunks.nth(1)).toHaveAttribute("data-decided", "rejected");
+  await expect.poll(async () => editorText(composerTextarea(page))).toContain("ONE");
+});
+
+test("an edit with no changes shows what the model replied", async ({ page }) => {
+  await openComposer(page, {
+    draft: { content: "same text" },
+    ai: { ...localModel, llmReply: "same text" },
+  });
+  await page.locator("#ai-anchor .ai-toggle").click();
+  const bubble = page.locator("#card .ai-bubble");
+  await bubble.locator(".ai-mode").selectOption("edit");
+  await bubble.locator(".ai-input").fill("Fix it");
+  await page.keyboard.press("Enter");
+  await expect(bubble.locator(".ai-entry")).toContainText("The model suggested no changes. Its reply:");
+  await expect(bubble.locator(".ai-answer")).toHaveText("same text");
+});
+
+test("accept all sits under the changes and the chat follows each reply", async ({ page }) => {
+  await page.setViewportSize({ width: 408, height: 476 });
+  const lines = Array.from({ length: 14 }, (_, i) => `line ${i} teh`);
+  await openComposer(page, {
+    draft: { content: lines.join("\n") },
+    ai: { ...localModel, llmReply: lines.map((line) => line.replace("teh", "the")).join("\n"), llmKind: "answer" },
+  });
+  await page.locator("#ai-anchor .ai-toggle").click();
+  const bubble = page.locator("#card .ai-bubble");
+  const log = bubble.locator(".ai-log");
+  const atEnd = () => log.evaluate((el) => el.scrollHeight - el.scrollTop - el.clientHeight < 2);
+  for (const question of ["first question", "second question"]) {
+    await bubble.locator(".ai-input").fill(question);
+    await page.keyboard.press("Enter");
+    await expect(bubble.locator(".ai-entry").last().locator(".ai-q-text")).toHaveText(question);
+  }
+  await expect.poll(async () => log.evaluate((el) => el.scrollHeight > el.clientHeight)).toBe(true);
+  await expect.poll(atEnd).toBe(true);
+  await bubble.locator(".ai-mode").selectOption("edit");
+  await bubble.locator(".ai-input").fill("Fix the typos");
+  await page.keyboard.press("Enter");
+  const last = bubble.locator(".ai-entry").last();
+  await expect(last.locator(".ai-added").first()).toHaveText("line 0 the");
+  await expect.poll(atEnd).toBe(true);
+  const order = await last.evaluate((entry) => {
+    const diff = entry.querySelector(".ai-diff");
+    const accept = [...entry.querySelectorAll("button")].find((b) => b.textContent === "Accept all");
+    return diff && accept ? diff.compareDocumentPosition(accept) & Node.DOCUMENT_POSITION_FOLLOWING : 0;
+  });
+  expect(order).toBeTruthy();
+  await expect(last.locator("button", { hasText: "Accept all" })).toBeInViewport();
 });

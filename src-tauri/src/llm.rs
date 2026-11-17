@@ -123,6 +123,8 @@ pub struct ChatEntry {
     pub selection: bool,
     pub started_at: i64,
     pub finished_at: Option<i64>,
+    /// Ids of the changes the user took from a proposed edit, once it is applied.
+    pub accepted: Vec<u32>,
 }
 
 pub const RUNNING: &str = "running";
@@ -665,6 +667,7 @@ mod tests {
             selection: false,
             started_at: 0,
             finished_at: Some(1),
+            accepted: Vec::new(),
         }
     }
 
