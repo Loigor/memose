@@ -1329,6 +1329,8 @@ pub(crate) struct SpeechSettingsView {
     /// The chat model is set up, so `polish` can work.
     polish_ready: bool,
     engine: speech::engine::Status,
+    /// Whether the system lets the app use the microphone.
+    microphone: speech::permission::Permission,
     /// A recording that is running now, in any window.
     recording: Option<speech::StateEvent>,
 }
@@ -1384,6 +1386,7 @@ pub fn get_speech_settings(
         polish: flag(&state, speech::SPEECH_POLISH, true)?,
         polish_ready: llm_ready,
         engine: speech::engine::status(&speech::engine_dir(&app)?),
+        microphone: speech::permission::status(),
         recording: speech::current(&state),
         base_url,
         server_url,
@@ -1568,6 +1571,16 @@ pub async fn speech_start(
             }
         }
     }
+    // Asks the system first, so a missing permission is an error instead of silent sound.
+    let permission = tokio::task::spawn_blocking(speech::permission::request)
+        .await
+        .map_err(|err| AppError::Message(format!("recording did not start: {err}")))?;
+    let _ = app.emit("speech-settings-changed", ());
+    if permission.access == speech::permission::Access::Denied {
+        return Err(AppError::Message(speech::permission::denied_message(
+            permission.borrowed,
+        )));
+    }
     let options = speech::StartOptions {
         purpose,
         note_id,
@@ -1582,6 +1595,24 @@ pub async fn speech_start(
     tokio::task::spawn_blocking(move || speech::start(&handle, options))
         .await
         .map_err(|err| AppError::Message(format!("recording did not start: {err}")))?
+}
+
+/// Asks the system for the microphone now, from settings, instead of at the first recording.
+#[tauri::command]
+pub async fn speech_request_microphone(
+    app: AppHandle,
+) -> Result<speech::permission::Permission, AppError> {
+    let permission = tokio::task::spawn_blocking(speech::permission::request)
+        .await
+        .map_err(|err| AppError::Message(format!("the request stopped: {err}")))?;
+    let _ = app.emit("speech-settings-changed", ());
+    Ok(permission)
+}
+
+/// Opens the microphone page of the system privacy settings.
+#[tauri::command]
+pub fn speech_open_privacy() -> Result<(), AppError> {
+    speech::permission::open_settings()
 }
 
 /// Ends the running recording. Its last text and `speech-done` follow as events.

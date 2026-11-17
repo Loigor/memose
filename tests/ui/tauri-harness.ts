@@ -93,6 +93,7 @@ export type SpeechSeed = {
   polishReply?: string;
   /** Markdown line a kept recording ends with. */
   audio?: string;
+  microphone?: "unknown" | "granted" | "denied" | "notNeeded";
 };
 
 export type AiSeed = {
@@ -229,6 +230,7 @@ function installBrowserHarness(seed: BrowserSeed) {
     keepAudio: Boolean(seed.speech?.keepAudio),
     polish: seed.speech?.polish !== false,
     installed: Boolean(seed.speech?.installed),
+    microphone: seed.speech?.microphone ?? "granted",
     session: null as { sessionId: string; noteId: string | null; purpose: string } | null,
     count: 0,
   };
@@ -639,6 +641,7 @@ function installBrowserHarness(seed: BrowserSeed) {
             downloadBytes: speech.installed ? 0 : 510_000_000,
             diskBytes: speech.installed ? 690_000_000 : 0,
           },
+          microphone: { access: speech.microphone, borrowed: false },
           recording: speech.session ? { recording: true, ...speech.session } : null,
         };
       }
@@ -698,6 +701,15 @@ function installBrowserHarness(seed: BrowserSeed) {
         }
         return null;
       }
+      case "speech_request_microphone": {
+        if (speech.microphone === "unknown") {
+          speech.microphone = "granted";
+        }
+        emit("speech-settings-changed");
+        return { access: speech.microphone, borrowed: false };
+      }
+      case "speech_open_privacy":
+        return null;
       case "speech_polish":
         return seed.speech?.polishReply ?? String(a.dictated ?? "");
       case "save_settings": {

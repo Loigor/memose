@@ -944,6 +944,7 @@ button:hover {
 }
 
 .ai-bubble button.ai-mic {
+  --rec-red: #d8392b;
   display: grid;
   place-items: center;
   width: 24px;

@@ -419,6 +419,13 @@
               Microphone
               <select id="speech-device"></select>
             </label>
+            <div id="speech-permission" class="permission-row" hidden>
+              <p id="speech-permission-text" class="hint"></p>
+              <div class="actions">
+                <button id="speech-permission-ask" type="button" hidden>Allow microphone</button>
+                <button id="speech-permission-open" type="button" hidden>Open Privacy settings</button>
+              </div>
+            </div>
             <label class="toggle-row" for="speech-keep-audio">
               <span class="toggle-copy">
                 <span class="toggle-title">Keep the recording</span>

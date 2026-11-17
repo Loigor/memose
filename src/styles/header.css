@@ -718,23 +718,28 @@ header.compact-meta #edited-sep {
   position: relative;
 }
 
+/* The record button is red, so it reads as "record" at a glance. */
+.rec-toggle,
+.ai-bubble button.ai-mic {
+  --rec-red: #d8392b;
+}
+
+.rec-toggle {
+  color: var(--rec-red);
+}
+
 .rec-glyph {
   display: block;
-  width: 8px;
-  height: 12px;
-  box-sizing: border-box;
-  border: 1.6px solid currentColor;
-  border-radius: 4px;
-  box-shadow: 0 5px 0 -3.4px currentColor;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--rec-red, #d8392b);
 }
 
 /* While recording: a red dot, with a ring that follows the voice level. */
 .rec-on .rec-glyph {
-  width: 10px;
-  height: 10px;
-  border: 0;
-  border-radius: 50%;
-  background: #d8392b;
+  border-radius: 2px;
+  background: var(--rec-red, #d8392b);
   box-shadow: 0 0 0 calc(2px + var(--rec-level, 0) * 6px) color-mix(in srgb, #d8392b 30%, transparent);
   transition: box-shadow 120ms linear;
 }
@@ -760,4 +765,88 @@ header.compact-meta #edited-sep {
   line-height: 1.35;
   letter-spacing: 0;
   text-transform: none;
+}
+
+/* The listening mark beside the text being dictated. */
+.rec-live {
+  position: absolute;
+  z-index: 5;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 8px 2px 6px;
+  border: 1px solid color-mix(in srgb, #d8392b 35%, transparent);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--paper) 88%, #d8392b);
+  box-shadow: 0 3px 10px var(--shadow);
+  color: color-mix(in srgb, var(--ink) 70%, #d8392b);
+  font-family: system-ui, sans-serif;
+  font-size: 11px;
+  letter-spacing: 0;
+  text-transform: none;
+  white-space: nowrap;
+  pointer-events: none;
+}
+
+.rec-live[hidden] {
+  display: none;
+}
+
+.rec-bars {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  height: 12px;
+}
+
+.rec-bars i {
+  display: block;
+  width: 3px;
+  height: 4px;
+  border-radius: 2px;
+  background: #d8392b;
+}
+
+/* Waiting: the bars rise and fall in turn. */
+.rec-live[data-state="waiting"] .rec-bars i,
+.rec-live[data-state="finishing"] .rec-bars i {
+  animation: rec-wait 1.1s ease-in-out infinite;
+}
+
+.rec-live[data-state="waiting"] .rec-bars i:nth-child(2),
+.rec-live[data-state="finishing"] .rec-bars i:nth-child(2) {
+  animation-delay: 0.15s;
+}
+
+.rec-live[data-state="waiting"] .rec-bars i:nth-child(3),
+.rec-live[data-state="finishing"] .rec-bars i:nth-child(3) {
+  animation-delay: 0.3s;
+}
+
+/* Hearing: the bars follow the voice level. */
+.rec-live[data-state="hearing"] .rec-bars i {
+  height: calc(4px + var(--rec-level, 0) * 8px);
+  transition: height 110ms linear;
+}
+
+.rec-live[data-state="hearing"] .rec-bars i:nth-child(2) {
+  height: calc(4px + var(--rec-level, 0) * 12px);
+}
+
+@keyframes rec-wait {
+  0%,
+  100% {
+    height: 3px;
+    opacity: 0.45;
+  }
+  50% {
+    height: 11px;
+    opacity: 1;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .rec-live .rec-bars i {
+    animation-duration: 3s;
+  }
 }

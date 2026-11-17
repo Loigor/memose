@@ -22,6 +22,10 @@ export type DictationTarget = {
   replace(next: string, quiet?: boolean): void;
   /** Inserts text where the cursor is. */
   insertAtCursor(text: string): void;
+  /** Puts the caret at a position in the memo text. */
+  placeCaret(offset: number): void;
+  /** Editor and preview boxes of the memo, to place the listening mark beside the text. */
+  fieldRoots(): HTMLElement[];
   /** Called when the button appears or disappears, so the header can be laid out again. */
   onAvailability?(): void;
 };
@@ -30,14 +34,6 @@ export type DictationTarget = {
 const CONTEXT_BEFORE = 1500;
 const CONTEXT_AFTER = 400;
 const POLISH_DELAY = 450;
-
-export function recAnchorHtml(): string {
-  return `<div class="rec-anchor" hidden>
-    <button class="rec-toggle icon-button" type="button" aria-label="Record" aria-pressed="false" title="Record">
-      <span class="rec-glyph" aria-hidden="true"></span>
-    </button>
-  </div>`;
-}
 
 /** Wires the record button inside `anchor`. It stays hidden until recording is turned on in settings. */
 export function mountDictation(anchor: HTMLElement, target: DictationTarget) {
@@ -56,6 +52,124 @@ export function mountDictation(anchor: HTMLElement, target: DictationTarget) {
   let ended: SpeechDone | null = null;
   let message: HTMLElement | null = null;
   let messageTimer: number | undefined;
+  /** Where the first words will land, measured when recording starts. */
+  let startRect: DOMRect | null = null;
+  let quietSince = 0;
+
+  // The listening mark: it sits where the next words will appear.
+  const live = document.createElement("div");
+  live.className = "rec-live";
+  live.hidden = true;
+  live.setAttribute("aria-live", "polite");
+  const bars = document.createElement("span");
+  bars.className = "rec-bars";
+  bars.setAttribute("aria-hidden", "true");
+  for (let i = 0; i < 3; i += 1) {
+    bars.append(document.createElement("i"));
+  }
+  const liveText = document.createElement("span");
+  liveText.className = "rec-live-text";
+  live.append(bars, liveText);
+  target.host.append(live);
+
+  const showLive = (state: "waiting" | "hearing" | "finishing") => {
+    live.hidden = false;
+    live.dataset.state = state;
+    liveText.textContent =
+      state === "waiting" ? "Waiting for speech…" : state === "hearing" ? "Listening…" : "Finishing…";
+  };
+
+  const hideLive = () => {
+    live.hidden = true;
+    live.style.removeProperty("--rec-level");
+  };
+
+  /** The screen box of the cursor, or of the line it is on, inside the memo's fields. */
+  const caretRect = (): DOMRect | null => {
+    const roots = target.fieldRoots();
+    const active = document.activeElement;
+    if (active instanceof HTMLTextAreaElement && roots.some((root) => root.contains(active))) {
+      const box = active.getBoundingClientRect();
+      return new DOMRect(box.left + 8, box.bottom - 22, 0, 18);
+    }
+    const selection = window.getSelection();
+    if (selection && selection.rangeCount > 0) {
+      const range = selection.getRangeAt(0);
+      if (roots.some((root) => root.contains(range.endContainer))) {
+        const rects = range.getClientRects();
+        const rect = rects.length > 0 ? rects[rects.length - 1] : range.getBoundingClientRect();
+        if (rect.width > 0 || rect.height > 0) {
+          return rect;
+        }
+        const node = range.endContainer;
+        const row = (node instanceof Element ? node : node.parentElement)?.closest(".md-row");
+        if (row) {
+          const box = row.getBoundingClientRect();
+          return new DOMRect(box.left, box.top, 0, box.height);
+        }
+      }
+    }
+    return null;
+  };
+
+  /** The screen box just after the dictated text, found by its last words in the rendered memo. */
+  const spanEndRect = (): DOMRect | null => {
+    if (!span) {
+      return null;
+    }
+    const place = locateSpan(span, target.text());
+    const text = place ? target.text().slice(place.start, place.end).trimEnd() : "";
+    const needle =
+      text
+        .slice(-24)
+        .replace(/^\S*\s/, "")
+        .trim() || text.slice(-24).trim();
+    if (needle === "") {
+      return null;
+    }
+    let found: DOMRect | null = null;
+    for (const root of target.fieldRoots()) {
+      const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+      for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+        const at = node.textContent?.lastIndexOf(needle) ?? -1;
+        if (at >= 0) {
+          const range = document.createRange();
+          range.setStart(node, at + needle.length);
+          range.collapse(true);
+          const rects = range.getClientRects();
+          found = rects.length > 0 ? rects[rects.length - 1] : range.getBoundingClientRect();
+        }
+      }
+    }
+    return found;
+  };
+
+  const placeLive = () => {
+    if (live.hidden) {
+      return;
+    }
+    const host = target.host.getBoundingClientRect();
+    const header = target.host.querySelector<HTMLElement>(":scope > header");
+    const top = (header?.offsetHeight ?? 36) + 2;
+    let rect = spanEndRect() ?? startRect;
+    if (!rect || (rect.width === 0 && rect.height === 0)) {
+      const root = target.fieldRoots().find((item) => item.offsetParent !== null);
+      const box = root?.getBoundingClientRect();
+      rect = box ? new DOMRect(box.left + 8, box.bottom - 24, 0, 18) : null;
+    }
+    if (!rect) {
+      return;
+    }
+    let x = rect.right - host.left + 6;
+    let y = rect.top - host.top + (rect.height - live.offsetHeight) / 2;
+    if (x + live.offsetWidth > host.width - 6) {
+      // No room after the words: the mark goes under them, so it never covers text.
+      x = rect.right - host.left - live.offsetWidth;
+      y = rect.bottom - host.top + 3;
+    }
+    live.style.left = `${Math.max(4, Math.min(x, host.width - live.offsetWidth - 6))}px`;
+    live.style.top = `${Math.max(top, Math.min(y, host.height - live.offsetHeight - 6))}px`;
+  };
 
   const say = (text: string) => {
     message?.remove();
@@ -104,12 +218,27 @@ export function mountDictation(anchor: HTMLElement, target: DictationTarget) {
     const now = target.text();
     if (now === next) {
       span = { content: now, start, end };
-      return;
+    } else {
+      span = { content: next, start, end };
+      const place = locateSpan(span, now);
+      span = place ? { content: now, ...place } : null;
     }
-    span = { content: next, start, end };
-    const place = locateSpan(span, now);
-    span = place ? { content: now, ...place } : null;
+    followCaret();
   };
+
+  /** The caret stays at the end of the dictated text, where the next words go. */
+  const followCaret = () => {
+    if (span) {
+      target.placeCaret(span.end);
+    }
+  };
+
+  /**
+   * Dictation on lines of its own takes its recording right under it. Dictation that was
+   * put into a line of other text leaves that text whole: the recording goes to the end.
+   */
+  const ownLines = (current: string, start: number, end: number) =>
+    (start === 0 || current[start - 1] === "\n") && (end === current.length || current[end] === "\n");
 
   const heard = (piece: string) => {
     const text = piece.trim();
@@ -136,9 +265,12 @@ export function mountDictation(anchor: HTMLElement, target: DictationTarget) {
         write(next, next.length - text.length, next.length);
       } else if (span.start > 0 && !/[\s([{"'“‘-]/.test(after[span.start - 1])) {
         write(`${after.slice(0, span.start)} ${after.slice(span.start)}`, span.start + 1, span.end + 1);
+      } else {
+        followCaret();
       }
     }
     schedulePolish();
+    placeLive();
   };
 
   function schedulePolish() {
@@ -206,10 +338,16 @@ export function mountDictation(anchor: HTMLElement, target: DictationTarget) {
     if (done.audio) {
       const current = target.text();
       const place = span ? locateSpan(span, current) : null;
-      const at = place ? place.end : current.length;
+      const below = place !== null && ownLines(current, place.start, place.end);
+      const at = below && place ? place.end : current.replace(/\s+$/, "").length;
       const lead = at > 0 && current[at - 1] !== "\n" ? "\n" : "";
-      const trail = at < current.length && current[at] !== "\n" ? "\n" : "";
-      target.replace(`${current.slice(0, at)}${lead}${done.audio}${trail}${current.slice(at)}`, span !== null);
+      const rest = below ? current.slice(at) : "";
+      const trail = rest !== "" && rest[0] !== "\n" ? "\n" : "";
+      const head = current.slice(0, at);
+      target.replace(`${head}${lead}${done.audio}${trail}${rest}`, span !== null);
+      if (below) {
+        target.placeCaret(head.length + lead.length + done.audio.length);
+      }
     }
     if (done.error) {
       say(done.error);
@@ -217,6 +355,7 @@ export function mountDictation(anchor: HTMLElement, target: DictationTarget) {
     span = null;
     sessionId = null;
     polishOff = false;
+    hideLive();
     paint();
   }
 
@@ -227,19 +366,37 @@ export function mountDictation(anchor: HTMLElement, target: DictationTarget) {
       span = null;
       ended = null;
       polishOff = false;
+      startRect = caretRect();
+      quietSince = Date.now();
       sessionId = await startSpeech("memo", target.noteId(), {
         onChunk: heard,
         onLevel(level) {
           button.style.setProperty("--rec-level", level.toFixed(2));
+          live.style.setProperty("--rec-level", level.toFixed(2));
+          if (live.dataset.state === "finishing") {
+            return;
+          }
+          if (level > 0.12) {
+            quietSince = Date.now();
+            showLive("hearing");
+          } else if (Date.now() - quietSince > 900) {
+            showLive("waiting");
+          }
         },
         onDone(done) {
           ended = done;
           window.clearTimeout(polishTimer);
+          if (done.error) {
+            hideLive();
+          }
           void polish();
         },
       });
+      showLive("waiting");
+      placeLive();
     } catch (error) {
       sessionId = null;
+      hideLive();
       say(String(error));
     } finally {
       starting = false;
@@ -256,6 +413,9 @@ export function mountDictation(anchor: HTMLElement, target: DictationTarget) {
       return;
     }
     if (speechRunning()) {
+      if (sessionId && speechRunning()?.sessionId === sessionId) {
+        showLive("finishing");
+      }
       stopSpeech();
       return;
     }

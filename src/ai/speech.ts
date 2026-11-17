@@ -20,6 +20,14 @@ export type SpeechEngineStatus = {
   diskBytes: number;
 };
 
+export type MicrophoneAccess = "unknown" | "granted" | "denied" | "notNeeded";
+
+export type MicrophonePermission = {
+  access: MicrophoneAccess;
+  /** Memose runs from a terminal, so the system decides for the app that started it. */
+  borrowed: boolean;
+};
+
 export type SpeechSettings = {
   enabled: boolean;
   source: SpeechSource;
@@ -35,6 +43,7 @@ export type SpeechSettings = {
   polish: boolean;
   polishReady: boolean;
   engine: SpeechEngineStatus;
+  microphone: MicrophonePermission;
   recording: SpeechRecording | null;
 };
 

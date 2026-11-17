@@ -847,11 +847,38 @@ export function parseBlocks(content: string): Block[] {
 }
 
 export function serializeBlocks(items: Block[]): string {
+  return serializeWithStarts(items).text;
+}
+
+/**
+ * Field and offset for a position in the memo text, for placing the caret there.
+ * A position on a media line or inside a fence marker goes to the nearest text before it.
+ */
+export function caretAt(items: Block[], offset: number): { index: number; at: number } | null {
+  const { starts } = serializeWithStarts(items);
+  let best: { index: number; at: number } | null = null;
+  items.forEach((block, index) => {
+    const start = starts[index];
+    if (start < 0 || !isTypedBlock(block)) {
+      return;
+    }
+    if (offset >= start) {
+      best = { index, at: Math.min(offset - start, block.text.length) };
+    }
+  });
+  return best;
+}
+
+/** The memo text, and where each block's own text starts in it (-1 for a block that adds none). */
+export function serializeWithStarts(items: Block[]): { text: string; starts: number[] } {
+  const starts: number[] = [];
   let out = "";
   for (let i = 0; i < items.length; i += 1) {
     const block = items[i];
+    starts[i] = -1;
     if (block.kind === "text") {
       if (block.text.length === 0) {
+        starts[i] = out.length;
         continue;
       }
       const prev = items[i - 1];
@@ -859,11 +886,13 @@ export function serializeBlocks(items: Block[]): string {
       if (out.length > 0 && !prevIsInlineMedia && !out.endsWith("\n")) {
         out += "\n";
       }
+      starts[i] = out.length;
       out += block.text;
     } else if (block.kind === "code") {
       if (out.length > 0 && !out.endsWith("\n")) {
         out += "\n";
       }
+      starts[i] = out.length + 4 + block.lang.length;
       out += `\`\`\`${block.lang}\n${block.text}${block.text ? "\n" : ""}\`\`\``;
     } else {
       const md = mediaMarkdown(block.name, block.label, block.width);
@@ -877,7 +906,7 @@ export function serializeBlocks(items: Block[]): string {
       }
     }
   }
-  return out;
+  return { text: out, starts };
 }
 
 export function applyJsonFormat(value: string): Edit | null {

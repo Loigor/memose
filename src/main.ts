@@ -110,6 +110,8 @@ if (recAnchor && !isPreviewWindow()) {
     text: () => editorController.content(),
     replace: (next, quiet) => editorController.replaceContent(next, quiet),
     insertAtCursor: (text) => editorController.insertPlainText(text),
+    placeCaret: (offset) => editorController.placeCaret(offset),
+    fieldRoots: () => [blocksEl, appContext.dom.preview],
     onAvailability: () => stack.syncHeader(),
   });
 }

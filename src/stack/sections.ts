@@ -1,5 +1,6 @@
 import { denseLines, detectedMemoLanguage, memoUsesCoder, refreshEditorFields } from "../editor/editor-field";
-import { BlockHistory } from "../editor/history";
+import { fieldAt } from "../editor/editable";
+import { BlockHistory, restoreCaret } from "../editor/history";
 import {
   applyCode,
   applyJsonFormat,
@@ -8,6 +9,7 @@ import {
   applyQuote,
   applyTask,
   applyTitle,
+  caretAt,
   noteTitle,
   parseBlocks,
   serializeBlocks,
@@ -18,6 +20,7 @@ import { resizeAllBlockTextareas } from "../editor/textarea";
 import { revealPressedChoice } from "../look/audience-ui";
 import { paintLanguageMenu, pickedLanguage, toggleLanguageList } from "../look/language-menu";
 import { namedTheme } from "../look/look";
+import { mountDictation } from "../ai/dictation";
 import { mountLlmBubble } from "../ai/llm-edit";
 import { markdownToolbarHtml, stackHeaderHtml } from "../look/memo-chrome";
 import { hueSwatches, saveHueSwatches } from "../look/swatches";
@@ -641,6 +644,55 @@ export function mountSections(ctx: StackCtx) {
         },
         visibility: () => ctx.notes.get(note.id)?.visibility || null,
         selectionRoots: () =>
+          [".stack-blocks", ".stack-preview"].flatMap((selector) => {
+            const root = section.querySelector<HTMLElement>(selector);
+            return root ? [root] : [];
+          }),
+        onAvailability: () => ctx.api.syncHeaderCompact(),
+      });
+    }
+    const recAnchor = section.querySelector<HTMLElement>(".rec-anchor");
+    if (recAnchor && !isPreviewWindow()) {
+      mountDictation(recAnchor, {
+        host: section,
+        noteId: () => note.id,
+        text: () => ctx.notes.get(note.id)?.content ?? "",
+        replace(next, quiet) {
+          const held = ctx.notes.get(note.id);
+          if (!held) {
+            return;
+          }
+          if (!quiet) {
+            ctx.api.pushSectionUndo(held, true);
+          }
+          held.blocks = parseBlocks(next);
+          held.content = serializeBlocks(held.blocks);
+          ctx.api.renderSectionBlocks(section, held);
+          ctx.api.scheduleSectionSave(section, held);
+        },
+        insertAtCursor(text) {
+          const held = ctx.notes.get(note.id);
+          const area = held ? ctx.api.sectionTargetArea(section, held) : null;
+          if (!held || !area) {
+            return;
+          }
+          const { start, end } = ctx.api.sectionAreaSelection(area, held);
+          const value = `${area.value.slice(0, start)}${text}${area.value.slice(end)}`;
+          const cursor = start + text.length;
+          ctx.api.applySectionEdit(section, held, area, { value, start: cursor, end: cursor });
+        },
+        placeCaret(offset) {
+          const held = ctx.notes.get(note.id);
+          const container = section.querySelector<HTMLElement>(".stack-blocks");
+          const found = held ? caretAt(held.blocks, offset) : null;
+          if (!held || !container || !found) {
+            return;
+          }
+          held.caret = { index: found.index, start: found.at, end: found.at };
+          restoreCaret(container, held.caret);
+          fieldAt(container, found.index)?.scrollIntoView?.({ block: "nearest" });
+        },
+        fieldRoots: () =>
           [".stack-blocks", ".stack-preview"].flatMap((selector) => {
             const root = section.querySelector<HTMLElement>(selector);
             return root ? [root] : [];

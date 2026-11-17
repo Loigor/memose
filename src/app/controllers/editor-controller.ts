@@ -34,7 +34,9 @@ import {
   applyQuote,
   applyTask,
   applyTitle,
+  caretAt,
   closedFenceIn,
+  isAudio,
   completeOpenFence,
   dropCodeBlock,
   ensureTextSlots,
@@ -116,6 +118,8 @@ export interface EditorController extends LookEditor {
   showStored(content: string): void;
   /** Replaces the memo text as one undo step and saves it. `quiet` adds no undo step. */
   replaceContent(content: string, quiet?: boolean): void;
+  /** Puts the caret at a position in the memo text and keeps it in view. */
+  placeCaret(offset: number): void;
   renderSurface(focusName?: string): void;
   focus(): void;
   focusEditing(): void;
@@ -289,6 +293,20 @@ export function createEditorController(
     drafts.scheduleDraft();
   }
 
+  function placeCaret(offset: number) {
+    const found = caretAt(state.blocks, offset);
+    if (!found) {
+      return;
+    }
+    state.caret = { index: found.index, start: found.at, end: found.at };
+    restoreCaret(blocksEl, state.caret);
+    const area = fieldAt(blocksEl, found.index);
+    if (area) {
+      followEnd(area);
+      area.scrollIntoView?.({ block: "nearest" });
+    }
+  }
+
   function focus() {
     const fields = fieldsIn(blocksEl);
     const field = fields[fields.length - 1];
@@ -398,6 +416,8 @@ export function createEditorController(
         const canSitOnMediaLine =
           block.kind === "text" &&
           isAfterMedia &&
+          // An audio player is a wide block of its own. Text after it goes on the next line.
+          !(prevBlock?.kind === "media" && isAudio(prevBlock.name) && !prevBlock.inline) &&
           currentRow !== null &&
           currentRowSideArea === null &&
           !block.text.includes("\n");
@@ -1312,6 +1332,7 @@ export function createEditorController(
     isEmptyNewMemo,
     showStored,
     replaceContent,
+    placeCaret,
     renderSurface,
     focus,
     focusEditing,

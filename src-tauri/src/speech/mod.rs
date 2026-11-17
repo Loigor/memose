@@ -7,6 +7,7 @@
 
 pub mod audio;
 pub mod engine;
+pub mod permission;
 
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -36,6 +37,17 @@ pub const SPEECH_LANGUAGE: &str = "speech_language";
 pub const SPEECH_DEVICE: &str = "speech_device";
 pub const SPEECH_KEEP_AUDIO: &str = "speech_keep_audio";
 pub const SPEECH_POLISH: &str = "speech_polish";
+
+/// A microphone that has given only exact zeros for this long is not shared with the app.
+const SILENT_DEVICE: Duration = Duration::from_millis(1500);
+
+fn silent_device_message() -> String {
+    if cfg!(target_os = "macos") {
+        permission::denied_message(permission::status().borrowed)
+    } else {
+        "The microphone gives no sound. Check that it is connected and not muted.".into()
+    }
+}
 
 /// A recording stops by itself after this long.
 const MAX_SECONDS: u64 = 30 * 60;
@@ -509,8 +521,16 @@ fn capture(
     let started = Instant::now();
     let mut last_level = Instant::now();
     let mut error = None;
+    // A microphone the system will not share delivers exact zeros instead of failing.
+    let mut any_sound = false;
     loop {
         if stop.load(Ordering::SeqCst) || started.elapsed().as_secs() >= MAX_SECONDS {
+            break;
+        }
+        if !any_sound && started.elapsed() >= SILENT_DEVICE {
+            error = Some(silent_device_message());
+            // Silence is not worth keeping as a recording.
+            all.clear();
             break;
         }
         if let Some(message) = failed
@@ -524,6 +544,7 @@ fn capture(
         let Ok(data) = rx.recv_timeout(Duration::from_millis(60)) else {
             continue;
         };
+        any_sound = any_sound || data.iter().any(|sample| *sample != 0.0);
         mono.clear();
         resampler.push(&data, &mut mono);
         if keep && all.len() < keep_cap {
@@ -740,6 +761,38 @@ mod tests {
             own.key, None,
             "the model server's key is not sent to another host"
         );
+    }
+
+    /// Opens the real default microphone for two seconds and prints what arrives.
+    /// `cargo test mic_probe -- --ignored --nocapture`
+    #[test]
+    #[ignore]
+    fn mic_probe() {
+        let device = pick_device("").expect("a microphone");
+        let config = device.default_input_config().expect("a format");
+        println!("device {:?} {:?}", device.name(), config);
+        let (tx, rx) = std::sync::mpsc::channel::<Vec<f32>>();
+        let stream = device
+            .build_input_stream(
+                &config.clone().into(),
+                move |data: &[f32], _: &cpal::InputCallbackInfo| {
+                    let _ = tx.send(data.to_vec());
+                },
+                |err| println!("stream error {err}"),
+                None,
+            )
+            .expect("stream");
+        stream.play().expect("play");
+        let started = Instant::now();
+        let (mut count, mut peak, mut nonzero) = (0_usize, 0_f32, 0_usize);
+        while started.elapsed() < Duration::from_secs(2) {
+            if let Ok(data) = rx.recv_timeout(Duration::from_millis(100)) {
+                count += data.len();
+                nonzero += data.iter().filter(|s| **s != 0.0).count();
+                peak = data.iter().fold(peak, |p, s| p.max(s.abs()));
+            }
+        }
+        println!("samples {count} nonzero {nonzero} peak {peak}");
     }
 
     #[test]

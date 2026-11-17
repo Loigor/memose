@@ -568,3 +568,29 @@ progress {
 progress[hidden] {
   display: none;
 }
+
+.permission-row {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px 12px;
+  border-radius: 8px;
+  background: #f6efe0;
+}
+
+.permission-row[hidden] {
+  display: none;
+}
+
+.permission-row[data-access="denied"] {
+  background: #f8e1dc;
+}
+
+.permission-row[data-access="granted"] {
+  background: transparent;
+  padding: 0;
+}
+
+.permission-row .actions:not(:has(button:not([hidden]))) {
+  display: none;
+}

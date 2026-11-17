@@ -3,7 +3,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 
-import { megabytes, type SpeechSettings, type SpeechSource } from "./ai/speech";
+import { megabytes, type MicrophonePermission, type SpeechSettings, type SpeechSource } from "./ai/speech";
 
 type Progress = {
   received: number;
@@ -40,7 +40,34 @@ export function initSpeechSettings(status: HTMLElement) {
   const language = required<HTMLInputElement>("#speech-language");
   const polish = required<HTMLInputElement>("#speech-polish");
   const polishHint = required<HTMLElement>("#speech-polish-hint");
+  const permissionRow = required<HTMLElement>("#speech-permission");
+  const permissionText = required<HTMLElement>("#speech-permission-text");
+  const permissionAsk = required<HTMLButtonElement>("#speech-permission-ask");
+  const permissionOpen = required<HTMLButtonElement>("#speech-permission-open");
   let downloading = false;
+
+  const paintPermission = (microphone: MicrophonePermission) => {
+    const { access, borrowed } = microphone;
+    permissionRow.hidden = access === "notNeeded";
+    permissionRow.dataset.access = access;
+    permissionAsk.hidden = access !== "unknown";
+    permissionOpen.hidden = access === "granted" || access === "unknown";
+    if (borrowed) {
+      // A dev run: the system's answer belongs to the terminal or editor that started Memose.
+      permissionText.textContent =
+        access === "granted"
+          ? "Microphone allowed for the app that started Memose (Memose runs from a terminal)."
+          : "Memose runs from a terminal, so macOS asks for and lists the app that started it, such as Cursor or Terminal, not Memose. Allow that app under Microphone and start it again.";
+      permissionOpen.hidden = access === "granted";
+      return;
+    }
+    permissionText.textContent =
+      access === "granted"
+        ? "Microphone allowed."
+        : access === "denied"
+          ? "macOS does not let Memose use the microphone. Allow Memose under Privacy & Security › Microphone."
+          : "macOS has not asked yet. It asks the first time you record, or now with the button.";
+  };
 
   const paintEngine = (settings: SpeechSettings) => {
     const { engine } = settings;
@@ -85,6 +112,7 @@ export function initSpeechSettings(status: HTMLElement) {
       where.textContent = `Sound is sent to ${settings.serverHost} while you record.`;
     }
     paintEngine(settings);
+    paintPermission(settings.microphone);
   };
 
   const load = async () => {
@@ -166,6 +194,24 @@ export function initSpeechSettings(status: HTMLElement) {
       "Saved.",
     );
   });
+  permissionAsk.addEventListener("click", () => {
+    act(async () => {
+      const result = await invoke<MicrophonePermission>("speech_request_microphone");
+      await load();
+      return result.access === "granted" ? "Microphone allowed." : "The microphone was not allowed.";
+    }, "Waiting for your answer…");
+  });
+  permissionOpen.addEventListener("click", () => {
+    act(async () => {
+      await invoke("speech_open_privacy");
+      return "System Settings is open. Come back here after allowing the microphone.";
+    });
+  });
+  // The answer in System Settings is picked up when this window is used again.
+  window.addEventListener("focus", () => {
+    void load().catch(() => {});
+  });
+
   keyRemove.addEventListener("click", () => {
     save({ key: "" }, "Key removed.");
   });

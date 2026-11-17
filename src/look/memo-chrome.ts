@@ -126,6 +126,15 @@ function markdownButtonsHtml(): string {
     <button type="button" data-markdown="code" aria-label="Code block">Code block</button>`;
 }
 
+/** The record button of a memo header. Hidden until recording is turned on. */
+export function recAnchorHtml(): string {
+  return `<div class="rec-anchor" hidden>
+    <button class="rec-toggle icon-button" type="button" aria-label="Record" aria-pressed="false" title="Record">
+      <span class="rec-glyph" aria-hidden="true"></span>
+    </button>
+  </div>`;
+}
+
 /** The AI button of a memo header. Hidden until model prompts are turned on. */
 export function aiAnchorHtml(): string {
   return `<div class="ai-anchor" hidden>
@@ -194,6 +203,7 @@ export function stackHeaderHtml(): string {
         </span>
       </div>
       <div class="header-actions">
+        ${recAnchorHtml()}
         ${aiAnchorHtml()}
         <div class="editor-tools-anchor">
           <button class="editor-menu-toggle icon-button" type="button" aria-label="Editor options" aria-expanded="false" title="Editor options">
