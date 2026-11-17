@@ -92,6 +92,7 @@ if (aiAnchor && !isPreviewWindow()) {
   mountLlmBubble(aiAnchor, {
     host: cardEl,
     noteId: () => sessionController.currentNoteId(),
+    ensureNoteId: () => sessionController.ensureNoteId(),
     title: () => noteTitle(editorController.content()),
     text: () => editorController.content(),
     replace: (next) => editorController.replaceContent(next),

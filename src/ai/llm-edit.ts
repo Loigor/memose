@@ -36,6 +36,7 @@ export type AiSettings = {
   llmLocal: boolean;
   privateOkHost: string;
   presets: AiPreset[];
+  defaultPresets: AiPreset[];
 };
 
 export type ChatEntry = {
@@ -60,6 +61,8 @@ export type LlmTarget = {
   host: HTMLElement;
   /** Id of the memo shown now. Empty for a memo that is not saved yet. */
   noteId(): string | null;
+  /** Saves a new memo if needed and returns its id, so its chat is not shared with other new memos. */
+  ensureNoteId(): Promise<string | null>;
   title(): string;
   text(): string;
   /** Replaces the memo text as one undo step. */
@@ -93,6 +96,16 @@ async function loadSettings(): Promise<AiSettings | null> {
     paint();
   }
   return settings;
+}
+
+/** The server limit can change while the app runs, so it is read again when a bubble opens. */
+async function loadContentLimit() {
+  try {
+    const general = await invoke<{ memoContentLimit?: number }>("get_settings");
+    contentLimit = general.memoContentLimit ?? 0;
+  } catch {
+    // The last known limit stays.
+  }
 }
 
 function ensureListening() {
@@ -495,7 +508,7 @@ export function mountLlmBubble(anchor: HTMLElement, target: LlmTarget): { close(
     logEl.scrollTop = scroll ? logEl.scrollHeight : top;
   }
 
-  function send(instruction: string, mode: AiMode) {
+  function send(instruction: string, mode: AiMode, consented = false) {
     const current = settings;
     const text = instruction.trim();
     if (!current || text === "") {
@@ -507,11 +520,15 @@ export function mountLlmBubble(anchor: HTMLElement, target: LlmTarget): { close(
       isOfflinePrivate(visibility) &&
       !current.llmLocal &&
       current.privateOkHost !== current.llmHost;
-    if (needsConsent && !pendingConsent) {
+    // Every path that sends text passes here. Only the Send button of the question below sets `consented`.
+    if (needsConsent && !consented) {
       pendingConsent = () => {
-        void invoke("save_ai_settings", { privateOkHost: current.llmHost }).catch(() => {});
-        current.privateOkHost = current.llmHost;
-        send(text, mode);
+        void invoke("save_ai_settings", { privateOkHost: current.llmHost })
+          .catch(() => {})
+          .then(() => {
+            current.privateOkHost = current.llmHost;
+            send(text, mode, true);
+          });
       };
       paintFoot();
       return;
@@ -545,22 +562,33 @@ export function mountLlmBubble(anchor: HTMLElement, target: LlmTarget): { close(
     }
     draftInstruction = "";
     const requestId = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
-    void invoke<ChatEntry>("llm_ask", {
-      requestId,
-      noteId: noteKey(),
-      title: target.title(),
-      instruction: request,
-      mode,
-      text: source,
-      context,
-      lineStart,
-      lineEnd,
-    }).catch((error: unknown) => {
-      notice = String(error);
-      if (isOpen()) {
-        paintLog(true);
-      }
-    });
+    const title = target.title();
+    void target
+      .ensureNoteId()
+      .then((noteId) => {
+        if (!noteId) {
+          throw new Error("Save the memo first.");
+        }
+        const sent = invoke<ChatEntry>("llm_ask", {
+          requestId,
+          noteId,
+          title,
+          instruction: request,
+          mode,
+          text: source,
+          context,
+          lineStart,
+          lineEnd,
+        });
+        void refresh(true);
+        return sent;
+      })
+      .catch((error: unknown) => {
+        notice = error instanceof Error ? error.message : String(error);
+        if (isOpen()) {
+          paintLog(true);
+        }
+      });
     paintFoot();
     void refresh(true);
   }
@@ -839,6 +867,7 @@ export function mountLlmBubble(anchor: HTMLElement, target: LlmTarget): { close(
     paintLog(true);
     paintFoot();
     paintButton();
+    void loadContentLimit();
     void refresh(true);
   }
 

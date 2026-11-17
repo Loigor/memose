@@ -156,9 +156,19 @@ pub fn list_recent(state: State<AppState>, limit: Option<u32>) -> Result<Vec<Not
 #[tauri::command]
 pub fn get_settings(app: AppHandle, state: State<AppState>) -> Result<SettingsView, AppError> {
     let limits = notes::limits::stored(&state.db)?;
+    // Without a server there is nothing to be too long for.
+    let syncing = state.db.access_token()?.is_some()
+        && state
+            .db
+            .get_meta(notes::BASE_URL)?
+            .is_some_and(|url| !url.is_empty());
     Ok(SettingsView {
-        memo_content_limit: limits.memo_content_bytes,
-        upload_limit: limits.upload_bytes,
+        memo_content_limit: if syncing {
+            limits.memo_content_bytes
+        } else {
+            0
+        },
+        upload_limit: if syncing { limits.upload_bytes } else { 0 },
         base_url: state.db.get_meta(notes::BASE_URL)?.unwrap_or_default(),
         has_token: state.db.access_token()?.is_some(),
         launch_at_login: app.autolaunch().is_enabled().unwrap_or(false),
@@ -1002,6 +1012,8 @@ pub(crate) struct AiSettingsView {
     /// Host already allowed to receive offline-only memos.
     private_ok_host: String,
     presets: Vec<llm::Preset>,
+    /// What "Restore defaults" puts back.
+    default_presets: Vec<llm::Preset>,
 }
 
 #[tauri::command]
@@ -1021,6 +1033,7 @@ pub fn get_ai_settings(state: State<AppState>) -> Result<AiSettingsView, AppErro
             .get_meta(llm::LLM_PRIVATE_OK_HOST)?
             .unwrap_or_default(),
         presets: llm::presets(&state.db)?,
+        default_presets: llm::default_presets(),
         llm_base_url: base,
     })
 }
@@ -1039,9 +1052,13 @@ pub fn save_ai_settings(
     private_ok_host: Option<String>,
 ) -> Result<(), AppError> {
     if let Some(base) = llm_base_url {
-        state
-            .db
-            .set_meta(llm::LLM_BASE_URL, &llm::clean_base(&base)?)?;
+        let next = llm::clean_base(&base)?;
+        let previous = state.db.get_meta(llm::LLM_BASE_URL)?.unwrap_or_default();
+        // A key belongs to one server. It must not follow the URL to another host.
+        if llm::host_of(&previous) != llm::host_of(&next) && llm_key.is_none() {
+            state.db.clear_meta(llm::LLM_API_KEY)?;
+        }
+        state.db.set_meta(llm::LLM_BASE_URL, &next)?;
     }
     if let Some(enabled) = llm_enabled {
         state
@@ -1127,6 +1144,32 @@ pub async fn llm_ask(
         .get_meta(llm::LLM_MODEL)?
         .filter(|model| !model.is_empty())
         .ok_or_else(|| AppError::Message("model is not set".into()))?;
+    // An offline-only memo leaves this computer only for a host the user allowed.
+    let offline_only = match state.db.get(&note_id)? {
+        Some(note) => {
+            let visibility = match note.visibility {
+                Some(own) if !own.is_empty() => own,
+                _ => state
+                    .db
+                    .get_meta(notes::MEMO_VISIBILITY)?
+                    .unwrap_or_default(),
+            };
+            notes::is_offline_private(&visibility)
+        }
+        None => false,
+    };
+    if offline_only && !llm::is_local(&base) {
+        let allowed = state
+            .db
+            .get_meta(llm::LLM_PRIVATE_OK_HOST)?
+            .unwrap_or_default();
+        if allowed.is_empty() || allowed != llm::host_of(&base) {
+            return Err(AppError::Message(
+                "this memo is kept on this computer only; allow the model server first".into(),
+            ));
+        }
+    }
+    let history = llm::history(chats(&state).get(&note_id).map_or(&[][..], Vec::as_slice));
     let (cancel_tx, cancel_rx) = tokio::sync::oneshot::channel();
     state
         .llm_requests
@@ -1165,7 +1208,7 @@ pub async fn llm_ask(
     let _ = app.emit("llm-changed", &note_id);
     let http = state.http.clone();
     let result = tokio::select! {
-        reply = llm::ask(&http, &base, key.as_deref(), &model, mode, &instruction, &text, context.as_deref()) => reply.map(Some),
+        reply = llm::ask(&http, &base, key.as_deref(), &model, mode, &instruction, &text, context.as_deref(), &history) => reply.map(Some),
         _ = cancel_rx => Ok(None),
     };
     state

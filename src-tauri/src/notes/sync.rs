@@ -1347,6 +1347,14 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn a_failing_server_does_not_reset_the_limits() {
+        let hits = Arc::new(Mutex::new(Vec::new()));
+        let base = spawn_server(vec![(503, "{}")], hits);
+        let found = limits::fetch(&test_client(), &base, "memos_pat_test", ApiFlavor::V1).await;
+        assert!(found.is_err());
+    }
+
+    #[tokio::test]
     async fn probe_falls_back_when_latest_is_gone() {
         let hits = Arc::new(Mutex::new(Vec::new()));
         let base = spawn_server(vec![(410, "{}"), (200, r#"{"memos":[]}"#)], hits.clone());

@@ -349,7 +349,11 @@
               API key
               <input id="llm-key" type="password" placeholder="Leave blank to keep the saved key" autocomplete="off" />
             </label>
-            <p id="llm-key-hint" class="hint"></p>
+            <p class="hint key-line">
+              <span id="llm-key-hint"></span>
+              <button id="llm-key-remove" class="link-button" type="button" hidden>Remove key</button>
+            </p>
+            <p class="hint">The key is used for this server only. Changing the server address removes it.</p>
             <label>
               Model
               <input id="llm-model" type="text" placeholder="qwen2.5:7b" autocomplete="off" />

@@ -525,3 +525,26 @@ button.danger {
   font-size: 0.95em;
   user-select: text;
 }
+
+.key-line {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+}
+
+button.link-button {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: #8a3b2a;
+  font-size: inherit;
+  text-decoration: underline;
+}
+
+button.link-button:hover {
+  background: transparent;
+}
+
+button.link-button[hidden] {
+  display: none;
+}

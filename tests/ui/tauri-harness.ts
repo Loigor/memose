@@ -84,6 +84,7 @@ export type AiSeed = {
   llmEnabled?: boolean;
   llmBaseUrl?: string;
   llmModel?: string;
+  hasLlmKey?: boolean;
   /** Text the mocked model returns for every prompt. */
   llmReply?: string;
   /** What the mocked model decides for an "auto" prompt. */
@@ -180,7 +181,7 @@ function installBrowserHarness(seed: BrowserSeed) {
     llmEnabled: Boolean(seed.ai?.llmEnabled),
     llmBaseUrl: seed.ai?.llmBaseUrl ?? "",
     llmModel: seed.ai?.llmModel ?? "",
-    hasLlmKey: false,
+    hasLlmKey: Boolean(seed.ai?.hasLlmKey),
     privateOkHost: "",
     presets: [
       { name: "Summarize", instruction: "Summarize the text.", mode: "ask" },
@@ -489,6 +490,7 @@ function installBrowserHarness(seed: BrowserSeed) {
           llmLocal: host === "localhost" || host.startsWith("127."),
           privateOkHost: ai.privateOkHost,
           presets: ai.presets,
+          defaultPresets: [{ name: "Summarize", instruction: "Summarize the text.", mode: "ask" }],
         };
       }
       case "save_ai_settings": {

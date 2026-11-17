@@ -21,6 +21,8 @@ export interface StackSession {
 
 export interface SessionController {
   currentNoteId(): string | null;
+  /** Saves a new memo now if it has no id yet, and returns the id. */
+  ensureNoteId(): Promise<string | null>;
   currentComposerId(): string | null;
   selectedId(): string | null;
   editingId(): string | null;
@@ -153,6 +155,14 @@ export function createSessionController(
         console.error(error);
       });
     }, 300);
+  }
+
+  async function ensureNoteId(): Promise<string | null> {
+    if (!currentNoteId()) {
+      clearTimeout(state.draftTimer);
+      await persistDraft();
+    }
+    return currentNoteId();
   }
 
   async function persistDraft() {
@@ -567,6 +577,7 @@ export function createSessionController(
 
   return {
     currentNoteId,
+    ensureNoteId,
     currentComposerId,
     selectedId: () => state.editingId,
     editingId: () => state.editingId,

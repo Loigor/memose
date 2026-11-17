@@ -189,3 +189,40 @@ test("the selection can be removed to go back to the whole memo", async ({ page 
   await expect(bubble.locator(".ai-scope")).toHaveCount(0);
   await expect(bubble.locator(".ai-input")).toHaveAttribute("placeholder", /this memo/);
 });
+
+test("an offline-only memo asks before its text goes to a remote model", async ({ page }) => {
+  await openComposer(page, {
+    draft: { content: "private words", visibility: "OFFLINE_PRIVATE" },
+    settings: { visibility: "OFFLINE_PRIVATE" },
+    ai: {
+      llmEnabled: true,
+      llmBaseUrl: "https://api.example.com/v1",
+      llmModel: "big-model",
+      llmReply: "ok",
+      llmKind: "answer",
+    },
+  });
+  await page.locator("#ai-anchor .ai-toggle").click();
+  const bubble = page.locator("#card .ai-bubble");
+  await bubble.locator(".ai-chip", { hasText: "Summarize" }).click();
+  await expect(bubble.locator(".ai-foot")).toContainText("Send its text to api.example.com?");
+  expect(await invokedCmds(page)).not.toContain("llm_ask");
+  await bubble.locator(".ai-foot button", { hasText: "Cancel" }).click();
+  await bubble.locator(".ai-input").fill("Another prompt");
+  await page.keyboard.press("Enter");
+  await expect(bubble.locator(".ai-foot")).toContainText("Send its text to api.example.com?");
+  expect(await invokedCmds(page)).not.toContain("llm_ask");
+  await bubble.locator(".ai-foot button", { hasText: "Send" }).click();
+  await expect.poll(async () => invokedCmds(page)).toContain("llm_ask");
+  await expect(bubble.locator(".ai-answer")).toHaveText("ok");
+});
+
+test("a saved key can be removed in settings", async ({ page }) => {
+  await openSettings(page, { ai: { llmBaseUrl: "https://api.example.com/v1", hasLlmKey: true } });
+  await page.locator("#tab-models").click();
+  await expect(page.locator("#llm-key-hint")).toHaveText("A key is saved on this computer.");
+  await page.locator("#llm-key-remove").click();
+  await expect(page.locator("#settings-status")).toHaveText("Key removed.");
+  await expect(page.locator("#llm-key-remove")).toBeHidden();
+  await expect(page.locator("#llm-key-hint")).toContainText("No key saved");
+});

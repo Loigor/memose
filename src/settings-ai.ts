@@ -17,26 +17,6 @@ function required<T extends Element>(selector: string): T {
   return found;
 }
 
-const defaultPresets: AiPreset[] = [
-  {
-    name: "Summarize",
-    mode: "ask",
-    instruction: "Summarize the text in a few short bullet points. Use the language of the text.",
-  },
-  {
-    name: "Action items",
-    mode: "ask",
-    instruction:
-      "List the action items from the text as a markdown task list (`- [ ] item`). Name the owner and date when the text gives them. Use the language of the text.",
-  },
-  {
-    name: "Clean up wording",
-    mode: "edit",
-    instruction:
-      "Fix spelling, grammar, and punctuation. Keep the meaning, the structure, and the language. Change as little as possible.",
-  },
-];
-
 const modeChoices: { value: AiMode; label: string }[] = [
   { value: "ask", label: "Answer only" },
   { value: "edit", label: "Change the memo" },
@@ -49,11 +29,13 @@ export function initAiSettings(status: HTMLElement) {
   const where = required<HTMLElement>("#llm-where");
   const key = required<HTMLInputElement>("#llm-key");
   const keyHint = required<HTMLElement>("#llm-key-hint");
+  const removeKey = required<HTMLButtonElement>("#llm-key-remove");
   const model = required<HTMLInputElement>("#llm-model");
   const modelChoices = required<HTMLElement>("#llm-model-choices");
   const modelHint = required<HTMLElement>("#llm-model-hint");
   const presetsEl = required<HTMLElement>("#llm-presets");
   let presets: AiPreset[] = [];
+  let defaultPresets: AiPreset[] = [];
   let found: ModelList | null = null;
 
   const paintModels = () => {
@@ -150,6 +132,8 @@ export function initAiSettings(status: HTMLElement) {
       where.textContent = `Memo text is sent to ${settings.llmHost} when you run a prompt.`;
     }
     presets = settings.presets.map((preset) => ({ ...preset, mode: preset.mode ?? "auto" }));
+    defaultPresets = settings.defaultPresets ?? [];
+    removeKey.hidden = !settings.hasLlmKey;
     paintPresets();
     paintModels();
   };
@@ -213,6 +197,14 @@ export function initAiSettings(status: HTMLElement) {
       const count = list.models.length;
       return `Connected. ${count} ${count === 1 ? "model" : "models"} found.`;
     }, "Testing…");
+  });
+
+  removeKey.addEventListener("click", () => {
+    act(async () => {
+      await invoke("save_ai_settings", { llmKey: "" });
+      await load();
+      return "Key removed.";
+    });
   });
 
   required<HTMLButtonElement>("#llm-preset-add").addEventListener("click", () => {
