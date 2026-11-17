@@ -24,9 +24,45 @@ const CHAT_TIMEOUT: Duration = Duration::from_secs(180);
 const MODELS_TIMEOUT: Duration = Duration::from_secs(8);
 const MAX_PRESETS: usize = 12;
 
-const EDIT_RULES: &str = "Apply the instruction to the note the user sends. Reply with the complete resulting note only. Keep it as markdown when the note is markdown. Do not add an introduction, an explanation, or a surrounding code fence.";
-const ASK_RULES: &str = "Answer the instruction using the note the user sends. Do not rewrite the note. Be brief and direct, and use the language of the instruction.";
-const AUTO_RULES: &str = "The user sends an instruction and a note. Decide what the instruction needs.\n- If it asks to change the note (rewrite, fix, translate, format, shorten, extend, reorder), the first line of your reply is exactly EDIT and the following lines are the complete revised note.\n- If it asks about the note or asks for something that must not replace it (count, find, explain, summarize, list, give an opinion), the first line of your reply is exactly ANSWER and the following lines are the answer.\nWrite nothing before that first line. Do not wrap the reply in a code fence.";
+const ROLE: &str = "You are an assistant built into a note-taking app. The user is looking at a note and sends a request. Reply in the language of the request unless it asks for another one.";
+const ASK_RULES: &str = "Answer the request directly and briefly. Use the note as context. If the note does not hold the answer, use your general knowledge. Do not repeat or rewrite the note.";
+const CLASSIFY_RULES: &str = "A user of a note-taking app sends a request about their note. Decide whether the request asks to change the text of the note itself.\nYES: rewrite, fix, correct, translate, reformat, shorten, extend, sort, reorder, or add or remove something in the note.\nNO: a question, a count, an explanation, a summary, an opinion, a list of items taken from the note, or writing something new.\nReply with exactly one word: YES or NO.";
+const CLASSIFY_TIMEOUT: Duration = Duration::from_secs(30);
+const REVISED_OPEN: &str = "<revised>";
+const REVISED_CLOSE: &str = "</revised>";
+
+/// The part of the note a request can replace.
+fn subject(selected: bool) -> &'static str {
+    if selected {
+        "selected part"
+    } else {
+        "note"
+    }
+}
+
+fn system_prompt(mode: Mode, selected: bool) -> String {
+    let what = subject(selected);
+    let rules = match mode {
+        Mode::Ask => ASK_RULES.to_string(),
+        Mode::Edit => format!(
+            "The request asks you to change the {what}. Reply with the complete revised {what} and nothing else: no introduction, no explanation, no code fence. Keep the markdown formatting, and keep everything the request does not ask to change."
+        ),
+        // `Auto` is settled by `wants_edit` before the prompt is built.
+        Mode::Auto => ASK_RULES.to_string(),
+    };
+    format!("{ROLE}\n{rules}")
+}
+
+/// The note first and the request last, so the model answers the request instead of continuing the note.
+fn user_prompt(instruction: &str, text: &str, context: Option<&str>) -> String {
+    let request = instruction.trim();
+    match context {
+        Some(note) => format!(
+            "<note>\n{note}\n</note>\n\n<selected>\n{text}\n</selected>\n\nThe request is about the selected part of the note.\n\nRequest: {request}"
+        ),
+        None => format!("<note>\n{text}\n</note>\n\nRequest: {request}"),
+    }
+}
 
 /// What a prompt is for.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
@@ -75,8 +111,13 @@ pub struct ChatEntry {
     pub status: String,
     /// The answer, the proposed memo text, or the error.
     pub text: String,
-    /// Memo text that was sent. An edit is compared against it.
+    /// Memo text the prompt is about: the whole memo or the selected lines. An edit replaces it.
     pub source: String,
+    /// First and last memo line of a selection, counted from 1. Empty for the whole memo.
+    pub line_start: Option<u32>,
+    pub line_end: Option<u32>,
+    /// The prompt is about a selection, even when its lines could not be found.
+    pub selection: bool,
     pub started_at: i64,
     pub finished_at: Option<i64>,
 }
@@ -224,7 +265,56 @@ fn unreachable(err: &reqwest::Error) -> AppError {
     }
 }
 
-/// One chat-completions call. `Auto` lets the model say whether it answered or edited.
+/// Asks the model whether a request wants the note changed. One short call without the note.
+/// Any failure or unclear reply counts as no, so an `Auto` prompt never replaces the memo by accident.
+async fn wants_edit(
+    http: &reqwest::Client,
+    base: &str,
+    key: Option<&str>,
+    model: &str,
+    instruction: &str,
+) -> bool {
+    let body = json!({
+        "model": model,
+        "stream": false,
+        "temperature": 0,
+        "max_tokens": 3,
+        "messages": [
+            { "role": "system", "content": CLASSIFY_RULES },
+            { "role": "user", "content": format!("Request: {}\n\nDoes it ask to change the note's text? YES or NO.", instruction.trim()) },
+        ],
+    });
+    let request = http
+        .post(api_url(base, "chat/completions"))
+        .timeout(CLASSIFY_TIMEOUT)
+        .json(&body);
+    let Ok(response) = with_key(request, key).send().await else {
+        return false;
+    };
+    if !response.status().is_success() {
+        return false;
+    }
+    let Ok(payload) = response.json::<Value>().await else {
+        return false;
+    };
+    payload
+        .pointer("/choices/0/message/content")
+        .and_then(Value::as_str)
+        .is_some_and(says_yes)
+}
+
+fn says_yes(reply: &str) -> bool {
+    let word: String = clean_answer(reply, "")
+        .chars()
+        .skip_while(|ch| !ch.is_ascii_alphabetic())
+        .take_while(char::is_ascii_alphabetic)
+        .collect();
+    word.eq_ignore_ascii_case("yes")
+}
+
+/// One prompt. `Auto` first asks the model whether the request is an edit.
+/// `text` is what the request is about: the whole note, or the selected part with the whole note as `context`.
+#[allow(clippy::too_many_arguments)]
 pub async fn ask(
     http: &reqwest::Client,
     base: &str,
@@ -233,18 +323,19 @@ pub async fn ask(
     mode: Mode,
     instruction: &str,
     text: &str,
+    context: Option<&str>,
 ) -> Result<Reply, AppError> {
-    let rules = match mode {
-        Mode::Auto => AUTO_RULES,
-        Mode::Ask => ASK_RULES,
-        Mode::Edit => EDIT_RULES,
+    let mode = match mode {
+        Mode::Auto if wants_edit(http, base, key, model, instruction).await => Mode::Edit,
+        Mode::Auto => Mode::Ask,
+        fixed => fixed,
     };
     let body = json!({
         "model": model,
         "stream": false,
         "messages": [
-            { "role": "system", "content": rules },
-            { "role": "user", "content": format!("Instruction: {}\n\nNote:\n{text}", instruction.trim()) },
+            { "role": "system", "content": system_prompt(mode, context.is_some()) },
+            { "role": "user", "content": user_prompt(instruction, text, context) },
         ],
     });
     let request = http
@@ -273,26 +364,26 @@ pub async fn ask(
     Ok(reply)
 }
 
+/// Text between the revised markers. A missing closing marker takes the rest.
+fn revised_block(text: &str) -> Option<&str> {
+    let after = text.split_once(REVISED_OPEN)?.1;
+    Some(
+        after
+            .split_once(REVISED_CLOSE)
+            .map_or(after, |(inner, _)| inner),
+    )
+}
+
 /// Sorts the model's text into an answer or an edit.
-/// In `Auto`, a reply without the marker line is an answer, so the memo is never replaced by accident.
+/// An edit may come wrapped in the revised markers. `Auto` is settled before this and counts as an answer.
 pub fn read_reply(mode: Mode, raw: &str, source: &str) -> Reply {
     let cleaned = clean_answer(raw, source);
-    let (kind, body) = match mode {
-        Mode::Ask => (ReplyKind::Answer, cleaned.as_str()),
-        Mode::Edit => (ReplyKind::Edit, cleaned.as_str()),
-        Mode::Auto => {
-            let (first, rest) = cleaned.split_once('\n').unwrap_or((cleaned.as_str(), ""));
-            let marker: String = first
-                .chars()
-                .filter(char::is_ascii_alphabetic)
-                .collect::<String>()
-                .to_ascii_uppercase();
-            match marker.as_str() {
-                "EDIT" => (ReplyKind::Edit, rest),
-                "ANSWER" => (ReplyKind::Answer, rest),
-                _ => (ReplyKind::Answer, cleaned.as_str()),
-            }
-        }
+    let block = revised_block(&cleaned);
+    let (kind, body) = match (mode, block) {
+        (Mode::Ask, _) => (ReplyKind::Answer, cleaned.as_str()),
+        (Mode::Edit, Some(inner)) | (Mode::Auto, Some(inner)) => (ReplyKind::Edit, inner),
+        (Mode::Edit, None) => (ReplyKind::Edit, cleaned.as_str()),
+        (Mode::Auto, None) => (ReplyKind::Answer, cleaned.as_str()),
     };
     let text = if kind == ReplyKind::Edit {
         clean_answer(body, source)
@@ -467,36 +558,37 @@ mod tests {
     }
 
     #[test]
-    fn auto_reply_is_sorted_by_its_first_line() {
-        let edit = read_reply(Mode::Auto, "EDIT\nHello there.", "hello there");
-        assert_eq!(edit.kind, ReplyKind::Edit);
-        assert_eq!(edit.text, "Hello there.");
-        let answer = read_reply(
-            Mode::Auto,
-            "**ANSWER:**\nThere are 3 tasks.",
-            "- a\n- b\n- c",
-        );
-        assert_eq!(answer.kind, ReplyKind::Answer);
-        assert_eq!(answer.text, "There are 3 tasks.");
-        let fenced = read_reply(Mode::Auto, "EDIT\n```markdown\n- one\n```", "one");
-        assert_eq!(fenced.text, "- one");
+    fn only_a_clear_yes_makes_an_auto_prompt_an_edit() {
+        assert!(says_yes("YES"));
+        assert!(says_yes(" **Yes.**"));
+        assert!(says_yes("<think>fix is a change</think>yes"));
+        assert!(!says_yes("NO"));
+        assert!(!says_yes("Yesterday"));
+        assert!(!says_yes("count"));
+        assert!(!says_yes(""));
     }
 
     #[test]
-    fn auto_reply_without_a_marker_never_replaces_the_memo() {
-        let reply = read_reply(Mode::Auto, "There are 3 tasks.", "- a\n- b\n- c");
-        assert_eq!(reply.kind, ReplyKind::Answer);
-        assert_eq!(reply.text, "There are 3 tasks.");
-    }
-
-    #[test]
-    fn a_fixed_mode_ignores_marker_words() {
-        let asked = read_reply(Mode::Ask, "EDIT\nis a word in the note.", "note");
+    fn a_fixed_mode_decides_the_kind() {
+        let asked = read_reply(Mode::Ask, "It says <revised> once.", "note");
         assert_eq!(asked.kind, ReplyKind::Answer);
-        assert_eq!(asked.text, "EDIT\nis a word in the note.");
         let edited = read_reply(Mode::Edit, "Answer the phone.", "answer teh phone");
         assert_eq!(edited.kind, ReplyKind::Edit);
         assert_eq!(edited.text, "Answer the phone.");
+        let tagged = read_reply(Mode::Edit, "<revised>\nFixed.\n</revised>", "fixd");
+        assert_eq!(tagged.text, "Fixed.");
+    }
+
+    #[test]
+    fn the_request_comes_after_the_note() {
+        let whole = user_prompt(" How many tasks? ", "- a\n- b", None);
+        assert!(whole.starts_with("<note>\n- a\n- b\n</note>"));
+        assert!(whole.ends_with("Request: How many tasks?"));
+        let part = user_prompt("Fix it", "- b", Some("- a\n- b"));
+        assert!(part.contains("<selected>\n- b\n</selected>"));
+        assert!(part.ends_with("Request: Fix it"));
+        assert!(system_prompt(Mode::Edit, true).contains("revised selected part"));
+        assert!(system_prompt(Mode::Ask, false).contains("Do not repeat or rewrite the note"));
     }
 
     #[test]

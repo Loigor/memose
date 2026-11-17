@@ -1108,6 +1108,9 @@ pub async fn llm_ask(
     instruction: String,
     mode: llm::Mode,
     text: String,
+    context: Option<String>,
+    line_start: Option<u32>,
+    line_end: Option<u32>,
 ) -> Result<llm::ChatEntry, AppError> {
     if state.db.get_meta(llm::LLM_ENABLED)?.as_deref() != Some("1") {
         return Err(AppError::Message("model prompts are turned off".into()));
@@ -1139,6 +1142,9 @@ pub async fn llm_ask(
         status: llm::RUNNING.into(),
         text: String::new(),
         source: text.clone(),
+        line_start,
+        line_end,
+        selection: context.is_some(),
         started_at: now_ms(),
         finished_at: None,
     };
@@ -1159,7 +1165,7 @@ pub async fn llm_ask(
     let _ = app.emit("llm-changed", &note_id);
     let http = state.http.clone();
     let result = tokio::select! {
-        reply = llm::ask(&http, &base, key.as_deref(), &model, mode, &instruction, &text) => reply.map(Some),
+        reply = llm::ask(&http, &base, key.as_deref(), &model, mode, &instruction, &text, context.as_deref()) => reply.map(Some),
         _ = cancel_rx => Ok(None),
     };
     state

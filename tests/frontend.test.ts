@@ -26,11 +26,14 @@ import {
 } from "../src/editor/code-fold.ts";
 import {
   applyHunks,
+  applyToBlock,
   byteLength,
   diffLines,
   formatKilobytes,
   hunksOf,
   isProtectedLine,
+  locateBlock,
+  resolveSelection,
   splitProtected,
 } from "../src/editor/line-diff.ts";
 import { highlightMarkdown } from "../src/editor/md-highlight.ts";
@@ -1192,4 +1195,39 @@ test("memo size is measured in bytes like the server does", () => {
   assert.equal(byteLength("ääkkönen"), 11);
   assert.equal(formatKilobytes(8192), "8 KB");
   assert.equal(formatKilobytes(9318), "9.1 KB");
+});
+
+test("a selection is found in the memo by its lines, with or without markdown marks", () => {
+  const memo = [
+    "# Trip plan",
+    "- [ ] book **the** flights",
+    "![a](memose-media/a.png)",
+    "- [x] hotel",
+    "",
+    "Budget is 1200",
+  ].join("\n");
+  assert.deepEqual(resolveSelection(memo, "- [ ] book **the** flights\n- [x] hotel"), { start: 1, end: 3 });
+  assert.deepEqual(resolveSelection(memo, "the flights\nhotel\nBudget"), { start: 1, end: 5 });
+  assert.deepEqual(resolveSelection(memo, "1200"), { start: 5, end: 5 });
+  assert.equal(resolveSelection(memo, "not in the memo"), null);
+  assert.equal(resolveSelection("same\nsame", "same"), null);
+  assert.equal(resolveSelection(memo, "  \n"), null);
+});
+
+test("an edit of selected lines replaces only those lines", () => {
+  const { lines, kept } = splitProtected(
+    ["intro", "teh one", "![a](memose-media/a.png)", "teh two", "outro"].join("\n"),
+    isProtectedLine,
+  );
+  const block = ["teh one", "teh two"];
+  const at = locateBlock(lines, block, 1);
+  assert.equal(at, 1);
+  const parts = diffLines(block, ["the one", "the two"]);
+  const all = new Set(hunksOf(parts).map((hunk) => hunk.id));
+  assert.equal(
+    applyToBlock(lines, at, block.length, parts, all, kept),
+    ["intro", "the one", "the two", "![a](memose-media/a.png)", "outro"].join("\n"),
+  );
+  assert.equal(locateBlock(["a", "b", "a", "b"], ["a", "b"], 3), 2);
+  assert.equal(locateBlock(lines, ["gone"]), -1);
 });

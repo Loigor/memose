@@ -178,3 +178,101 @@ export function isProtectedLine(line: string): boolean {
   const trimmed = line.trim();
   return mediaLine.test(trimmed) || speechMarker.test(trimmed);
 }
+
+/** Lines of the memo that a selection covers, counted from 0 over all memo lines. */
+export type LineRange = {
+  start: number;
+  end: number;
+};
+
+/** A line without markdown marks and spacing, to compare editor, preview, and source text. */
+function plainLine(line: string): string {
+  return line
+    .replace(/^\s*(?:[-*+]|\d+[.)])\s+(?:\[[ xX]\]\s*)?/, "")
+    .replace(/^\s*(?:#{1,6}|>)\s*/, "")
+    .replace(/!?\[([^\]]*)\]\([^)]*\)/g, "$1")
+    .replace(/[*_~`]/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+/**
+ * Finds which memo lines hold the selected text. The selection may come from the editor or
+ * from the rendered preview, so lines are compared without markdown marks. The first and
+ * last selected lines may be partial. Returns null when the place is missing or not unique.
+ */
+export function resolveSelection(memo: string, selected: string): LineRange | null {
+  const lines = splitLines(memo);
+  const wanted = splitLines(selected)
+    .map(plainLine)
+    .filter((line) => line !== "");
+  if (wanted.length === 0) {
+    return null;
+  }
+  const plain = lines.map((line) => (isProtectedLine(line) ? "" : plainLine(line)));
+  const matches: LineRange[] = [];
+  for (let start = 0; start < plain.length; start += 1) {
+    if (plain[start] === "") {
+      continue;
+    }
+    const firstFits = wanted.length === 1 ? plain[start].includes(wanted[0]) : plain[start].endsWith(wanted[0]);
+    if (!firstFits) {
+      continue;
+    }
+    let at = start;
+    let ok = true;
+    for (let i = 1; i < wanted.length; i += 1) {
+      at += 1;
+      while (at < plain.length && plain[at] === "") {
+        at += 1;
+      }
+      const last = i === wanted.length - 1;
+      if (at >= plain.length || (last ? !plain[at].startsWith(wanted[i]) : plain[at] !== wanted[i])) {
+        ok = false;
+        break;
+      }
+    }
+    if (ok) {
+      matches.push({ start, end: at });
+    }
+  }
+  return matches.length === 1 ? matches[0] : null;
+}
+
+/** Where `block` sits in `lines` as a run of equal lines. The match nearest to `near` wins. */
+export function locateBlock(lines: string[], block: string[], near = 0): number {
+  if (block.length === 0 || block.length > lines.length) {
+    return -1;
+  }
+  let best = -1;
+  for (let at = 0; at + block.length <= lines.length; at += 1) {
+    let same = true;
+    for (let i = 0; i < block.length; i += 1) {
+      if (lines[at + i] !== block[i]) {
+        same = false;
+        break;
+      }
+    }
+    if (same && (best < 0 || Math.abs(at - near) < Math.abs(best - near))) {
+      best = at;
+    }
+  }
+  return best;
+}
+
+/** Applies accepted changes of a diff that covers only `length` lines starting at `at`. */
+export function applyToBlock(
+  lines: string[],
+  at: number,
+  length: number,
+  parts: DiffPart[],
+  accepted: ReadonlySet<number>,
+  kept: KeptLine[] = [],
+): string {
+  const whole: DiffPart[] = [
+    { kind: "same", lines: lines.slice(0, at) },
+    ...parts,
+    { kind: "same", lines: lines.slice(at + length) },
+  ];
+  return applyHunks(whole, accepted, kept);
+}

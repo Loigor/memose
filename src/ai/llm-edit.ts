@@ -4,15 +4,18 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 
 import {
-  applyHunks,
+  applyToBlock,
   byteLength,
   diffLines,
   formatKilobytes,
   hunksOf,
   isProtectedLine,
+  locateBlock,
+  resolveSelection,
   splitLines,
   splitProtected,
   type DiffPart,
+  type LineRange,
 } from "../editor/line-diff";
 import { isOfflinePrivate } from "../look/visibility";
 
@@ -44,6 +47,9 @@ export type ChatEntry = {
   status: "running" | "answer" | "edit" | "applied" | "dismissed" | "error" | "cancelled";
   text: string;
   source: string;
+  lineStart: number | null;
+  lineEnd: number | null;
+  selection: boolean;
   startedAt: number;
   finishedAt: number | null;
 };
@@ -59,6 +65,8 @@ export type LlmTarget = {
   /** Replaces the memo text as one undo step. */
   replace(next: string): void;
   visibility(): string | null;
+  /** Editor and preview boxes. Text selected inside them can be sent as the source of a prompt. */
+  selectionRoots(): HTMLElement[];
   /** Called when the AI button appears or disappears, so the header can be laid out again. */
   onAvailability?(): void;
 };
@@ -124,6 +132,24 @@ function seconds(from: number, to: number): string {
   return total < 60 ? `${total} s` : `${Math.floor(total / 60)} min ${total % 60} s`;
 }
 
+type Picked = {
+  text: string;
+  /** Memo lines of the selection, or null when its place in the memo is not clear. */
+  range: LineRange | null;
+};
+
+type ModelList = {
+  models: string[];
+  ollama: boolean;
+};
+
+function scopeLabel(start: number | null, end: number | null): string {
+  if (start == null || end == null) {
+    return "Selected text";
+  }
+  return start === end ? `Line ${start}` : `Lines ${start}–${end}`;
+}
+
 type Decisions = {
   accepted: Set<number>;
   decided: Set<number>;
@@ -152,6 +178,9 @@ export function mountLlmBubble(anchor: HTMLElement, target: LlmTarget): { close(
   let draftInstruction = "";
   let draftMode: AiMode = "auto";
   let notice = "";
+  let picked: Picked | null = null;
+  let menuEl: HTMLElement | null = null;
+  let presetWatch: ResizeObserver | null = null;
   const seen = new Set<string>();
   const asEdit = new Set<string>();
   const decisions = new Map<string, Decisions>();
@@ -268,15 +297,21 @@ export function mountLlmBubble(anchor: HTMLElement, target: LlmTarget): { close(
 
     const finish = () => {
       const current = sourceNow();
-      if (current.lines.join("\n") !== entry.source) {
+      const at = locateBlock(current.lines, before, entry.lineStart ? entry.lineStart - 1 : 0);
+      if (at < 0) {
         notice = "The memo changed after this prompt was sent, so nothing was applied. Run the prompt again.";
         decisions.delete(entry.id);
-        void invoke("llm_mark", { noteId: entry.noteId, requestId: entry.id, status: "dismissed" });
+        asEdit.delete(entry.id);
+        if (entry.status === "edit") {
+          void invoke("llm_mark", { noteId: entry.noteId, requestId: entry.id, status: "dismissed" });
+        } else {
+          paintLog(false);
+        }
         return;
       }
       const status = accepted.size > 0 ? "applied" : "dismissed";
       if (accepted.size > 0) {
-        target.replace(applyHunks(parts, accepted, current.kept));
+        target.replace(applyToBlock(current.lines, at, before.length, parts, accepted, current.kept));
       }
       decisions.delete(entry.id);
       asEdit.delete(entry.id);
@@ -306,7 +341,10 @@ export function mountLlmBubble(anchor: HTMLElement, target: LlmTarget): { close(
     );
     box.append(bar);
 
-    const size = byteLength(applyHunks(parts, new Set(all.map((hunk) => hunk.id)), sourceNow().kept));
+    const now = sourceNow();
+    const place = Math.max(0, locateBlock(now.lines, before, entry.lineStart ? entry.lineStart - 1 : 0));
+    const everything = new Set(all.map((hunk) => hunk.id));
+    const size = byteLength(applyToBlock(now.lines, place, before.length, parts, everything, now.kept));
     if (contentLimit > 0 && size > contentLimit) {
       box.append(
         el(
@@ -384,21 +422,21 @@ export function mountLlmBubble(anchor: HTMLElement, target: LlmTarget): { close(
     }
     if (entry.status === "answer") {
       body.append(el("div", "ai-answer", entry.text));
-      const actions = el("div", "ai-actions");
-      const copy = button("", "Copy", () => {
+      const actions = el("div", "ai-links");
+      const copy = button("ai-link", "Copy", () => {
         void navigator.clipboard?.writeText(entry.text).then(() => {
           copy.textContent = "Copied";
         });
       });
       actions.append(
         copy,
-        button("", "Add to memo", () => {
+        button("ai-link", "Add to memo", () => {
           const current = target.text().replace(/\s+$/, "");
           target.replace(current === "" ? entry.text : `${current}\n\n${entry.text}`);
           notice = "Added to the end of the memo.";
           paintLog(false);
         }),
-        button("", "Replace memo…", () => {
+        button("ai-link", entry.lineStart ? "Replace selection…" : "Replace memo…", () => {
           asEdit.add(entry.id);
           paintLog(false);
         }),
@@ -442,6 +480,9 @@ export function mountLlmBubble(anchor: HTMLElement, target: LlmTarget): { close(
       item.dataset.status = entry.status;
       const question = el("div", "ai-q");
       question.append(el("span", "ai-q-text", entry.instruction));
+      if (entry.selection) {
+        question.append(el("span", "ai-tag", scopeLabel(entry.lineStart, entry.lineEnd)));
+      }
       if (entry.mode !== "auto") {
         question.append(el("span", "ai-tag", modeNames[entry.mode]));
       }
@@ -477,7 +518,25 @@ export function mountLlmBubble(anchor: HTMLElement, target: LlmTarget): { close(
     }
     pendingConsent = null;
     notice = "";
-    const source = sourceNow().lines.join("\n");
+    const whole = sourceNow().lines.join("\n");
+    let source = whole;
+    let context: string | null = null;
+    let request = text;
+    let lineStart: number | null = null;
+    let lineEnd: number | null = null;
+    if (picked?.range) {
+      const { start, end } = picked.range;
+      const lines = splitLines(target.text())
+        .slice(start, end + 1)
+        .filter((line) => !isProtectedLine(line));
+      source = lines.join("\n");
+      context = whole;
+      lineStart = start + 1;
+      lineEnd = end + 1;
+    } else if (picked) {
+      // The place of the selection is unclear, so the whole memo is the source and the selection is a hint.
+      request = `${text}\n\nThe request is about this part of the note:\n${picked.text}`;
+    }
     if (source.trim() === "") {
       notice = "This memo has no text to send.";
       paintLog(true);
@@ -490,9 +549,12 @@ export function mountLlmBubble(anchor: HTMLElement, target: LlmTarget): { close(
       requestId,
       noteId: noteKey(),
       title: target.title(),
-      instruction: text,
+      instruction: request,
       mode,
       text: source,
+      context,
+      lineStart,
+      lineEnd,
     }).catch((error: unknown) => {
       notice = String(error);
       if (isOpen()) {
@@ -507,6 +569,7 @@ export function mountLlmBubble(anchor: HTMLElement, target: LlmTarget): { close(
     if (!footEl) {
       return;
     }
+    closeMenu();
     footEl.replaceChildren();
     const current = settings;
     if (!current) {
@@ -537,18 +600,54 @@ export function mountLlmBubble(anchor: HTMLElement, target: LlmTarget): { close(
       return;
     }
     if (current.presets.length > 0) {
-      const chips = el("div", "ai-presets");
-      for (const preset of current.presets) {
-        const chip = button("ai-chip", preset.name, () => send(preset.instruction, preset.mode));
-        chip.title = `${modeNames[preset.mode]}: ${preset.instruction}`;
-        chips.append(chip);
-      }
-      footEl.append(chips);
+      footEl.append(presetRow(current.presets));
     }
-    const form = el("form", "ai-ask");
+    const form = el("form", "ai-composer");
+    if (picked) {
+      const scope = el("div", "ai-scope");
+      const label = picked.range ? scopeLabel(picked.range.start + 1, picked.range.end + 1) : "Selected text";
+      const preview = picked.text.replace(/\s+/g, " ").trim();
+      scope.append(
+        el("span", "ai-scope-label", label),
+        el("span", "ai-scope-text", preview.length > 60 ? `${preview.slice(0, 60)}…` : preview),
+        button("ai-scope-clear", "×", () => {
+          picked = null;
+          paintFoot();
+        }),
+      );
+      scope.title = "The prompt is about the selected text. Remove it to use the whole memo.";
+      scope.querySelector(".ai-scope-clear")?.setAttribute("aria-label", "Use the whole memo");
+      form.append(scope);
+    }
+    const input = el("textarea", "ai-input");
+    input.rows = 2;
+    input.placeholder = picked
+      ? "Ask about the selection, or ask for a change…"
+      : "Ask about this memo, or ask for a change…";
+    input.setAttribute("aria-label", "Prompt");
+    input.value = draftInstruction;
+    const fit = () => {
+      input.style.height = "auto";
+      input.style.height = `${Math.min(input.scrollHeight, 120)}px`;
+    };
+    input.addEventListener("input", () => {
+      draftInstruction = input.value;
+      fit();
+    });
+    input.addEventListener("keydown", (event) => {
+      if (event.key === "Escape") {
+        return;
+      }
+      event.stopPropagation();
+      if (event.key === "Enter" && !event.shiftKey && !event.isComposing) {
+        event.preventDefault();
+        form.requestSubmit();
+      }
+    });
+    const bar = el("div", "ai-composer-bar");
     const mode = el("select", "ai-mode");
     mode.setAttribute("aria-label", "What the prompt is for");
-    mode.title = "Auto lets the model decide. Ask never changes the memo. Edit proposes changes to it.";
+    mode.title = "Auto decides from your prompt. Ask never changes the memo. Edit proposes changes to it.";
     for (const value of ["auto", "ask", "edit"] as const) {
       const option = el("option", "", modeNames[value]);
       option.value = value;
@@ -558,50 +657,154 @@ export function mountLlmBubble(anchor: HTMLElement, target: LlmTarget): { close(
     mode.addEventListener("change", () => {
       draftMode = mode.value as AiMode;
     });
-    const input = el("textarea", "ai-input");
-    input.rows = 1;
-    input.placeholder = "Ask about this memo, or ask for a change…";
-    input.setAttribute("aria-label", "Prompt");
-    input.value = draftInstruction;
-    const fit = () => {
-      input.style.height = "auto";
-      input.style.height = `${Math.min(input.scrollHeight, 96)}px`;
-    };
-    input.addEventListener("input", () => {
-      draftInstruction = input.value;
-      fit();
-    });
-    input.addEventListener("keydown", (event) => {
-      event.stopPropagation();
-      if (event.key === "Escape") {
-        close();
-      } else if (event.key === "Enter" && !event.shiftKey && !event.isComposing) {
-        event.preventDefault();
-        form.requestSubmit();
+    const model = button("ai-model", current.llmModel, () => {
+      if (menuEl) {
+        closeMenu();
+        return;
       }
+      const menu = openMenu(model, "left");
+      menu.append(el("p", "ai-menu-note", "Loading models…"));
+      void invoke<ModelList>("llm_models").then(
+        (found) => {
+          if (menuEl !== menu) {
+            return;
+          }
+          menu.replaceChildren();
+          if (found.models.length === 0) {
+            menu.append(el("p", "ai-menu-note", "The server lists no models."));
+          }
+          for (const id of found.models) {
+            const item = button("", id, () => {
+              closeMenu();
+              void invoke("save_ai_settings", { llmModel: id });
+            });
+            item.setAttribute("aria-pressed", String(id === current.llmModel));
+            menu.append(item);
+          }
+        },
+        (error: unknown) => {
+          if (menuEl === menu) {
+            menu.replaceChildren(el("p", "ai-menu-note", String(error)));
+          }
+        },
+      );
     });
-    const submit = el("button", "ai-primary", "Send");
+    model.title = current.llmLocal
+      ? `${current.llmModel} on this computer. Click to change the model.`
+      : `${current.llmModel} at ${current.llmHost}. The memo text is sent there. Click to change the model.`;
+    const where = el("span", "ai-where", current.llmLocal ? "local" : current.llmHost);
+    const submit = el("button", "ai-send", "↑");
     submit.type = "submit";
-    form.append(mode, input, submit);
+    submit.title = "Send (Enter)";
+    submit.setAttribute("aria-label", "Send");
+    bar.append(mode, model, where, submit);
+    form.append(input, bar);
     form.addEventListener("submit", (event) => {
       event.preventDefault();
       send(input.value, draftMode);
     });
+    form.addEventListener("mousedown", (event) => {
+      if (event.target === form || event.target === bar) {
+        event.preventDefault();
+        input.focus();
+      }
+    });
     footEl.append(form);
-    const where = current.llmLocal
-      ? `${current.llmModel} on this computer`
-      : `${current.llmModel} at ${current.llmHost}. The memo text is sent there.`;
-    footEl.append(el("p", "ai-where", where));
     requestAnimationFrame(() => {
       fit();
       input.focus();
     });
   }
 
+  function closeMenu() {
+    menuEl?.remove();
+    menuEl = null;
+  }
+
+  /** A small list that opens upward from `from`, inside the bubble. */
+  function openMenu(from: HTMLElement, side: "left" | "right"): HTMLElement {
+    closeMenu();
+    const menu = el("div", "ai-menu");
+    menuEl = menu;
+    if (bubble) {
+      const box = bubble.getBoundingClientRect();
+      const at = from.getBoundingClientRect();
+      menu.style.bottom = `${box.bottom - at.top + 4}px`;
+      if (side === "left") {
+        menu.style.left = `${Math.max(8, at.left - box.left)}px`;
+      } else {
+        menu.style.right = `${Math.max(8, box.right - at.right)}px`;
+      }
+      menu.style.maxHeight = `${Math.max(60, at.top - box.top - 12)}px`;
+      bubble.append(menu);
+    }
+    return menu;
+  }
+
+  /** Presets on one row. Those that do not fit move behind a "More…" button. */
+  function presetRow(presets: AiPreset[]): HTMLElement {
+    const row = el("div", "ai-presets");
+    const chips = presets.map((preset) => {
+      const chip = button("ai-chip", preset.name, () => send(preset.instruction, preset.mode));
+      chip.title = `${modeNames[preset.mode]}: ${preset.instruction}`;
+      return chip;
+    });
+    let hiddenFrom = presets.length;
+    const more = button("ai-chip ai-more", "More…", () => {
+      if (menuEl) {
+        closeMenu();
+        return;
+      }
+      const menu = openMenu(more, "right");
+      for (const preset of presets.slice(hiddenFrom)) {
+        const item = button("", preset.name, () => {
+          closeMenu();
+          send(preset.instruction, preset.mode);
+        });
+        item.title = preset.instruction;
+        menu.append(item);
+      }
+    });
+    row.append(...chips, more);
+    const layout = () => {
+      for (const chip of chips) {
+        chip.hidden = false;
+      }
+      more.hidden = false;
+      const gap = 4;
+      const room = row.clientWidth;
+      const widths = chips.map((chip) => chip.offsetWidth);
+      const total = widths.reduce((sum, width) => sum + width + gap, -gap);
+      if (room <= 0 || total <= room) {
+        more.hidden = true;
+        hiddenFrom = presets.length;
+        return;
+      }
+      let used = more.offsetWidth;
+      hiddenFrom = 0;
+      for (let i = 0; i < chips.length; i += 1) {
+        if (used + gap + widths[i] > room) {
+          break;
+        }
+        used += gap + widths[i];
+        hiddenFrom = i + 1;
+      }
+      chips.forEach((chip, index) => {
+        chip.hidden = index >= hiddenFrom;
+      });
+    };
+    presetWatch?.disconnect();
+    presetWatch = new ResizeObserver(layout);
+    presetWatch.observe(row);
+    requestAnimationFrame(layout);
+    return row;
+  }
+
   function open() {
     if (bubble || anchor.hidden) {
       return;
     }
+    float.hidden = true;
     bubble = el("section", "ai-bubble");
     bubble.setAttribute("role", "dialog");
     bubble.setAttribute("aria-label", "AI prompt");
@@ -649,9 +852,138 @@ export function mountLlmBubble(anchor: HTMLElement, target: LlmTarget): { close(
     jobsEl = null;
     footEl = null;
     noteEl = null;
+    menuEl = null;
+    presetWatch?.disconnect();
+    presetWatch = null;
     pendingConsent = null;
+    picked = null;
     paintButton();
   }
+
+  // --- Selected text as the source of a prompt ---
+
+  const float = button("ai-float", "AI", () => {
+    const found = selectedText();
+    if (!found) {
+      hideFloat();
+      return;
+    }
+    picked = { text: found.text, range: resolveSelection(target.text(), found.text) };
+    hideFloat();
+    if (isOpen()) {
+      paintFoot();
+    } else {
+      open();
+    }
+  });
+  float.hidden = true;
+  float.title = "Ask the model about the selection";
+  float.setAttribute("aria-label", "Ask the model about the selection");
+  float.addEventListener("mousedown", (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+  });
+  target.host.append(float);
+  let pointer = { x: 0, y: 0 };
+  let floatTimer: number | undefined;
+
+  function hideFloat() {
+    float.hidden = true;
+  }
+
+  function selectedText(): { text: string; rect: DOMRect | null } | null {
+    const roots = target.selectionRoots();
+    const active = document.activeElement;
+    if (active instanceof HTMLTextAreaElement && roots.some((root) => root.contains(active))) {
+      const start = active.selectionStart ?? 0;
+      const end = active.selectionEnd ?? 0;
+      const text = active.value.slice(Math.min(start, end), Math.max(start, end));
+      return text.trim().length > 1 ? { text, rect: null } : null;
+    }
+    const selection = window.getSelection();
+    if (!selection || selection.isCollapsed || selection.rangeCount === 0) {
+      return null;
+    }
+    const range = selection.getRangeAt(0);
+    const within = roots.some((root) => root.contains(range.commonAncestorContainer));
+    const text = selection.toString();
+    if (!within || text.trim().length <= 1) {
+      return null;
+    }
+    const rects = range.getClientRects();
+    return { text, rect: rects.length > 0 ? rects[rects.length - 1] : range.getBoundingClientRect() };
+  }
+
+  function placeFloat() {
+    if (anchor.hidden || isOpen()) {
+      hideFloat();
+      return;
+    }
+    const found = selectedText();
+    if (!found) {
+      hideFloat();
+      return;
+    }
+    const host = target.host.getBoundingClientRect();
+    const header = target.host.querySelector<HTMLElement>(":scope > header");
+    const top = (header?.offsetHeight ?? 36) + 2;
+    const x = (found.rect ? found.rect.right : pointer.x) - host.left + 6;
+    const y = (found.rect ? found.rect.top : pointer.y - 12) - host.top - 2;
+    float.hidden = false;
+    float.style.left = `${Math.max(4, Math.min(x, host.width - float.offsetWidth - 6))}px`;
+    float.style.top = `${Math.max(top, Math.min(y, host.height - float.offsetHeight - 6))}px`;
+  }
+
+  function scheduleFloat() {
+    window.clearTimeout(floatTimer);
+    floatTimer = window.setTimeout(placeFloat, 140);
+  }
+
+  document.addEventListener("selectionchange", scheduleFloat);
+  document.addEventListener("mouseup", (event) => {
+    pointer = { x: event.clientX, y: event.clientY };
+    scheduleFloat();
+  });
+  document.addEventListener("keyup", (event) => {
+    if (event.shiftKey || event.key.startsWith("Arrow")) {
+      scheduleFloat();
+    }
+  });
+
+  // Escape closes the bubble before anything else in the memo reacts to it.
+  window.addEventListener(
+    "keydown",
+    (event) => {
+      if (event.key !== "Escape" || !isOpen()) {
+        return;
+      }
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      if (menuEl) {
+        closeMenu();
+      } else {
+        close();
+      }
+    },
+    true,
+  );
+  // A click on the memo outside the bubble closes it.
+  document.addEventListener(
+    "mousedown",
+    (event) => {
+      const hit = event.target;
+      if (!(hit instanceof Node)) {
+        return;
+      }
+      if (menuEl && !menuEl.contains(hit) && !(hit instanceof Element && hit.closest(".ai-model, .ai-more"))) {
+        closeMenu();
+      }
+      if (isOpen() && !bubble?.contains(hit) && !anchor.contains(hit) && !float.contains(hit)) {
+        close();
+      }
+    },
+    true,
+  );
 
   toggleEl.addEventListener("mousedown", (event) => {
     event.preventDefault();

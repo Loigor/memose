@@ -96,6 +96,7 @@ if (aiAnchor && !isPreviewWindow()) {
     text: () => editorController.content(),
     replace: (next) => editorController.replaceContent(next),
     visibility: () => appState.audience.visibility || null,
+    selectionRoots: () => [blocksEl, appContext.dom.preview],
     onAvailability: () => stack.syncHeader(),
   });
 }

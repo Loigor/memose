@@ -336,6 +336,27 @@ button:hover {
   min-height: 64px;
 }
 
+/*
+ * AI color scheme. Every AI surface takes its colors from these, and they are
+ * derived from the memo theme: the paper and ink shifted toward one tint.
+ */
+#card,
+.stack-note {
+  --ai-tint: #7a5cf0;
+  --ai-accent: color-mix(in srgb, var(--ink) 38%, var(--ai-tint));
+  --ai-paper: color-mix(in srgb, var(--paper) 91%, var(--ai-tint));
+  --ai-bg: color-mix(in srgb, var(--ai-paper) 84%, transparent);
+  --ai-surface: color-mix(in srgb, var(--paper) 72%, transparent);
+  --ai-soft: color-mix(in srgb, var(--ai-tint) 13%, transparent);
+  --ai-line: color-mix(in srgb, var(--ai-accent) 26%, transparent);
+  --ai-ink: var(--ink);
+  --ai-muted: color-mix(in srgb, var(--ink) 58%, transparent);
+  --ai-answer-ink: color-mix(in srgb, var(--ink) 82%, var(--ai-tint));
+  --ai-answer-bg: color-mix(in srgb, var(--ai-tint) 8%, transparent);
+  --ai-removed: color-mix(in srgb, #d33 18%, transparent);
+  --ai-added: color-mix(in srgb, #2a2 18%, transparent);
+}
+
 /* AI prompt bubble: floats over the memo it belongs to. */
 .ai-bubble {
   position: absolute;
@@ -347,34 +368,38 @@ button:hover {
   flex-direction: column;
   width: min(420px, calc(100% - 16px));
   max-height: calc(100% - var(--ai-top, 38px) - 8px);
-  border: 1px solid var(--line);
+  border: 1px solid var(--ai-line);
   border-radius: 14px;
-  background: var(--paper);
+  background: var(--ai-bg);
+  -webkit-backdrop-filter: blur(16px) saturate(1.3);
+  backdrop-filter: blur(16px) saturate(1.3);
   box-shadow: 0 12px 28px var(--shadow);
-  color: var(--ink);
+  color: var(--ai-ink);
   font-family: system-ui, sans-serif;
   font-size: 12px;
   line-height: 1.4;
   overflow: hidden;
+  container-type: inline-size;
 }
 
 .ai-bubble button {
   flex: none;
   padding: 3px 9px;
-  border: 1px solid var(--line);
+  border: 1px solid var(--ai-line);
   border-radius: 8px;
-  background: var(--button);
-  color: var(--ink);
+  background: var(--ai-surface);
+  color: var(--ai-ink);
   font: inherit;
   cursor: pointer;
 }
 
 .ai-bubble button:hover {
-  background: var(--button-hover);
+  background: var(--ai-soft);
 }
 
 .ai-bubble button.ai-primary {
-  border-color: color-mix(in srgb, var(--ink) 45%, transparent);
+  border-color: var(--ai-accent);
+  color: var(--ai-accent);
   font-weight: 600;
 }
 
@@ -384,11 +409,12 @@ button:hover {
   align-items: center;
   gap: 6px;
   padding: 7px 8px 7px 12px;
-  border-bottom: 1px solid var(--line);
+  border-bottom: 1px solid var(--ai-line);
 }
 
 .ai-head-title {
   flex: none;
+  color: var(--ai-accent);
   font-weight: 650;
 }
 
@@ -396,7 +422,7 @@ button:hover {
   flex: 1;
   min-width: 0;
   overflow: hidden;
-  opacity: 0.6;
+  color: var(--ai-muted);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -404,7 +430,12 @@ button:hover {
 .ai-bubble button.ai-head-button {
   border-color: transparent;
   background: transparent;
-  opacity: 0.75;
+  color: var(--ai-muted);
+}
+
+.ai-bubble button.ai-head-button:hover {
+  background: var(--ai-soft);
+  color: var(--ai-ink);
 }
 
 .ai-bubble button.ai-close {
@@ -416,8 +447,8 @@ button:hover {
 .ai-jobs {
   flex: none;
   padding: 6px 12px;
-  border-bottom: 1px solid var(--line);
-  background: color-mix(in srgb, var(--button) 60%, transparent);
+  border-bottom: 1px solid var(--ai-line);
+  background: var(--ai-soft);
 }
 
 .ai-jobs[hidden] {
@@ -426,7 +457,7 @@ button:hover {
 
 .ai-jobs-title {
   margin: 0 0 4px;
-  opacity: 0.6;
+  color: var(--ai-muted);
   font-size: 11px;
 }
 
@@ -451,7 +482,7 @@ button:hover {
 
 .ai-time {
   flex: 1;
-  opacity: 0.65;
+  color: var(--ai-muted);
   font-variant-numeric: tabular-nums;
 }
 
@@ -464,40 +495,41 @@ button:hover {
   width: 12px;
   height: 12px;
   box-sizing: border-box;
-  border: 2px solid color-mix(in srgb, var(--ink) 18%, transparent);
-  border-top-color: var(--ink);
+  border: 2px solid var(--ai-line);
+  border-top-color: var(--ai-accent);
   border-radius: 50%;
   animation: ai-spin 0.9s linear infinite;
 }
 
 .ai-log {
   flex: 1;
-  min-height: 48px;
+  min-height: 40px;
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 12px;
   padding: 10px 12px;
   overflow: auto;
   scrollbar-width: thin;
+  scrollbar-color: var(--ai-line) transparent;
 }
 
 .ai-empty,
 .ai-note {
   margin: 0;
-  opacity: 0.7;
+  color: var(--ai-muted);
 }
 
 .ai-error {
   margin-bottom: 6px;
-  opacity: 1;
+  color: color-mix(in srgb, #c22 70%, var(--ink));
   overflow-wrap: anywhere;
 }
 
 .ai-notice {
   padding: 6px 8px;
   border-radius: 8px;
-  background: var(--button);
-  opacity: 1;
+  background: var(--ai-soft);
+  color: var(--ai-ink);
 }
 
 .ai-entry {
@@ -509,12 +541,14 @@ button:hover {
 .ai-q {
   align-self: flex-end;
   display: flex;
+  flex-wrap: wrap;
   align-items: baseline;
-  gap: 6px;
+  justify-content: flex-end;
+  gap: 2px 6px;
   max-width: 88%;
   padding: 5px 10px;
   border-radius: 12px 12px 3px 12px;
-  background: var(--button);
+  background: var(--ai-surface);
 }
 
 .ai-q-text {
@@ -524,24 +558,52 @@ button:hover {
 
 .ai-tag {
   flex: none;
-  opacity: 0.55;
+  color: var(--ai-accent);
   font-size: 10px;
-  text-transform: uppercase;
   letter-spacing: 0.04em;
+  text-transform: uppercase;
 }
 
 .ai-a {
   min-width: 0;
 }
 
+/* The model's words: set apart by a rule on the left, a serif face, and a tinted ground. */
 .ai-answer {
-  margin-bottom: 6px;
-  font-size: 13px;
-  line-height: 1.45;
+  padding: 6px 10px;
+  border-left: 3px solid var(--ai-accent);
+  border-radius: 2px 8px 8px 2px;
+  background: var(--ai-answer-bg);
+  color: var(--ai-answer-ink);
+  font-family: "Iowan Old Style", "Palatino Linotype", Palatino, Georgia, serif;
+  font-size: 13.5px;
+  line-height: 1.5;
   overflow-wrap: anywhere;
   white-space: pre-wrap;
   user-select: text;
   cursor: text;
+}
+
+.ai-links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px 12px;
+  margin: 4px 0 0 13px;
+}
+
+.ai-bubble button.ai-link {
+  padding: 0;
+  border: 0;
+  border-radius: 3px;
+  background: transparent;
+  color: var(--ai-accent);
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.ai-bubble button.ai-link:hover {
+  background: transparent;
+  text-decoration: underline;
 }
 
 .ai-actions {
@@ -554,14 +616,14 @@ button:hover {
 .ai-summary {
   flex: 1;
   min-width: 0;
-  opacity: 0.7;
+  color: var(--ai-muted);
 }
 
 .ai-warning {
   margin: 6px 0 0;
   padding: 6px 8px;
   border-radius: 8px;
-  background: var(--button);
+  background: var(--ai-soft);
 }
 
 .ai-diff {
@@ -579,25 +641,25 @@ button:hover {
 
 .ai-gap {
   margin: 2px 0;
-  opacity: 0.5;
+  color: var(--ai-muted);
   font-size: 11px;
 }
 
 .ai-hunk {
   margin: 4px 0;
-  border: 1px solid var(--line);
+  border: 1px solid var(--ai-line);
   border-radius: 8px;
   overflow: hidden;
 }
 
 .ai-removed {
-  background: color-mix(in srgb, #d33 18%, transparent);
+  background: var(--ai-removed);
   text-decoration: line-through;
   text-decoration-color: color-mix(in srgb, var(--ink) 35%, transparent);
 }
 
 .ai-added {
-  background: color-mix(in srgb, #2a2 18%, transparent);
+  background: var(--ai-added);
 }
 
 .ai-removed::before,
@@ -620,7 +682,7 @@ button:hover {
   display: flex;
   gap: 6px;
   padding: 4px 6px;
-  border-top: 1px solid var(--line);
+  border-top: 1px solid var(--ai-line);
 }
 
 .ai-hunk[data-decided] .ai-hunk-actions,
@@ -643,60 +705,240 @@ button:hover {
   display: flex;
   flex-direction: column;
   gap: 6px;
-  padding: 8px 12px 10px;
-  border-top: 1px solid var(--line);
+  padding: 8px 10px 10px;
+  border-top: 1px solid var(--ai-line);
 }
 
+/* Presets stay on one row. The ones that do not fit sit behind "More…". */
 .ai-presets {
   display: flex;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
   gap: 4px;
+  min-width: 0;
+  overflow: hidden;
 }
 
 .ai-bubble button.ai-chip {
   border-radius: 999px;
+  white-space: nowrap;
 }
 
-.ai-ask {
+.ai-bubble button.ai-chip[hidden] {
+  display: none;
+}
+
+.ai-bubble button.ai-more {
+  border-color: transparent;
+  background: var(--ai-soft);
+  color: var(--ai-accent);
+  font-weight: 600;
+}
+
+@container (max-width: 340px) {
+  .ai-bubble button.ai-chip {
+    padding: 2px 7px;
+    font-size: 10.5px;
+  }
+}
+
+/* One prompt box: the text on top, the mode, model, and send button along its bottom edge. */
+.ai-composer {
   display: flex;
-  align-items: flex-end;
-  gap: 6px;
+  flex-direction: column;
   margin: 0;
+  border: 1px solid var(--ai-line);
+  border-radius: 10px;
+  background: var(--ai-surface);
+  cursor: text;
 }
 
-.ai-mode,
-.ai-input {
-  box-sizing: border-box;
-  border: 1px solid var(--line);
-  border-radius: 8px;
-  background: var(--button);
-  color: var(--ink);
-  font: inherit;
+.ai-composer:focus-within {
+  border-color: var(--ai-accent);
 }
 
-.ai-mode {
+.ai-scope {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 6px 6px 0;
+  padding: 2px 4px 2px 8px;
+  border-radius: 6px;
+  background: var(--ai-soft);
+  cursor: default;
+}
+
+.ai-scope-label {
   flex: none;
-  height: 26px;
-  padding: 0 4px;
+  color: var(--ai-accent);
+  font-weight: 600;
 }
 
-.ai-input {
+.ai-scope-text {
   flex: 1;
   min-width: 0;
-  min-height: 26px;
-  padding: 4px 8px;
-  line-height: 1.35;
+  overflow: hidden;
+  color: var(--ai-muted);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ai-bubble button.ai-scope-clear {
+  padding: 0 5px;
+  border: 0;
+  background: transparent;
+  color: var(--ai-muted);
+  font-size: 14px;
+  line-height: 1.2;
+}
+
+.ai-input {
+  box-sizing: border-box;
+  width: 100%;
+  min-height: 40px;
+  padding: 8px 10px 4px;
+  border: 0;
+  background: transparent;
+  color: var(--ai-ink);
+  font: inherit;
+  font-size: 13px;
+  line-height: 1.4;
   outline: none;
   resize: none;
 }
 
-.ai-input:focus {
-  border-color: color-mix(in srgb, var(--ink) 45%, transparent);
+.ai-input::placeholder {
+  color: var(--ai-muted);
+}
+
+.ai-composer-bar {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  min-width: 0;
+  padding: 2px 5px 5px;
+}
+
+.ai-mode,
+.ai-bubble button.ai-model {
+  flex: none;
+  max-width: 46%;
+  height: 22px;
+  padding: 0 6px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--ai-muted);
+  font: inherit;
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.ai-bubble button.ai-model {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ai-bubble button.ai-model::after {
+  content: " ▾";
+  opacity: 0.7;
+}
+
+.ai-mode:hover,
+.ai-bubble button.ai-model:hover {
+  background: var(--ai-soft);
+  color: var(--ai-ink);
 }
 
 .ai-where {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--ai-muted);
+  font-size: 10.5px;
+  opacity: 0.8;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ai-bubble button.ai-send {
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: 0;
+  border-radius: 7px;
+  background: var(--ai-accent);
+  color: var(--paper);
+  font-size: 14px;
+  font-weight: 700;
+  line-height: 1;
+}
+
+.ai-bubble button.ai-send:hover {
+  background: var(--ai-tint);
+}
+
+.ai-menu {
+  position: absolute;
+  z-index: 2;
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  min-width: 140px;
+  max-width: calc(100% - 16px);
+  padding: 4px;
+  border: 1px solid var(--ai-line);
+  border-radius: 10px;
+  background: var(--ai-paper);
+  box-shadow: 0 8px 18px var(--shadow);
+  overflow: auto;
+}
+
+.ai-bubble .ai-menu button {
+  flex: none;
+  padding: 5px 9px;
+  border: 0;
+  background: transparent;
+  overflow: hidden;
+  text-align: left;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ai-bubble .ai-menu button[aria-pressed="true"] {
+  color: var(--ai-accent);
+  font-weight: 600;
+}
+
+.ai-menu-note {
   margin: 0;
-  opacity: 0.55;
+  padding: 5px 9px;
+  color: var(--ai-muted);
+}
+
+/* The "AI" tab beside selected text. */
+.ai-float {
+  position: absolute;
+  z-index: 5;
+  padding: 2px 8px;
+  border: 1px solid var(--ai-line);
+  border-radius: 999px;
+  background: var(--ai-paper);
+  box-shadow: 0 4px 12px var(--shadow);
+  color: var(--ai-accent);
+  font-family: system-ui, sans-serif;
   font-size: 11px;
-  overflow-wrap: anywhere;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  cursor: pointer;
+}
+
+.ai-float[hidden] {
+  display: none;
+}
+
+.ai-float:hover {
+  border-color: var(--ai-accent);
 }

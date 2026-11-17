@@ -657,13 +657,14 @@ header.compact-meta #edited-sep {
 
 .ai-toggle {
   position: relative;
+  color: var(--ai-accent);
   font-size: 11px;
-  font-weight: 600;
+  font-weight: 700;
   letter-spacing: 0.02em;
 }
 
 .ai-toggle[aria-expanded="true"] {
-  background: var(--button-hover);
+  background: var(--ai-soft);
 }
 
 /* A ring turns around the button while a prompt for this memo is running. */
@@ -671,8 +672,8 @@ header.compact-meta #edited-sep {
   content: "";
   position: absolute;
   inset: 1px;
-  border: 2px solid color-mix(in srgb, var(--ink) 18%, transparent);
-  border-top-color: var(--ink);
+  border: 2px solid var(--ai-line);
+  border-top-color: var(--ai-accent);
   border-radius: 50%;
   animation: ai-spin 0.9s linear infinite;
   pointer-events: none;
@@ -686,7 +687,7 @@ header.compact-meta #edited-sep {
   width: 7px;
   height: 7px;
   border-radius: 50%;
-  background: #d9662b;
+  background: var(--ai-tint);
   box-shadow: 0 0 0 1.5px var(--paper);
 }
 

@@ -196,6 +196,9 @@ function installBrowserHarness(seed: BrowserSeed) {
     status: string;
     text: string;
     source: string;
+    lineStart: number | null;
+    lineEnd: number | null;
+    selection: boolean;
     startedAt: number;
     finishedAt: number | null;
   };
@@ -525,6 +528,9 @@ function installBrowserHarness(seed: BrowserSeed) {
           status: "running",
           text: "",
           source: String(a.text ?? ""),
+          lineStart: typeof a.lineStart === "number" ? a.lineStart : null,
+          lineEnd: typeof a.lineEnd === "number" ? a.lineEnd : null,
+          selection: typeof a.context === "string",
           startedAt: Date.now(),
           finishedAt: null as number | null,
         };

@@ -111,3 +111,81 @@ test("models tab lists the server's models and picks one", async ({ page }) => {
   await page.locator("#llm-enabled").check();
   await expect(page.locator("#settings-status")).toHaveText("Model prompts are on.");
 });
+
+async function selectLineText(page: import("@playwright/test").Page, needle: string) {
+  await page.evaluate((text) => {
+    const walker = document.createTreeWalker(document.querySelector("#blocks")!, NodeFilter.SHOW_TEXT);
+    for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+      const at = node.textContent?.indexOf(text) ?? -1;
+      if (at >= 0) {
+        const range = document.createRange();
+        range.setStart(node, at);
+        range.setEnd(node, at + text.length);
+        const selection = window.getSelection();
+        selection?.removeAllRanges();
+        selection?.addRange(range);
+        return;
+      }
+    }
+    throw new Error(`text not found in the editor: ${text}`);
+  }, needle);
+}
+
+test("escape and a click on the memo close the bubble before anything else", async ({ page }) => {
+  await openComposer(page, { draft: { content: "some text" }, ai: localModel });
+  const toggle = page.locator("#ai-anchor .ai-toggle");
+  const bubble = page.locator("#card .ai-bubble");
+  await toggle.click();
+  await expect(bubble).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(bubble).toHaveCount(0);
+  await expect(page.locator("#card")).toBeVisible();
+  await expect.poll(async () => invokedCmds(page)).not.toContain("hide_composer");
+  await toggle.click();
+  await expect(bubble).toBeVisible();
+  await page.locator("#blocks").click({ position: { x: 20, y: 10 } });
+  await expect(bubble).toHaveCount(0);
+});
+
+test("selected text becomes the source and only its lines are changed", async ({ page }) => {
+  await openComposer(page, {
+    draft: { content: "first line\nteh second line\nthird line" },
+    ai: { ...localModel, llmReply: "the second line" },
+  });
+  await composerTextarea(page).waitFor();
+  await selectLineText(page, "teh second line");
+  const float = page.locator("#card .ai-float");
+  await expect(float).toBeVisible();
+  await float.click();
+  const bubble = page.locator("#card .ai-bubble");
+  await expect(bubble.locator(".ai-scope-label")).toHaveText("Line 2");
+  await bubble.locator(".ai-mode").selectOption("edit");
+  await bubble.locator(".ai-input").fill("Fix the typo");
+  await page.keyboard.press("Enter");
+  await expect(bubble.locator(".ai-q .ai-tag").first()).toHaveText("Line 2");
+  await expect(bubble.locator(".ai-removed")).toHaveText("teh second line");
+  await bubble.locator("button", { hasText: "Accept all" }).click();
+  await expect
+    .poll(async () =>
+      page.evaluate(
+        () =>
+          window.__memoseHarness
+            ?.getInvocations()
+            .filter((i) => i.cmd === "upsert_draft")
+            .pop()?.args,
+      ),
+    )
+    .toMatchObject({ content: "first line\nthe second line\nthird line" });
+});
+
+test("the selection can be removed to go back to the whole memo", async ({ page }) => {
+  await openComposer(page, { draft: { content: "alpha line\nbeta line" }, ai: localModel });
+  await composerTextarea(page).waitFor();
+  await selectLineText(page, "beta line");
+  await page.locator("#card .ai-float").click();
+  const bubble = page.locator("#card .ai-bubble");
+  await expect(bubble.locator(".ai-scope")).toBeVisible();
+  await bubble.locator(".ai-scope-clear").click();
+  await expect(bubble.locator(".ai-scope")).toHaveCount(0);
+  await expect(bubble.locator(".ai-input")).toHaveAttribute("placeholder", /this memo/);
+});

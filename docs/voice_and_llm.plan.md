@@ -174,19 +174,31 @@ New block kind in [src/editor/markdown-edit.ts](src/editor/markdown-edit.ts), pa
 
 **Ask or edit.** A prompt has a mode:
 
-- **Ask** answers in the chat and never changes the memo ("how many tasks are open?").
-- **Edit** proposes a new memo text, shown as a diff.
-- **Auto** (the default for typed prompts) lets the model decide. Its reply starts with a line `EDIT` or `ANSWER`. A reply without that line is treated as an answer, so the memo is never replaced by accident.
+- **Ask** answers in the chat and never changes the memo ("how many tasks are open?"). The note is context, and general knowledge is allowed.
+- **Edit** proposes new text, shown as a diff.
+- **Auto** (the default for typed prompts) first asks the model one yes/no question without the note: does the request ask to change the note's text? Yes runs Edit, anything else runs Ask. This was the reliable form on a 7B local model. Letting the model mark its own reply (`EDIT`/`ANSWER` lines, `<revised>` tags) was not: it skipped the marks and often echoed the note.
+
+In every mode the note comes first in the user message and the request last. With the request first, small models continued the note instead of answering.
 
 Presets carry their own mode. An answer can still be added to the memo or reviewed as a replacement.
+
+**Selection as the source.** Selecting text in the editor, the coder editor, or the preview shows a small **AI** tab beside the selection. It opens the bubble with that selection as the source:
+
+- The prompt box shows "Lines 3–7" and a clear button that goes back to the whole memo.
+- The selected lines are sent as the part to work on, with the whole memo as context. An edit replaces only those lines.
+- Lines are found by comparing text without markdown marks, so a preview selection works too. When the place is not unique, the whole memo is the source and the selection is passed as a hint.
 
 **AI prompt bubble** ([src/ai/llm-edit.ts](src/ai/llm-edit.ts)). The AI button in the memo header opens a bubble that floats over that memo:
 
 - The chat of this memo: each prompt, then its answer, its diff, or its error.
 - A running prompt shows a spinner, the elapsed time and **Cancel**. Prompts running for other memos are listed under "Also running".
 - The AI button turns a ring while a prompt for this memo runs, and shows a dot when a result arrived while the bubble was closed. Opening a memo with a running prompt opens its bubble.
+- Escape and a click on the memo close the bubble before anything else reacts.
+- One prompt box in the style of an editor chat input: the text on top, and the mode, the model (click to switch), and send along its bottom edge.
+- Presets sit on one row and shrink in a narrow memo. Those that do not fit go behind **More…**.
 - The chat lives in Rust `AppState` (`llm_chats`, keyed by memo id), so it survives closing the memo window. It is dropped when the app quits.
 - Line diff from `src/editor/line-diff.ts`: red removed, green added, **Accept** and **Keep original** per change, **Accept all**, **Dismiss**. Accepted text saves through the editor as one undo step.
+- Colors come from one AI scheme, the `--ai-*` variables in [controls.css](src/styles/controls.css), derived from the memo's paper and ink shifted toward one tint.
 
 Safeguards:
 
