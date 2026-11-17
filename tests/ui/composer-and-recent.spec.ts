@@ -1035,3 +1035,24 @@ test("tab in an empty new memo opens memo search", async ({ page }) => {
   await area.press("Tab");
   await expect(page.locator("#recent-search")).toBeVisible();
 });
+
+test("editing one bullet shows the whole list as markdown, but not checklists", async ({ page }) => {
+  await openComposer(page, {
+    draft: { content: "# Title\n- one\n  * nested\n- three\n- [ ] task\n- [ ] other\nplain **bold**" },
+  });
+  const rows = page.locator(".md-row");
+  await rows.nth(1).click();
+  await expect(page.locator(".md-row.is-live")).toHaveCount(3);
+  await expect(rows.nth(1)).toHaveText("- one");
+  await expect(rows.nth(2)).toHaveText("  * nested");
+  await expect(rows.nth(3)).toHaveText("- three");
+  await expect(rows.nth(0)).not.toHaveClass(/is-live/);
+  await expect(rows.nth(4)).not.toHaveClass(/is-live/);
+  await rows.nth(4).click();
+  await expect(page.locator(".md-row.is-live")).toHaveCount(1);
+  await expect(rows.nth(4)).toHaveClass(/is-live/);
+  await rows.nth(6).click();
+  await expect(page.locator(".md-row.is-live")).toHaveCount(1);
+  await page.keyboard.press("ControlOrMeta+a");
+  await expect(page.locator(".md-row.is-live")).toHaveCount(1);
+});

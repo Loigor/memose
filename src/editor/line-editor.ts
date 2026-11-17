@@ -167,7 +167,18 @@ export function mountLineEditor(options: LineEditorOptions): { shell: HTMLElemen
       const value = readValue();
       const live = new Set<number>();
       if (hasFocus) {
-        live.add(lineIndex(value, caret.focus ?? caret.end));
+        const lines = value.split("\n");
+        const at = lineIndex(value, caret.focus ?? caret.end);
+        live.add(at);
+        // Editing one bullet shows the whole list as markdown, so it can be read and copied with its marks.
+        if (isBulletLine(lines[at] ?? "")) {
+          for (let line = at - 1; line >= 0 && isBulletLine(lines[line]); line -= 1) {
+            live.add(line);
+          }
+          for (let line = at + 1; line < lines.length && isBulletLine(lines[line]); line += 1) {
+            live.add(line);
+          }
+        }
       }
       let rebuilt = false;
       const rows = [...root.querySelectorAll<HTMLElement>(":scope > .md-row")];
@@ -593,6 +604,11 @@ function isMarkSpan(node: Node): node is HTMLElement {
     }
   }
   return true;
+}
+
+/** A `-` or `*` list item. Checklist items are not included. */
+function isBulletLine(line: string): boolean {
+  return /^\s*[-*]\s+(?!\[[ xX]\]\s)/.test(line) || /^\s*[-*]$/.test(line.trimEnd());
 }
 
 function lineIndex(value: string, offset: number): number {
