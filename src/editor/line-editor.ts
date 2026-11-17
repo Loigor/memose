@@ -169,7 +169,7 @@ export function mountLineEditor(options: LineEditorOptions): { shell: HTMLElemen
       if (hasFocus) {
         live.add(lineIndex(value, caret.focus ?? caret.end));
       }
-      let rebuilt = false;
+      let caretRowRebuilt = false;
       const rows = [...root.querySelectorAll<HTMLElement>(":scope > .md-row")];
       rows.forEach((row, index) => {
         const text = row.textContent ?? "";
@@ -181,13 +181,15 @@ export function mountLineEditor(options: LineEditorOptions): { shell: HTMLElemen
         if (source) {
           row.style.removeProperty("--lead");
           if (paintSource(row, text)) {
-            rebuilt = true;
+            caretRowRebuilt = true;
           }
-        } else if (paintMarks(row, text)) {
-          rebuilt = true;
+        } else {
+          paintMarks(row, text);
         }
       });
-      if (rebuilt && hasFocus) {
+      // Replacing some other row must not write the selection. The caret's own
+      // row was just emptied, so put it back where it was before that paint.
+      if (caretRowRebuilt && hasFocus) {
         setRange(caret.start, caret.end, caret.focus ?? caret.end);
       }
     } finally {
@@ -464,7 +466,20 @@ export function mountLineEditor(options: LineEditorOptions): { shell: HTMLElemen
     publish(next, caret);
   });
   root.addEventListener("keydown", (event) => {
-    if (!writing && !composing) {
+    // Paint after the browser applies an insert or delete. Restoring the caret
+    // here, before that, leaves it on the previous character.
+    const movesCaret =
+      !event.shiftKey &&
+      !event.metaKey &&
+      !event.ctrlKey &&
+      !event.altKey &&
+      (event.key === "ArrowLeft" ||
+        event.key === "ArrowRight" ||
+        event.key === "ArrowUp" ||
+        event.key === "ArrowDown" ||
+        event.key === "Home" ||
+        event.key === "End");
+    if (!writing && !composing && movesCaret) {
       reveal(currentCaret());
     }
     if (event.key === "Enter" && (event.metaKey || event.ctrlKey || event.altKey)) {
@@ -606,7 +621,20 @@ function lineIndex(value: string, offset: number): number {
   return line;
 }
 
+/** Drops the placeholder break WebKit leaves after a line. True when the caret was on that break. */
+function stripTrailingBreak(row: HTMLElement): boolean {
+  const last = row.lastChild;
+  if (!(last instanceof HTMLBRElement) || row.childNodes.length <= 1) {
+    return false;
+  }
+  const sel = row.ownerDocument.getSelection();
+  const held = Boolean(sel && (sel.anchorNode === last || sel.focusNode === last));
+  last.remove();
+  return held;
+}
+
 function paintSource(row: HTMLElement, text: string): boolean {
+  const caretOnBreak = stripTrailingBreak(row);
   if (text.length === 0) {
     if (row.childNodes.length === 1 && row.childNodes[0] instanceof HTMLBRElement) {
       return false;
@@ -616,7 +644,7 @@ function paintSource(row: HTMLElement, text: string): boolean {
   }
   const only = row.childNodes.length === 1 ? row.childNodes[0] : null;
   if (only?.nodeType === Node.TEXT_NODE && only.textContent === text) {
-    return false;
+    return caretOnBreak;
   }
   row.replaceChildren(document.createTextNode(text));
   return true;
@@ -690,6 +718,7 @@ function appendPart(parent: Node, part: RenderPart) {
 
 function paintMarks(row: HTMLElement, text: string): boolean {
   paintChrome(row, text);
+  stripTrailingBreak(row);
   if (text.length === 0) {
     if (row.childNodes.length === 1 && row.childNodes[0] instanceof HTMLBRElement) {
       return false;
@@ -812,13 +841,14 @@ function isCleanRow(node: Node): node is HTMLElement {
   if ((node.textContent ?? "").includes("\n")) {
     return false;
   }
-  if (node.childNodes.length === 0) {
+  const kids = [...node.childNodes];
+  if (kids[kids.length - 1] instanceof HTMLBRElement) {
+    kids.pop();
+  }
+  if (kids.length === 0) {
     return true;
   }
-  if (node.childNodes.length === 1 && node.childNodes[0] instanceof HTMLBRElement) {
-    return (node.textContent ?? "") === "";
-  }
-  for (const child of node.childNodes) {
+  for (const child of kids) {
     if (child.nodeType === Node.TEXT_NODE) {
       continue;
     }
@@ -888,7 +918,8 @@ function plainFromDom(root: HTMLElement): { text: string; start: number; end: nu
       const child = kids[i];
       if (child instanceof HTMLBRElement) {
         mark(child, 0);
-        if (el.childNodes.length > 1) {
+        // A break after the line's text is the caret placeholder, not a new line.
+        if (i !== kids.length - 1) {
           text += "\n";
         }
         continue;
