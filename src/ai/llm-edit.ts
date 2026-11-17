@@ -17,8 +17,10 @@ import {
   type DiffPart,
   type LineRange,
 } from "../editor/line-diff";
+import { joinDictation } from "../editor/dictation-span";
 import { fieldSourceText } from "../editor/editor-field";
 import { isOfflinePrivate } from "../look/visibility";
+import { speechAvailable, startSpeech, stopSpeech, watchSpeech } from "./speech";
 
 export type AiMode = "auto" | "ask" | "edit";
 
@@ -198,6 +200,12 @@ export function mountLlmBubble(anchor: HTMLElement, target: LlmTarget): { close(
   let picked: Picked | null = null;
   let menuEl: HTMLElement | null = null;
   let presetWatch: ResizeObserver | null = null;
+  /** The spoken prompt being recorded, and the box it is written into. */
+  let voiceSession: string | null = null;
+  let voiceStarting = false;
+  let voiceSendAfter: AiMode | null = null;
+  let inputEl: HTMLTextAreaElement | null = null;
+  let micEl: HTMLButtonElement | null = null;
   const seen = new Set<string>();
   const asEdit = new Set<string>();
   const decisions = new Map<string, Decisions>();
@@ -733,10 +741,71 @@ export function mountLlmBubble(anchor: HTMLElement, target: LlmTarget): { close(
     submit.type = "submit";
     submit.title = "Send (Enter)";
     submit.setAttribute("aria-label", "Send");
-    bar.append(mode, model, where, submit);
+    // A spoken prompt: the words land in the box, and nothing of the sound is kept.
+    const mic = button("ai-mic", "", () => {
+      if (voiceSession) {
+        stopSpeech();
+        return;
+      }
+      if (voiceStarting) {
+        return;
+      }
+      voiceStarting = true;
+      paintMic();
+      void startSpeech("prompt", null, {
+        onChunk(text) {
+          draftInstruction = joinDictation(draftInstruction, text);
+          if (inputEl) {
+            inputEl.value = draftInstruction;
+            inputEl.dispatchEvent(new Event("input"));
+          }
+        },
+        onLevel(level) {
+          micEl?.style.setProperty("--rec-level", level.toFixed(2));
+        },
+        onDone(done) {
+          voiceSession = null;
+          const sendMode = voiceSendAfter;
+          voiceSendAfter = null;
+          if (done.error) {
+            notice = done.error;
+            paintLog(true);
+          }
+          paintMic();
+          if (sendMode && draftInstruction.trim() !== "") {
+            send(draftInstruction, sendMode);
+          }
+        },
+      })
+        .then(
+          (id) => {
+            voiceSession = id;
+          },
+          (error: unknown) => {
+            notice = String(error);
+            paintLog(true);
+          },
+        )
+        .finally(() => {
+          voiceStarting = false;
+          paintMic();
+        });
+    });
+    mic.append(el("span", "rec-glyph"));
+    mic.hidden = !speechAvailable("prompt");
+    micEl = mic;
+    inputEl = input;
+    paintMic();
+    bar.append(mode, model, where, mic, submit);
     form.append(input, bar);
     form.addEventListener("submit", (event) => {
       event.preventDefault();
+      if (voiceSession) {
+        // The last words are still being turned into text. The prompt is sent when they arrive.
+        voiceSendAfter = draftMode;
+        stopSpeech();
+        return;
+      }
       send(input.value, draftMode);
     });
     form.addEventListener("mousedown", (event) => {
@@ -750,6 +819,21 @@ export function mountLlmBubble(anchor: HTMLElement, target: LlmTarget): { close(
       fit();
       input.focus();
     });
+  }
+
+  function paintMic() {
+    if (!micEl) {
+      return;
+    }
+    const on = voiceSession !== null || voiceStarting;
+    micEl.classList.toggle("rec-on", on);
+    const label = on ? "Stop recording the prompt" : "Speak the prompt";
+    micEl.title = label;
+    micEl.setAttribute("aria-label", label);
+    micEl.setAttribute("aria-pressed", String(on));
+    if (!on) {
+      micEl.style.removeProperty("--rec-level");
+    }
   }
 
   function closeMenu() {
@@ -894,6 +978,12 @@ export function mountLlmBubble(anchor: HTMLElement, target: LlmTarget): { close(
     presetWatch = null;
     pendingConsent = null;
     picked = null;
+    inputEl = null;
+    micEl = null;
+    if (voiceSession) {
+      voiceSendAfter = null;
+      stopSpeech();
+    }
     paintButton();
   }
 
@@ -1102,6 +1192,12 @@ export function mountLlmBubble(anchor: HTMLElement, target: LlmTarget): { close(
     }
   });
 
+  // The microphone button follows the recording settings while the bubble is open.
+  const unwatchSpeech = watchSpeech(() => {
+    if (micEl) {
+      micEl.hidden = !speechAvailable("prompt");
+    }
+  });
   const onChat = () => {
     void refresh(true);
   };
@@ -1145,6 +1241,7 @@ export function mountLlmBubble(anchor: HTMLElement, target: LlmTarget): { close(
     life.abort();
     settingsWatchers.delete(paintAvailability);
     chatWatchers.delete(onChat);
+    unwatchSpeech();
     presetWatch?.disconnect();
     float.remove();
     bubble?.remove();

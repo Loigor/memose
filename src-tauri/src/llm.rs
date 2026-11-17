@@ -273,6 +273,47 @@ fn unreachable(err: &reqwest::Error) -> AppError {
     }
 }
 
+/// One system message and one user message, for helpers outside the memo chat.
+/// Returns the model's text as it came.
+pub async fn complete(
+    http: &reqwest::Client,
+    base: &str,
+    key: Option<&str>,
+    model: &str,
+    system: &str,
+    user: &str,
+    timeout: Duration,
+) -> Result<String, AppError> {
+    let body = json!({
+        "model": model,
+        "stream": false,
+        "messages": [
+            { "role": "system", "content": system },
+            { "role": "user", "content": user },
+        ],
+    });
+    let request = http
+        .post(api_url(base, "chat/completions"))
+        .timeout(timeout)
+        .json(&body);
+    let response = with_key(request, key)
+        .send()
+        .await
+        .map_err(|err| unreachable(&err))?;
+    if !response.status().is_success() {
+        return Err(failure(response).await);
+    }
+    let payload: Value = response
+        .json()
+        .await
+        .map_err(|_| AppError::Message("the model server sent an unreadable answer".into()))?;
+    Ok(payload
+        .pointer("/choices/0/message/content")
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+        .to_string())
+}
+
 /// Asks the model whether a request wants the note changed. One short call without the note.
 /// It sets no token limit or temperature: reasoning models need room to think before the word,
 /// and some hosted models reject those fields.

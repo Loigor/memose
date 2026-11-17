@@ -42,7 +42,7 @@ h2 {
 
 .settings-tabs {
   display: grid;
-  grid-template-columns: repeat(6, minmax(0, 1fr));
+  grid-template-columns: repeat(7, minmax(0, 1fr));
   gap: 4px;
   padding: 4px;
   border: 1px solid #e0d9cc;
@@ -546,5 +546,25 @@ button.link-button:hover {
 }
 
 button.link-button[hidden] {
+  display: none;
+}
+
+.source-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.source-panel[hidden] {
+  display: none;
+}
+
+progress {
+  width: 100%;
+  height: 8px;
+  accent-color: #2f281c;
+}
+
+progress[hidden] {
   display: none;
 }

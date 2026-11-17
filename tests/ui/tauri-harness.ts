@@ -78,6 +78,21 @@ export type HarnessSeed = {
   pinTabs?: PinTabsSeed;
   hueSwatches?: number[];
   ai?: AiSeed;
+  speech?: SpeechSeed;
+};
+
+export type SpeechSeed = {
+  enabled?: boolean;
+  source?: "local" | "server" | "off";
+  installed?: boolean;
+  supported?: boolean;
+  keepAudio?: boolean;
+  polish?: boolean;
+  polishReady?: boolean;
+  /** What the mocked chat model makes of dictated text. Missing leaves it as heard. */
+  polishReply?: string;
+  /** Markdown line a kept recording ends with. */
+  audio?: string;
 };
 
 export type AiSeed = {
@@ -202,6 +217,20 @@ function installBrowserHarness(seed: BrowserSeed) {
     selection: boolean;
     startedAt: number;
     finishedAt: number | null;
+  };
+  const speech = {
+    enabled: Boolean(seed.speech?.enabled),
+    source: seed.speech?.source ?? "local",
+    baseUrl: "",
+    hasKey: false,
+    model: "",
+    language: "",
+    device: "",
+    keepAudio: Boolean(seed.speech?.keepAudio),
+    polish: seed.speech?.polish !== false,
+    installed: Boolean(seed.speech?.installed),
+    session: null as { sessionId: string; noteId: string | null; purpose: string } | null,
+    count: 0,
   };
   const chats = new Map<string, ChatSeedEntry[]>();
   const held = new Map<string, () => void>();
@@ -587,6 +616,89 @@ function installBrowserHarness(seed: BrowserSeed) {
         emit("llm-changed", noteId);
         return null;
       }
+      case "get_speech_settings": {
+        const host = speech.baseUrl.replace(/^[a-z]+:\/\//, "").split(/[/:]/)[0] ?? "";
+        return {
+          enabled: speech.enabled,
+          source: speech.source,
+          baseUrl: speech.baseUrl,
+          serverUrl: speech.baseUrl,
+          serverHost: host,
+          serverLocal: host === "localhost" || host.startsWith("127."),
+          hasKey: speech.hasKey,
+          model: speech.model,
+          language: speech.language,
+          device: speech.device,
+          keepAudio: speech.keepAudio,
+          polish: speech.polish,
+          polishReady: Boolean(seed.speech?.polishReady),
+          engine: {
+            supported: seed.speech?.supported !== false,
+            installed: speech.installed,
+            downloadBytes: speech.installed ? 0 : 510_000_000,
+            diskBytes: speech.installed ? 690_000_000 : 0,
+          },
+          recording: speech.session ? { recording: true, ...speech.session } : null,
+        };
+      }
+      case "save_speech_settings": {
+        for (const name of ["enabled", "keepAudio", "polish"] as const) {
+          if (typeof a[name] === "boolean") {
+            speech[name] = a[name];
+          }
+        }
+        for (const name of ["source", "baseUrl", "model", "language", "device"] as const) {
+          if (typeof a[name] === "string") {
+            speech[name] = a[name];
+          }
+        }
+        if (typeof a.key === "string") {
+          speech.hasKey = a.key !== "";
+        }
+        emit("speech-settings-changed");
+        return null;
+      }
+      case "speech_devices":
+        return ["Desk Microphone", "Headset"];
+      case "speech_download": {
+        emit("speech-download", { received: 255_000_000, total: 510_000_000, stage: "model", error: null });
+        speech.installed = true;
+        emit("speech-settings-changed");
+        return null;
+      }
+      case "speech_remove_model": {
+        speech.installed = false;
+        emit("speech-settings-changed");
+        return null;
+      }
+      case "speech_start": {
+        if (speech.session) {
+          throw new Error("a recording is already running");
+        }
+        speech.count += 1;
+        speech.session = {
+          sessionId: `speech-${speech.count}`,
+          noteId: typeof a.noteId === "string" ? a.noteId : null,
+          purpose: String(a.purpose ?? "memo"),
+        };
+        emit("speech-state", { recording: true, ...speech.session });
+        return speech.session.sessionId;
+      }
+      case "speech_stop": {
+        const ending = speech.session;
+        if (ending) {
+          speech.session = null;
+          emit("speech-state", { recording: false, ...ending });
+          emit("speech-done", {
+            ...ending,
+            audio: ending.purpose === "memo" && speech.keepAudio ? (seed.speech?.audio ?? null) : null,
+            error: null,
+          });
+        }
+        return null;
+      }
+      case "speech_polish":
+        return seed.speech?.polishReply ?? String(a.dictated ?? "");
       case "save_settings": {
         if (typeof a.baseUrl === "string") {
           state.settings.baseUrl = a.baseUrl;

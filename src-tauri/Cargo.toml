@@ -13,8 +13,17 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
+cpal = "0.16"
+flate2 = "1"
 keyring = { version = "3", features = ["apple-native", "windows-native", "linux-native-sync-persistent"] }
-reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+# ONNX Runtime is not linked in. It is a library the user downloads with the speech model,
+# so the app stays small and nothing is loaded while recording is off. The version must match
+# the one transcribe-rs was written for.
+ort = { version = "=2.0.0-rc.12", features = ["load-dynamic"] }
+reqwest = { version = "0.12", default-features = false, features = ["json", "multipart", "rustls-tls"] }
+sha2 = "0.10"
+tar = { version = "0.4", default-features = false }
+transcribe-rs = { version = "0.3.12", features = ["onnx"] }
 rusqlite = { version = "0.37", features = ["bundled"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
@@ -25,6 +34,9 @@ tauri-plugin-single-instance = "2"
 thiserror = "2"
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "sync", "time"] }
 uuid = { version = "1", features = ["v4"] }
+
+[target.'cfg(windows)'.dependencies]
+zip = { version = "2", default-features = false, features = ["deflate"] }
 
 [profile.release]
 codegen-units = 1

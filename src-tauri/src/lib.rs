@@ -6,6 +6,7 @@ mod media;
 mod mouse_hook;
 mod notes;
 mod shortcuts;
+mod speech;
 mod state;
 mod tray;
 mod window_ctl;
@@ -154,7 +155,15 @@ pub fn run() {
             commands::llm_chat,
             commands::llm_jobs,
             commands::llm_mark,
-            commands::llm_clear_chat
+            commands::llm_clear_chat,
+            commands::get_speech_settings,
+            commands::save_speech_settings,
+            commands::speech_devices,
+            commands::speech_download,
+            commands::speech_remove_model,
+            commands::speech_start,
+            commands::speech_stop,
+            commands::speech_polish
         ])
         .run(tauri::generate_context!())
         .expect("error while running memose");

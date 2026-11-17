@@ -78,6 +78,17 @@
           >
             Models
           </button>
+          <button
+            id="tab-recording"
+            class="settings-tab"
+            type="button"
+            role="tab"
+            aria-selected="false"
+            aria-controls="panel-recording"
+            data-tab="recording"
+          >
+            Recording
+          </button>
         </nav>
       </header>
 
@@ -378,6 +389,125 @@
               <button id="llm-preset-add" type="button">Add prompt</button>
               <button id="llm-preset-reset" type="button">Restore defaults</button>
             </div>
+          </div>
+        </section>
+
+        <section
+          id="panel-recording"
+          class="settings-panel"
+          role="tabpanel"
+          aria-labelledby="tab-recording"
+          data-panel="recording"
+          hidden
+        >
+          <div class="settings-card">
+            <div class="card-header">
+              <h2>Recording</h2>
+              <p class="hint">
+                Speak into a memo or into the AI prompt. Nothing is downloaded, loaded, or recorded until you turn this
+                on and press a record button.
+              </p>
+            </div>
+            <label class="toggle-row" for="speech-enabled">
+              <span class="toggle-copy">
+                <span class="toggle-title">Enable recording</span>
+                <span class="hint">Shows a record button on memos and in the AI prompt.</span>
+              </span>
+              <input id="speech-enabled" type="checkbox" />
+            </label>
+            <label>
+              Microphone
+              <select id="speech-device"></select>
+            </label>
+            <label class="toggle-row" for="speech-keep-audio">
+              <span class="toggle-copy">
+                <span class="toggle-title">Keep the recording</span>
+                <span class="hint">
+                  Adds the sound to the memo as an audio attachment. A spoken AI prompt is never kept.
+                </span>
+              </span>
+              <input id="speech-keep-audio" type="checkbox" />
+            </label>
+          </div>
+
+          <div class="settings-card">
+            <div class="card-header">
+              <h2>Speech to text</h2>
+              <p class="hint">Where your speech is turned into text.</p>
+            </div>
+            <div id="speech-source" class="choices" role="group" aria-label="Speech to text">
+              <button type="button" data-source="local" aria-pressed="false">On this computer</button>
+              <button type="button" data-source="server" aria-pressed="false">Speech server</button>
+              <button type="button" data-source="off" aria-pressed="false">Off, sound only</button>
+            </div>
+
+            <div id="speech-local" class="source-panel">
+              <p id="speech-engine-status" class="hint"></p>
+              <progress id="speech-progress" max="1" value="0" hidden></progress>
+              <div class="actions">
+                <button id="speech-download" class="primary" type="button">Download</button>
+                <button id="speech-remove" class="danger" type="button" hidden>Remove download</button>
+              </div>
+              <p class="hint">
+                Uses NVIDIA Parakeet v3. It understands 25 European languages, Finnish and English among them, finds the
+                language by itself, and never sends sound anywhere. It uses about 1.3 GB of memory while you record and
+                gives it back afterwards.
+              </p>
+            </div>
+
+            <div id="speech-server" class="source-panel" hidden>
+              <label>
+                Server URL
+                <input
+                  id="speech-base-url"
+                  type="url"
+                  placeholder="Leave blank to use the model server"
+                  autocomplete="off"
+                />
+              </label>
+              <p id="speech-where" class="hint"></p>
+              <label>
+                API key
+                <input
+                  id="speech-key"
+                  type="password"
+                  placeholder="Leave blank to keep the saved key"
+                  autocomplete="off"
+                />
+              </label>
+              <p class="hint key-line">
+                <span id="speech-key-hint"></span>
+                <button id="speech-key-remove" class="link-button" type="button" hidden>Remove key</button>
+              </p>
+              <label>
+                Model
+                <input id="speech-model" type="text" placeholder="whisper-1" autocomplete="off" />
+              </label>
+              <label>
+                Language
+                <input
+                  id="speech-language"
+                  type="text"
+                  placeholder="Detect (or a code such as fi)"
+                  autocomplete="off"
+                />
+              </label>
+              <p class="hint">
+                Any server with the OpenAI <code>/audio/transcriptions</code> interface. Include the version part of the
+                address, such as <code>https://api.openai.com/v1</code>.
+              </p>
+              <div class="actions">
+                <button id="speech-save" class="primary" type="button">Save</button>
+              </div>
+            </div>
+
+            <label class="toggle-row" for="speech-polish">
+              <span class="toggle-copy">
+                <span class="toggle-title">Improve text while dictating</span>
+                <span id="speech-polish-hint" class="hint"></span>
+              </span>
+              <input id="speech-polish" type="checkbox" />
+            </label>
           </div>
         </section>
       </div>

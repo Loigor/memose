@@ -942,3 +942,25 @@ button:hover {
 .ai-float:hover {
   border-color: var(--ai-accent);
 }
+
+.ai-bubble button.ai-mic {
+  display: grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--ai-muted);
+}
+
+.ai-bubble button.ai-mic[hidden] {
+  display: none;
+}
+
+.ai-bubble button.ai-mic:hover,
+.ai-bubble button.ai-mic.rec-on {
+  background: var(--ai-soft);
+  color: var(--ai-ink);
+}

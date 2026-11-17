@@ -703,3 +703,61 @@ header.compact-meta #edited-sep {
     animation-duration: 2.4s;
   }
 }
+
+/* Record button. The same mark is used in the AI prompt box. */
+.rec-anchor {
+  position: relative;
+  display: flex;
+}
+
+.rec-anchor[hidden] {
+  display: none;
+}
+
+.rec-toggle {
+  position: relative;
+}
+
+.rec-glyph {
+  display: block;
+  width: 8px;
+  height: 12px;
+  box-sizing: border-box;
+  border: 1.6px solid currentColor;
+  border-radius: 4px;
+  box-shadow: 0 5px 0 -3.4px currentColor;
+}
+
+/* While recording: a red dot, with a ring that follows the voice level. */
+.rec-on .rec-glyph {
+  width: 10px;
+  height: 10px;
+  border: 0;
+  border-radius: 50%;
+  background: #d8392b;
+  box-shadow: 0 0 0 calc(2px + var(--rec-level, 0) * 6px) color-mix(in srgb, #d8392b 30%, transparent);
+  transition: box-shadow 120ms linear;
+}
+
+.rec-toggle.rec-elsewhere .rec-glyph {
+  opacity: 0.45;
+}
+
+.rec-message {
+  position: absolute;
+  right: 8px;
+  z-index: 7;
+  max-width: min(320px, calc(100% - 16px));
+  margin: 0;
+  padding: 6px 10px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--paper);
+  box-shadow: 0 8px 18px var(--shadow);
+  color: var(--ink);
+  font-family: system-ui, sans-serif;
+  font-size: 12px;
+  line-height: 1.35;
+  letter-spacing: 0;
+  text-transform: none;
+}

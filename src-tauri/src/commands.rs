@@ -9,6 +9,7 @@ use crate::error::AppError;
 use crate::llm;
 use crate::notes::{self, request_sync, Note, PinTabHit, PinTabs, SpaceView};
 use crate::shortcuts::{self, ShortcutBinds};
+use crate::speech;
 use crate::state::AppState;
 use crate::tray;
 use crate::window_ctl;
@@ -1301,4 +1302,301 @@ pub fn llm_clear_chat(app: AppHandle, state: State<AppState>, note_id: String) {
         log.retain(|item| item.status == llm::RUNNING);
     }
     let _ = app.emit("llm-changed", &note_id);
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct SpeechSettingsView {
+    enabled: bool,
+    /// `local`, `server`, or `off`.
+    source: String,
+    /// The speech server's own address. Empty uses the model server.
+    base_url: String,
+    /// Address in use for the `server` source, after the fallback.
+    server_url: String,
+    server_host: String,
+    server_local: bool,
+    has_key: bool,
+    model: String,
+    language: String,
+    device: String,
+    keep_audio: bool,
+    /// Let the chat model tidy dictated text while it arrives.
+    polish: bool,
+    /// The chat model is set up, so `polish` can work.
+    polish_ready: bool,
+    engine: speech::engine::Status,
+    /// A recording that is running now, in any window.
+    recording: Option<speech::StateEvent>,
+}
+
+fn flag(state: &AppState, key: &str, fallback: bool) -> Result<bool, AppError> {
+    Ok(match state.db.get_meta(key)?.as_deref() {
+        Some("1") => true,
+        Some("0") => false,
+        _ => fallback,
+    })
+}
+
+#[tauri::command]
+pub fn get_speech_settings(
+    app: AppHandle,
+    state: State<AppState>,
+) -> Result<SpeechSettingsView, AppError> {
+    let base_url = state
+        .db
+        .get_meta(speech::SPEECH_BASE_URL)?
+        .unwrap_or_default();
+    let server_url = speech::server_base(&state.db)?;
+    let llm_ready = flag(&state, llm::LLM_ENABLED, false)?
+        && state
+            .db
+            .get_meta(llm::LLM_MODEL)?
+            .is_some_and(|model| !model.is_empty())
+        && state
+            .db
+            .get_meta(llm::LLM_BASE_URL)?
+            .is_some_and(|url| !url.is_empty());
+    Ok(SpeechSettingsView {
+        enabled: flag(&state, speech::SPEECH_ENABLED, false)?,
+        source: speech::Source::parse(state.db.get_meta(speech::SPEECH_SOURCE)?.as_deref())
+            .as_str()
+            .to_string(),
+        server_host: llm::host_of(&server_url),
+        server_local: llm::is_local(&server_url),
+        has_key: state
+            .db
+            .get_meta(speech::SPEECH_API_KEY)?
+            .is_some_and(|key| !key.is_empty()),
+        model: state.db.get_meta(speech::SPEECH_MODEL)?.unwrap_or_default(),
+        language: state
+            .db
+            .get_meta(speech::SPEECH_LANGUAGE)?
+            .unwrap_or_default(),
+        device: state
+            .db
+            .get_meta(speech::SPEECH_DEVICE)?
+            .unwrap_or_default(),
+        keep_audio: flag(&state, speech::SPEECH_KEEP_AUDIO, false)?,
+        polish: flag(&state, speech::SPEECH_POLISH, true)?,
+        polish_ready: llm_ready,
+        engine: speech::engine::status(&speech::engine_dir(&app)?),
+        recording: speech::current(&state),
+        base_url,
+        server_url,
+    })
+}
+
+/// Saves the given fields and leaves the rest. An empty key removes the saved key.
+#[tauri::command]
+#[allow(clippy::too_many_arguments)]
+pub fn save_speech_settings(
+    app: AppHandle,
+    state: State<AppState>,
+    enabled: Option<bool>,
+    source: Option<String>,
+    base_url: Option<String>,
+    key: Option<String>,
+    model: Option<String>,
+    language: Option<String>,
+    device: Option<String>,
+    keep_audio: Option<bool>,
+    polish: Option<bool>,
+) -> Result<(), AppError> {
+    let set_flag = |name: &str, value: Option<bool>| -> Result<(), AppError> {
+        match value {
+            Some(on) => state.db.set_meta(name, if on { "1" } else { "0" }),
+            None => Ok(()),
+        }
+    };
+    if let Some(base) = base_url {
+        let next = llm::clean_base(&base)?;
+        let previous = state
+            .db
+            .get_meta(speech::SPEECH_BASE_URL)?
+            .unwrap_or_default();
+        // A key belongs to one server. It must not follow the URL to another host.
+        if llm::host_of(&previous) != llm::host_of(&next) && key.is_none() {
+            state.db.clear_meta(speech::SPEECH_API_KEY)?;
+        }
+        state.db.set_meta(speech::SPEECH_BASE_URL, &next)?;
+    }
+    match key.as_deref().map(str::trim) {
+        Some("") => state.db.clear_meta(speech::SPEECH_API_KEY)?,
+        Some(value) => state.db.set_meta(speech::SPEECH_API_KEY, value)?,
+        None => {}
+    }
+    if let Some(source) = source {
+        let source = speech::Source::parse(Some(source.trim()));
+        state.db.set_meta(speech::SPEECH_SOURCE, source.as_str())?;
+    }
+    if let Some(model) = model {
+        state.db.set_meta(speech::SPEECH_MODEL, model.trim())?;
+    }
+    if let Some(language) = language {
+        let code: String = language
+            .trim()
+            .chars()
+            .filter(char::is_ascii_alphabetic)
+            .take(3)
+            .collect();
+        state
+            .db
+            .set_meta(speech::SPEECH_LANGUAGE, &code.to_ascii_lowercase())?;
+    }
+    if let Some(device) = device {
+        state.db.set_meta(speech::SPEECH_DEVICE, device.trim())?;
+    }
+    set_flag(speech::SPEECH_ENABLED, enabled)?;
+    set_flag(speech::SPEECH_KEEP_AUDIO, keep_audio)?;
+    set_flag(speech::SPEECH_POLISH, polish)?;
+    let _ = app.emit("speech-settings-changed", ());
+    Ok(())
+}
+
+/// Names of the microphones the system offers.
+#[tauri::command]
+pub async fn speech_devices() -> Vec<String> {
+    tokio::task::spawn_blocking(speech::input_devices)
+        .await
+        .unwrap_or_default()
+}
+
+/// Downloads the built-in recognizer. Progress arrives as `speech-download` events.
+#[tauri::command]
+pub async fn speech_download(app: AppHandle, state: State<'_, AppState>) -> Result<(), AppError> {
+    let dir = speech::engine_dir(&app)?;
+    let http = state.http.clone();
+    let report = {
+        let app = app.clone();
+        move |progress: speech::engine::Progress| {
+            let _ = app.emit("speech-download", progress);
+        }
+    };
+    let result = speech::engine::install(&http, &dir, &report).await;
+    let status = speech::engine::status(&dir);
+    report(speech::engine::Progress {
+        received: 0,
+        total: status.download_bytes,
+        stage: if result.is_ok() { "done" } else { "error" }.into(),
+        error: result.as_ref().err().map(ToString::to_string),
+    });
+    let _ = app.emit("speech-settings-changed", ());
+    result
+}
+
+/// Deletes the built-in recognizer's files.
+#[tauri::command]
+pub fn speech_remove_model(app: AppHandle, state: State<AppState>) -> Result<(), AppError> {
+    if speech::current(&state).is_some() {
+        return Err(AppError::Message("stop the recording first".into()));
+    }
+    speech::engine::remove(&speech::engine_dir(&app)?)?;
+    let _ = app.emit("speech-settings-changed", ());
+    Ok(())
+}
+
+/// Starts recording. `purpose` is `memo` for dictation or `prompt` for a spoken model prompt.
+#[tauri::command]
+pub async fn speech_start(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    purpose: speech::Purpose,
+    note_id: Option<String>,
+) -> Result<String, AppError> {
+    if !flag(&state, speech::SPEECH_ENABLED, false)? {
+        return Err(AppError::Message("recording is turned off".into()));
+    }
+    let recognizer = speech::recognizer(&state.db)?;
+    let keep_audio = flag(&state, speech::SPEECH_KEEP_AUDIO, false)?;
+    match recognizer.source {
+        speech::Source::Local => {
+            let status = speech::engine::status(&speech::engine_dir(&app)?);
+            if !status.supported {
+                return Err(AppError::Message(
+                    "the built-in recognizer is not available on this computer; use a speech server".into(),
+                ));
+            }
+            if !status.installed {
+                return Err(AppError::Message(
+                    "download the speech model in Settings first".into(),
+                ));
+            }
+        }
+        speech::Source::Server => {
+            if recognizer.base.is_empty() {
+                return Err(AppError::Message("speech server URL is not set".into()));
+            }
+            if recognizer.model.is_empty() {
+                return Err(AppError::Message("speech model is not set".into()));
+            }
+            // An offline-only memo is not spoken to another computer.
+            let offline_only = match note_id.as_deref().map(|id| state.db.get(id)).transpose()? {
+                Some(Some(note)) => {
+                    let visibility = match note.visibility {
+                        Some(own) if !own.is_empty() => own,
+                        _ => state
+                            .db
+                            .get_meta(notes::MEMO_VISIBILITY)?
+                            .unwrap_or_default(),
+                    };
+                    notes::is_offline_private(&visibility)
+                }
+                _ => false,
+            };
+            if offline_only && purpose == speech::Purpose::Memo && !llm::is_local(&recognizer.base)
+            {
+                return Err(AppError::Message(
+                    "this memo is kept on this computer only; use the built-in recognizer for it"
+                        .into(),
+                ));
+            }
+        }
+        speech::Source::Off => {
+            if purpose == speech::Purpose::Prompt {
+                return Err(AppError::Message(
+                    "speech to text is turned off, so a prompt cannot be spoken".into(),
+                ));
+            }
+            if !keep_audio {
+                return Err(AppError::Message(
+                    "turn on speech to text or keeping the recording first".into(),
+                ));
+            }
+        }
+    }
+    let options = speech::StartOptions {
+        purpose,
+        note_id,
+        keep_audio,
+        device: state
+            .db
+            .get_meta(speech::SPEECH_DEVICE)?
+            .unwrap_or_default(),
+        recognizer,
+    };
+    let handle = app.clone();
+    tokio::task::spawn_blocking(move || speech::start(&handle, options))
+        .await
+        .map_err(|err| AppError::Message(format!("recording did not start: {err}")))?
+}
+
+/// Ends the running recording. Its last text and `speech-done` follow as events.
+#[tauri::command]
+pub fn speech_stop(state: State<AppState>) {
+    speech::stop(&state);
+}
+
+/// Tidies dictated text with the chat model, using the note around the cursor.
+#[tauri::command]
+pub async fn speech_polish(
+    state: State<'_, AppState>,
+    before: String,
+    after: String,
+    dictated: String,
+) -> Result<String, AppError> {
+    if dictated.trim().is_empty() {
+        return Ok(String::new());
+    }
+    speech::polish(&state.http, &state.db, &before, &after, &dictated).await
 }

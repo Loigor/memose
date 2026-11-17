@@ -36,6 +36,7 @@ import {
   resolveSelection,
   splitProtected,
 } from "../src/editor/line-diff.ts";
+import { applyPolish, joinDictation, locateSpan, spanFromInsert, splitTail } from "../src/editor/dictation-span.ts";
 import { highlightMarkdown } from "../src/editor/md-highlight.ts";
 import { tagAtOffset } from "../src/editor/md-tags.ts";
 import { uniqueFiles } from "../src/media/files.ts";
@@ -446,6 +447,7 @@ test("settings window separates visibility, window, editor, shortcuts, and sync"
     { id: "shortcuts", label: "Shortcuts" },
     { id: "sync", label: "Sync" },
     { id: "models", label: "Models" },
+    { id: "recording", label: "Recording" },
   ]);
   assert.match(html, /id="tab-visibility"[\s\S]*?aria-selected="true"/);
   assert.match(html, /Default memo visibility/);
@@ -1230,4 +1232,42 @@ test("an edit of selected lines replaces only those lines", () => {
   );
   assert.equal(locateBlock(["a", "b", "a", "b"], ["a", "b"], 3), 2);
   assert.equal(locateBlock(lines, ["gone"]), -1);
+});
+
+test("dictated text is found again in the memo while it grows", () => {
+  const span = spanFromInsert("Intro. Outro.", "Intro. hello there Outro.");
+  assert.deepEqual(span && { start: span.start, end: span.end }, { start: 7, end: 19 });
+  assert.equal(spanFromInsert("same", "same"), null);
+  assert.equal(spanFromInsert("longer text", "short"), null);
+  assert.ok(span);
+  assert.deepEqual(locateSpan(span, "Intro. hello there Outro."), { start: 7, end: 19 });
+  assert.deepEqual(locateSpan(span, "New first line.\nIntro. hello there Outro."), { start: 23, end: 35 });
+  assert.equal(locateSpan(span, "Intro. Outro."), null);
+  const twice = { content: "ab ab", start: 3, end: 5 };
+  assert.deepEqual(locateSpan(twice, "x ab ab"), { start: 2, end: 4 }, "the match nearest to the old place wins");
+  assert.deepEqual(locateSpan(twice, "ab ab ab ab"), { start: 3, end: 5 });
+});
+
+test("new pieces of speech are joined with one space", () => {
+  assert.equal(joinDictation("", " hello "), "hello");
+  assert.equal(joinDictation("hello", "there"), "hello there");
+  assert.equal(joinDictation("hello\n", "there"), "hello\nthere");
+  assert.equal(joinDictation("hello", "   "), "hello");
+});
+
+test("only the tail of long dictation is reworded, from a sentence start", () => {
+  assert.deepEqual(splitTail("short text"), { head: "", tail: "short text" });
+  const long = `${"First sentence here. ".repeat(40)}Last one.`;
+  const { head, tail } = splitTail(long, 100);
+  assert.equal(head + tail, long);
+  assert.ok(tail.length <= 100);
+  assert.ok(tail.startsWith("First sentence") || tail.startsWith("Last one"));
+  assert.ok(head.endsWith(". "));
+});
+
+test("a reworded tail keeps speech that arrived while the model worked", () => {
+  assert.equal(applyPolish("teh cat sat", "", "teh cat sat", "The cat sat."), "The cat sat.");
+  assert.equal(applyPolish("teh cat sat and purred", "", "teh cat sat", "The cat sat."), "The cat sat. and purred");
+  assert.equal(applyPolish("Done. teh cat", "Done. ", "teh cat", "The cat."), "Done. The cat.");
+  assert.equal(applyPolish("user rewrote it", "", "teh cat sat", "The cat sat."), null);
 });

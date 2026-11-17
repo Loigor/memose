@@ -10,13 +10,13 @@ todos:
     status: pending
   - id: speech-session
     content: "Rust mic session: cpal capture, downmix and resample to 16 kHz, WAV with periodic header flush and size rollover, ordered slice queue to /audio/transcriptions, seq-acked chunks, recovery on start, tray icon and menu"
-    status: pending
+    status: in_progress
   - id: speech-block
     content: Speech block via hidden reference lines, live placeholder while recording, player and delete in both editors, useMemos transcript plus audio attachment
     status: pending
   - id: voice-settings
     content: "Voice & models settings: enable flags, device, language, beep, two base URLs (with version prefix), model list, Ollama pull with progress or download instructions"
-    status: pending
+    status: in_progress
   - id: llm-review
     content: LLM prompt on header, code blocks, and speech blocks; protected lines; own HTTP timeout and cancel; stale-proposal check; line diff with accept and accept all
     status: in_progress
@@ -37,6 +37,39 @@ Suggested delivery order, each one shippable alone:
 1. **LLM edits.** Independent of audio and the lowest risk.
 2. **Recording plus attachment.** A recording ends with a speech block, an audio file and a transcript made in one pass on stop.
 3. **Live slices.** The transcript fills in while you talk.
+
+## Step 2 as built: recording
+
+This section describes what exists. Where the later sections say something else (speech markers, a server as the only recognizer, the tray icon, recording that outlives its window), they are still plans.
+
+**Recognizer.** Two choices in the Recording settings tab, plus "off, sound only":
+
+- **On this computer (default).** NVIDIA Parakeet v3 through ONNX Runtime, using the `transcribe-rs` crate. It covers 25 European languages, detects the language, and adds punctuation. Neither the runtime (about 30 MB) nor the model (478 MB) ships with the app. The user downloads both from settings; each download is checked against a pinned SHA-256 before it is unpacked into `app_data/speech`.
+- **Speech server.** Any OpenAI-compatible `/audio/transcriptions` server. With no address of its own it uses the model server's address and key.
+
+Costs, measured on an M-series Mac:
+
+- App binary: 7.9 MB with recording and model prompts, 5.9 MB before both. ONNX Runtime is loaded from the downloaded file (`ort` with `load-dynamic`); linking it in would add about 17 MB.
+- Memory: about 1.3 GB while the model is loaded. It is loaded when a recording starts and dropped 90 seconds after the last one ends. With recording off, nothing is loaded.
+- Speed: 15 to 29 times faster than real time.
+- No runtime exists for Intel Macs, so they only get the speech server.
+
+**Pipeline** ([src-tauri/src/speech](src-tauri/src/speech)). One recording at a time. A thread owns the microphone (`cpal`), mixes to mono, resamples to 16 kHz, and cuts slices at pauses. A task turns slices into text in order and emits `speech-chunk`. `speech-done` ends it, with the saved WAV line when sound is kept.
+
+- Dictation cuts after a 0.7 s pause or at 12 s. A spoken prompt waits 1.3 s and allows 25 s, so a command arrives whole.
+- A slice with under 160 ms of voice is dropped, because recognizers invent text on silence. The threshold follows the room's noise.
+- A recording stops by itself after 30 minutes.
+
+**Into a memo** ([src/ai/dictation.ts](src/ai/dictation.ts)). The record button in the memo header writes at the cursor.
+
+- Each slice is appended to the dictated span. The span is found again before every write, by offset when the memo is unchanged and by its text otherwise ([dictation-span.ts](src/editor/dictation-span.ts)).
+- **Improve while dictating.** After each slice the chat model gets the note before and after the span and the last 600 characters of dictation, and returns them tidied: punctuation, misheard words, list form, spoken corrections. Speech that arrived meanwhile is kept after the tidied part. A reply much longer than what was said is dropped. One failure turns tidying off for that recording.
+- One dictation is one undo step.
+- With "Keep the recording" on, the WAV is added under the text as a normal audio attachment.
+
+**Into the AI prompt.** The microphone in the prompt box writes the words into the box. Sound is never kept. Pressing send while recording stops it and sends once the last words arrive. The prompt then runs like a typed one, so it can ask, edit, or work on a selection.
+
+Not built yet: the record button on stack sections, speech markers that tie a transcript to its audio, recording that continues after the memo window closes, the tray icon, WAV crash recovery, and the resume beep.
 
 ## Format: local markers, remote text
 

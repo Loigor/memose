@@ -114,8 +114,8 @@ export interface EditorController extends LookEditor {
   isEmpty(): boolean;
   isEmptyNewMemo(field?: { readonly value: string } | null): boolean;
   showStored(content: string): void;
-  /** Replaces the memo text as one undo step and saves it. */
-  replaceContent(content: string): void;
+  /** Replaces the memo text as one undo step and saves it. `quiet` adds no undo step. */
+  replaceContent(content: string, quiet?: boolean): void;
   renderSurface(focusName?: string): void;
   focus(): void;
   focusEditing(): void;
@@ -280,8 +280,10 @@ export function createEditorController(
     renderSurface();
   }
 
-  function replaceContent(content: string) {
-    pushUndo(true);
+  function replaceContent(content: string, quiet = false) {
+    if (!quiet) {
+      pushUndo(true);
+    }
     state.blocks = parseBlocks(content);
     publishBlocks();
     drafts.scheduleDraft();

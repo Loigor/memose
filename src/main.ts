@@ -1,6 +1,7 @@
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 
+import { mountDictation } from "./ai/dictation";
 import { mountLlmBubble } from "./ai/llm-edit";
 import { createAppBackend } from "./app/backend";
 import { createAudienceController } from "./app/controllers/audience-controller";
@@ -98,6 +99,17 @@ if (aiAnchor && !isPreviewWindow()) {
     replace: (next) => editorController.replaceContent(next),
     visibility: () => appState.audience.visibility || null,
     selectionRoots: () => [blocksEl, appContext.dom.preview],
+    onAvailability: () => stack.syncHeader(),
+  });
+}
+const recAnchor = document.querySelector<HTMLElement>("#rec-anchor");
+if (recAnchor && !isPreviewWindow()) {
+  mountDictation(recAnchor, {
+    host: cardEl,
+    noteId: () => sessionController.currentNoteId(),
+    text: () => editorController.content(),
+    replace: (next, quiet) => editorController.replaceContent(next, quiet),
+    insertAtCursor: (text) => editorController.insertPlainText(text),
     onAvailability: () => stack.syncHeader(),
   });
 }
