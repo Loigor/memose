@@ -1324,8 +1324,8 @@ pub(crate) struct SpeechSettingsView {
     language: String,
     device: String,
     keep_audio: bool,
-    /// Let the chat model tidy dictated text while it arrives.
-    polish: bool,
+    /// How much the chat model improves dictated text while it arrives, 1 to 4.
+    polish_level: u8,
     /// The chat model is set up, so `polish` can work.
     polish_ready: bool,
     engine: speech::engine::Status,
@@ -1383,7 +1383,7 @@ pub fn get_speech_settings(
             .get_meta(speech::SPEECH_DEVICE)?
             .unwrap_or_default(),
         keep_audio: flag(&state, speech::SPEECH_KEEP_AUDIO, false)?,
-        polish: flag(&state, speech::SPEECH_POLISH, true)?,
+        polish_level: speech::stored_level(&state.db)? as u8,
         polish_ready: llm_ready,
         engine: speech::engine::status(&speech::engine_dir(&app)?),
         microphone: speech::permission::status(),
@@ -1407,7 +1407,7 @@ pub fn save_speech_settings(
     language: Option<String>,
     device: Option<String>,
     keep_audio: Option<bool>,
-    polish: Option<bool>,
+    polish_level: Option<u8>,
 ) -> Result<(), AppError> {
     let set_flag = |name: &str, value: Option<bool>| -> Result<(), AppError> {
         match value {
@@ -1455,7 +1455,12 @@ pub fn save_speech_settings(
     }
     set_flag(speech::SPEECH_ENABLED, enabled)?;
     set_flag(speech::SPEECH_KEEP_AUDIO, keep_audio)?;
-    set_flag(speech::SPEECH_POLISH, polish)?;
+    if let Some(level) = polish_level {
+        let level = speech::Level::from_number(level) as u8;
+        state
+            .db
+            .set_meta(speech::SPEECH_POLISH_LEVEL, &level.to_string())?;
+    }
     let _ = app.emit("speech-settings-changed", ());
     Ok(())
 }
@@ -1671,16 +1676,25 @@ pub fn speech_stop(state: State<AppState>) {
     speech::stop(&state);
 }
 
-/// Tidies dictated text with the chat model, using the note around the cursor.
+/// Improves dictated text with the chat model at `level` (1 to 4). Only level 4 uses `before` and `after`.
 #[tauri::command]
 pub async fn speech_polish(
     state: State<'_, AppState>,
     before: String,
     after: String,
     dictated: String,
+    level: u8,
 ) -> Result<String, AppError> {
     if dictated.trim().is_empty() {
         return Ok(String::new());
     }
-    speech::polish(&state.http, &state.db, &before, &after, &dictated).await
+    speech::polish(
+        &state.http,
+        &state.db,
+        speech::Level::from_number(level),
+        &before,
+        &after,
+        &dictated,
+    )
+    .await
 }

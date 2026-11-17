@@ -225,7 +225,7 @@ button:hover {
   min-height: 0;
   flex: 1;
   overflow: hidden;
-  padding: 0 12px 12px;
+  padding: 10px 12px 12px;
 }
 
 #note-pane {
@@ -336,6 +336,12 @@ button:hover {
   min-height: 64px;
 }
 
+@property --ai-cover {
+  syntax: "<number>";
+  inherits: true;
+  initial-value: 1;
+}
+
 /*
  * AI color scheme. Every AI surface takes its colors from these, and they are
  * derived from the memo theme: the paper and ink shifted toward one tint.
@@ -345,7 +351,9 @@ button:hover {
   --ai-tint: #7a5cf0;
   --ai-accent: color-mix(in srgb, var(--ink) 38%, var(--ai-tint));
   --ai-paper: color-mix(in srgb, var(--paper) 91%, var(--ai-tint));
-  --ai-bg: color-mix(in srgb, var(--ai-paper) 84%, transparent);
+  /* Stays put until the memo is mostly see-through (below 30), then fades with the memo. */
+  --ai-cover: min(1, calc(var(--paper-alpha) / 30%));
+  --ai-bg: color-mix(in srgb, var(--ai-paper) calc(var(--ai-cover) * 64%), transparent);
   --ai-surface: color-mix(in srgb, var(--paper) 2%, transparent);
   --ai-soft: color-mix(in srgb, var(--ai-tint) 13%, transparent);
   --ai-line: color-mix(in srgb, var(--ai-accent) 26%, transparent);
@@ -371,8 +379,8 @@ button:hover {
   border: 1px solid var(--ai-line);
   border-radius: 14px;
   background: var(--ai-bg);
-  -webkit-backdrop-filter: blur(16px) saturate(1.3);
-  backdrop-filter: blur(16px) saturate(1.3);
+  -webkit-backdrop-filter: blur(calc(var(--ai-cover) * 5px)) saturate(1.3);
+  backdrop-filter: blur(calc(var(--ai-cover) * 5px)) saturate(1.3);
   box-shadow: 0 12px 28px var(--shadow);
   color: var(--ai-ink);
   font-family: system-ui, sans-serif;

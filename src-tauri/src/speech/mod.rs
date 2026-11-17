@@ -37,6 +37,8 @@ pub const SPEECH_LANGUAGE: &str = "speech_language";
 pub const SPEECH_DEVICE: &str = "speech_device";
 pub const SPEECH_KEEP_AUDIO: &str = "speech_keep_audio";
 pub const SPEECH_POLISH: &str = "speech_polish";
+/// Improvement level for live dictation, 1 to 4.
+pub const SPEECH_POLISH_LEVEL: &str = "speech_polish_level";
 
 /// A microphone that has given only exact zeros for this long is not shared with the app.
 const SILENT_DEVICE: Duration = Duration::from_millis(1500);
@@ -55,7 +57,97 @@ const MAX_SECONDS: u64 = 30 * 60;
 const ENGINE_IDLE: Duration = Duration::from_secs(90);
 const SERVER_TIMEOUT: Duration = Duration::from_secs(120);
 const POLISH_TIMEOUT: Duration = Duration::from_secs(120);
-const POLISH_RULES: &str = "You clean up text that a user is dictating into a note. You get the note text before the cursor, the note text after it, and the dictated text as a speech recognizer heard it. Rewrite only the dictated text: fix punctuation, capitalization, and words that were clearly misheard, using the note to pick the right words and the right form (continue a list with list items, for example). Apply spoken corrections such as \"no, I mean\" or \"scratch that\". Keep the language and the meaning. Do not add content, do not answer questions in it, and do not repeat the note text. Reply with the cleaned dictated text only.";
+/// Rules every improvement level shares.
+const POLISH_COMMON: &str = "Reply with the corrected text only. Reply in the language of the text and never translate it. Do not add content, do not answer questions in it, do not add line breaks, and do not explain.";
+const POLISH_IMPROVED: &str = "You fix text that a speech recognizer heard. Add punctuation and capital letters. Fix only words that are clearly recognition errors. Keep the speaker's own words, dialect, and word order.";
+const POLISH_PROOF: &str = "You proof-read text that a speech recognizer heard. Correct spelling, grammar, punctuation, and misheard words, so it reads as correct standard written language. Keep the meaning, the tone, and everything that was said.";
+const POLISH_CONTEXT: &str = "You proof-read text that a user dictated into a note. You also get the note text before and after it. Correct spelling, grammar, punctuation, and misheard words, so it reads as correct standard written language. Use the note to pick the right names, terms, and form, and apply spoken corrections such as \"no, I mean\" or \"scratch that\". Keep the meaning, the tone, and everything that was said.";
+
+/// How much the chat model may change dictated text.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub enum Level {
+    /// As the recognizer heard it. No model.
+    Basic = 1,
+    /// Punctuation, capitals, and clear recognition errors. Dialect stays.
+    Improved = 2,
+    /// Spelling and grammar into standard written language.
+    Proofread = 3,
+    /// Proof-read with the memo around the words as context.
+    Context = 4,
+}
+
+impl Level {
+    pub const DEFAULT: Self = Self::Improved;
+
+    pub fn from_number(value: u8) -> Self {
+        match value {
+            1 => Self::Basic,
+            3 => Self::Proofread,
+            4 => Self::Context,
+            _ => Self::Improved,
+        }
+    }
+
+    /// The share of the heard words a reply must keep. A reply that keeps fewer is the model
+    /// rewriting on its own, and the words stay as heard.
+    fn min_kept(self) -> f32 {
+        match self {
+            Self::Basic => 1.0,
+            Self::Improved => 0.6,
+            Self::Proofread | Self::Context => 0.35,
+        }
+    }
+}
+
+/// The saved level for live dictation.
+pub fn stored_level(db: &Db) -> Result<Level, AppError> {
+    if let Some(value) = db
+        .get_meta(SPEECH_POLISH_LEVEL)?
+        .and_then(|v| v.parse::<u8>().ok())
+    {
+        return Ok(Level::from_number(value));
+    }
+    // Before levels there was an on/off switch.
+    Ok(match db.get_meta(SPEECH_POLISH)?.as_deref() {
+        Some("0") => Level::Basic,
+        _ => Level::DEFAULT,
+    })
+}
+
+fn plain_words(text: &str) -> Vec<String> {
+    text.split_whitespace()
+        .map(|word| {
+            word.chars()
+                .filter(|ch| ch.is_alphanumeric())
+                .collect::<String>()
+                .to_lowercase()
+        })
+        .filter(|word| !word.is_empty())
+        .collect()
+}
+
+/// Share of the heard words that the reply keeps in order, ignoring case and punctuation.
+pub fn kept_share(heard: &str, reply: &str) -> f32 {
+    let a = plain_words(heard);
+    let b = plain_words(reply);
+    if a.is_empty() {
+        return 1.0;
+    }
+    let mut row = vec![0_usize; b.len() + 1];
+    for word in &a {
+        let mut diagonal = 0;
+        for (j, other) in b.iter().enumerate() {
+            let above = row[j + 1];
+            row[j + 1] = if word == other {
+                diagonal + 1
+            } else {
+                row[j + 1].max(row[j])
+            };
+            diagonal = above;
+        }
+    }
+    row[b.len()] as f32 / a.len() as f32
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -228,10 +320,14 @@ pub async fn transcribe_remote(
 pub async fn polish(
     http: &reqwest::Client,
     db: &Db,
+    level: Level,
     before: &str,
     after: &str,
     dictated: &str,
 ) -> Result<String, AppError> {
+    if level == Level::Basic || dictated.trim().is_empty() {
+        return Ok(dictated.to_string());
+    }
     let base = db
         .get_meta(llm::LLM_BASE_URL)?
         .filter(|url| !url.is_empty())
@@ -241,15 +337,22 @@ pub async fn polish(
         .filter(|model| !model.is_empty())
         .ok_or_else(|| AppError::Message("model is not set".into()))?;
     let key = db.get_meta(llm::LLM_API_KEY)?;
-    let user = format!(
-        "<before>\n{before}\n</before>\n\n<after>\n{after}\n</after>\n\n<dictated>\n{dictated}\n</dictated>"
-    );
+    let (rules, user) = match level {
+        Level::Context => (
+            POLISH_CONTEXT,
+            format!(
+                "<before>\n{before}\n</before>\n\n<after>\n{after}\n</after>\n\n<dictated>\n{dictated}\n</dictated>"
+            ),
+        ),
+        Level::Proofread => (POLISH_PROOF, format!("<dictated>\n{dictated}\n</dictated>")),
+        _ => (POLISH_IMPROVED, format!("<dictated>\n{dictated}\n</dictated>")),
+    };
     let raw = llm::complete(
         http,
         &base,
         key.as_deref(),
         &model,
-        POLISH_RULES,
+        &format!("{rules} {POLISH_COMMON}"),
         &user,
         POLISH_TIMEOUT,
     )
@@ -259,11 +362,16 @@ pub async fn polish(
         .trim()
         .trim_start_matches("<dictated>")
         .trim_end_matches("</dictated>")
-        .trim();
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ");
     if cleaned.is_empty() {
         return Err(AppError::Message("the model returned no text".into()));
     }
-    Ok(cleaned.to_string())
+    if kept_share(dictated, &cleaned) < level.min_kept() {
+        return Ok(dictated.to_string());
+    }
+    Ok(cleaned)
 }
 
 /// The recording that is running now.
@@ -299,6 +407,8 @@ struct ChunkEvent {
     session_id: String,
     seq: u32,
     text: String,
+    /// Silence before this piece, in ms. A long one starts a new paragraph.
+    pause_ms: u32,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -320,7 +430,8 @@ struct DoneEvent {
 }
 
 enum Work {
-    Slice(u32, Vec<f32>),
+    /// A piece of speech, its number, and the silence before it in ms.
+    Slice(u32, Vec<f32>, u32),
     /// Capture ended. Holds the whole recording when it is to be kept, and a capture error if any.
     End(Vec<i16>, Option<String>),
 }
@@ -551,8 +662,9 @@ fn capture(
             all.extend(audio::to_pcm(&mono));
         }
         for slice in chunker.push(&mono) {
+            let pause = chunker.take_pause();
             if slices {
-                let _ = work.send(Work::Slice(seq, slice));
+                let _ = work.send(Work::Slice(seq, slice, pause));
                 seq += 1;
             }
         }
@@ -570,7 +682,8 @@ fn capture(
     drop(stream);
     if slices {
         if let Some(slice) = chunker.finish() {
-            let _ = work.send(Work::Slice(seq, slice));
+            let pause = chunker.take_pause();
+            let _ = work.send(Work::Slice(seq, slice, pause));
         }
     }
     let _ = work.send(Work::End(all, error));
@@ -615,7 +728,7 @@ async fn work(
 
     while let Some(item) = rx.recv().await {
         match item {
-            Work::Slice(seq, samples) => {
+            Work::Slice(seq, samples, pause_ms) => {
                 if failure.is_some() {
                     continue;
                 }
@@ -658,6 +771,7 @@ async fn work(
                                 session_id: event.session_id.clone(),
                                 seq,
                                 text,
+                                pause_ms,
                             },
                         );
                     }
@@ -937,6 +1051,28 @@ mod tests {
         let own = audio::wav_bytes(&[0, 16384, -16384]);
         assert_eq!(wav_samples(&own).unwrap(), vec![0.0, 0.5, -0.5]);
         assert!(wav_samples(b"not a wav file").is_err());
+    }
+
+    #[test]
+    fn a_reply_that_rewrites_too_much_keeps_the_words_as_heard() {
+        assert!((kept_share("mä meen kauppaan", "Mä meen kauppaan.") - 1.0).abs() < 1e-6);
+        let heard = "no niin elikkä me sovittiin et julkasu siirretään";
+        let light = "No niin, elikkä me sovittiin, et julkaisu siirretään.";
+        assert!(kept_share(heard, light) >= Level::Improved.min_kept());
+        let rewrite = "Sovimme, että julkaisua siirretään.";
+        assert!(kept_share(heard, rewrite) < Level::Improved.min_kept());
+        assert!(kept_share("", "anything") >= 1.0);
+    }
+
+    #[test]
+    fn the_level_comes_from_the_old_switch_until_one_is_saved() {
+        let db = Db::open_memory().unwrap();
+        assert_eq!(stored_level(&db).unwrap(), Level::Improved);
+        db.set_meta(SPEECH_POLISH, "0").unwrap();
+        assert_eq!(stored_level(&db).unwrap(), Level::Basic);
+        db.set_meta(SPEECH_POLISH_LEVEL, "4").unwrap();
+        assert_eq!(stored_level(&db).unwrap(), Level::Context);
+        assert_eq!(Level::from_number(9), Level::Improved);
     }
 
     #[test]

@@ -12,8 +12,16 @@ async function lastDraft(page: Page): Promise<string | undefined> {
   });
 }
 
-function chunk(page: Page, sessionId: string, seq: number, text: string) {
-  return emitEvent(page, "speech-chunk", { sessionId, seq, text });
+function chunk(page: Page, sessionId: string, seq: number, text: string, pauseMs = 0) {
+  return emitEvent(page, "speech-chunk", { sessionId, seq, text, pauseMs });
+}
+
+async function setSlider(slider: import("@playwright/test").Locator, value: number) {
+  await slider.evaluate((input: HTMLInputElement, next) => {
+    input.value = String(next);
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+    input.dispatchEvent(new Event("change", { bubbles: true }));
+  }, value);
 }
 
 test("the record button stays hidden until recording is on", async ({ page }) => {
@@ -254,7 +262,7 @@ test("a recording shows its words and can be re-analyzed into a diff to accept",
   const tools = page.locator("#blocks .rec-tools");
   await expect(tools.locator(".rec-snippet")).toHaveText("“we ship friday”");
   await tools.locator("button", { hasText: /^Re-analyze$/ }).click();
-  await expect(tools.locator(".rec-note")).toHaveText("Re-analyzed:");
+  await expect(tools.locator(".rec-note")).toHaveText("Re-analyzed (Basic):");
   await expect(tools.locator(".rec-diff del").first()).toBeVisible();
   await expect(tools.locator(".rec-diff ins").first()).toBeVisible();
   await tools.locator("button", { hasText: "Accept" }).click();
@@ -275,7 +283,7 @@ test("declining a re-analysis leaves the memo as it was", async ({ page }) => {
   expect(await invokedCmds(page)).not.toContain("upsert_draft");
 });
 
-test("re-analyzing with context refines the new text with the memo around it", async ({ page }) => {
+test("re-analyzing at the context level refines the new text with the memo around it", async ({ page }) => {
   await openComposer(page, {
     draft: { content: `Meeting notes\nwe ship friday\n${recLine}` },
     speech: {
@@ -287,14 +295,20 @@ test("re-analyzing with context refines the new text with the memo around it", a
     },
   });
   const tools = page.locator("#blocks .rec-tools");
-  await tools.locator("button", { hasText: "Re-analyze with context" }).click();
-  await expect(tools.locator(".rec-note")).toHaveText("Re-analyzed and refined with the memo:");
+  const slider = tools.locator(".level-slider input");
+  await expect(slider).toHaveValue("2");
+  await expect(tools.locator(".level-name")).toHaveText("Improved");
+  await setSlider(slider, 4);
+  await expect(tools.locator(".level-name")).toHaveText("Proof-read with context");
+  await tools.locator("button", { hasText: "Re-analyze" }).click();
+  await expect(tools.locator(".rec-note")).toHaveText("Re-analyzed (Proof-read with context):");
   const polished = await page.evaluate(
     () => window.__memoseHarness?.getInvocations().find((item) => item.cmd === "speech_polish")?.args,
   );
-  expect(polished).toMatchObject({ dictated: "we ship on thursday", before: "Meeting notes\n" });
+  expect(polished).toMatchObject({ dictated: "we ship on thursday", before: "Meeting notes\n", level: 4 });
   await tools.locator("button", { hasText: "Accept" }).click();
   await expect.poll(async () => lastDraft(page)).toBe(`Meeting notes\nWe ship on Thursday.\n${recLine}`);
+  await expect(page.locator("#blocks .rec-tools .level-slider input")).toHaveValue("2");
 });
 
 test("audio that was not recorded in the app gets no tools", async ({ page }) => {
@@ -342,7 +356,7 @@ test("clicking the listening mark stops the recording", async ({ page }) => {
   await page.keyboard.press("End");
   const record = page.locator("#rec-anchor .rec-toggle");
   await record.click();
-  await page.locator("#card .rec-live").click();
+  await page.locator("#card .rec-live .rec-pill").click();
   await expect(record).not.toHaveClass(/rec-on/);
   await expect(page.locator("#card .rec-live")).toBeHidden();
   expect(await invokedCmds(page)).toContain("speech_stop");
@@ -373,4 +387,76 @@ test("the words a re-analysis would replace are marked until it is accepted", as
   await expect.poll(async () => marked(page, "rewording")).toEqual(["we ship friday"]);
   await tools.locator("button", { hasText: "Accept" }).click();
   await expect.poll(async () => marked(page, "rewording")).toEqual([]);
+});
+
+test("a long pause starts a new paragraph, and each ended paragraph gets the full pass", async ({ page }) => {
+  await openComposer(page, {
+    draft: { content: "" },
+    speech: {
+      ...ready,
+      polishReady: true,
+      polishLevel: 3,
+      polishReplies: {
+        "first part": "First part.",
+        "First part.": "First part, proof-read.",
+        "second part": "Second part.",
+        "Second part.": "Second part, proof-read.",
+      },
+    },
+  });
+  await page.locator("#blocks .md-lines").first().click();
+  const record = page.locator("#rec-anchor .rec-toggle");
+  await record.click();
+  await chunk(page, "speech-1", 0, "first part");
+  await expect(page.locator("#blocks")).toContainText("First part.");
+  await chunk(page, "speech-1", 1, "second part", 3200);
+  await expect.poll(async () => lastDraft(page)).toContain("First part, proof-read.\n\n");
+  await record.click();
+  await expect.poll(async () => lastDraft(page)).toBe("First part, proof-read.\n\nSecond part, proof-read.");
+  const levels = await page.evaluate(() =>
+    window.__memoseHarness
+      ?.getInvocations()
+      .filter((item) => item.cmd === "speech_polish")
+      .map((item) => (item.args as { level: number }).level),
+  );
+  expect(levels).toContain(2);
+  expect(levels).toContain(3);
+});
+
+test("the slider under the listening mark changes the level and keeps it for the next recording", async ({ page }) => {
+  await openComposer(page, {
+    draft: { content: "Notes" },
+    speech: { ...ready, polishReady: true, polishLevel: 2 },
+  });
+  await page.locator("#blocks .md-lines").first().click();
+  await page.keyboard.press("End");
+  const record = page.locator("#rec-anchor .rec-toggle");
+  await record.click();
+  const slider = page.locator("#card .rec-live .level-slider input");
+  await expect(slider).toHaveValue("2");
+  await setSlider(slider, 1);
+  await expect(page.locator("#card .rec-live .level-name")).toHaveText("Basic");
+  await chunk(page, "speech-1", 0, "plain words");
+  await expect(page.locator("#blocks")).toContainText("Notes plain words");
+  await record.click();
+  expect(await invokedCmds(page)).not.toContain("speech_polish");
+  const saved = await page.evaluate(
+    () =>
+      window.__memoseHarness
+        ?.getInvocations()
+        .filter((item) => item.cmd === "save_speech_settings")
+        .pop()?.args,
+  );
+  expect(saved).toMatchObject({ polishLevel: 1 });
+  await record.click();
+  await expect(page.locator("#card .rec-live .level-slider input")).toHaveValue("1");
+  await record.click();
+});
+
+test("without the chat model there is no slider and the words stay as heard", async ({ page }) => {
+  await openComposer(page, { draft: { content: "Notes" }, speech: ready });
+  await page.locator("#blocks .md-lines").first().click();
+  await page.locator("#rec-anchor .rec-toggle").click();
+  await expect(page.locator("#card .rec-live .rec-pill")).toBeVisible();
+  await expect(page.locator("#card .rec-live .level-slider")).toBeHidden();
 });

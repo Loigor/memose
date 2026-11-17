@@ -5,7 +5,8 @@ header {
   align-items: center;
   justify-content: space-between;
   gap: 4px;
-  padding: 10px 8px 6px 12px;
+  padding: 10px 8px 10px 12px;
+  border-bottom: 1px solid var(--rule);
   font-family: system-ui, sans-serif;
   font-size: 13px;
   letter-spacing: 0.04em;
@@ -767,10 +768,21 @@ header.compact-meta #edited-sep {
   text-transform: none;
 }
 
-/* The listening mark beside the text being dictated. */
+/* The listening mark beside the text being dictated, with the improvement slider under it. */
 .rec-live {
   position: absolute;
   z-index: 5;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-family: system-ui, sans-serif;
+  font-size: 11px;
+  letter-spacing: 0;
+  text-transform: none;
+  white-space: nowrap;
+}
+
+.rec-pill {
   display: flex;
   align-items: center;
   gap: 6px;
@@ -780,15 +792,10 @@ header.compact-meta #edited-sep {
   background: color-mix(in srgb, var(--paper) 88%, #d8392b);
   box-shadow: 0 3px 10px var(--shadow);
   color: color-mix(in srgb, var(--ink) 70%, #d8392b);
-  font-family: system-ui, sans-serif;
-  font-size: 11px;
-  letter-spacing: 0;
-  text-transform: none;
-  white-space: nowrap;
   cursor: pointer;
 }
 
-.rec-live:hover {
+.rec-pill:hover {
   border-color: #d8392b;
 }
 
@@ -862,4 +869,39 @@ header.compact-meta #edited-sep {
 
 ::highlight(rewording) {
   background-color: color-mix(in srgb, #7a5cf0 18%, transparent);
+}
+
+/* The four-step improvement slider, under the listening mark and under "Re-analyze". */
+.level-slider {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 1px 8px 1px 6px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--paper) 92%, transparent);
+  box-shadow: 0 0 0 1px var(--line);
+  color: color-mix(in srgb, var(--ink) 65%, transparent);
+  font-family: system-ui, sans-serif;
+  font-size: 10.5px;
+  letter-spacing: 0;
+  text-transform: none;
+  white-space: nowrap;
+  cursor: default;
+}
+
+.level-slider[hidden] {
+  display: none;
+}
+
+.level-slider input {
+  width: 52px;
+  height: 12px;
+  margin: 0;
+  accent-color: #7a5cf0;
+  cursor: pointer;
+}
+
+.level-name {
+  min-width: 0;
+  font-weight: 600;
 }

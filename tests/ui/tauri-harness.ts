@@ -87,10 +87,12 @@ export type SpeechSeed = {
   installed?: boolean;
   supported?: boolean;
   keepAudio?: boolean;
-  polish?: boolean;
+  polishLevel?: number;
   polishReady?: boolean;
   /** What the mocked chat model makes of dictated text. Missing leaves it as heard. */
   polishReply?: string;
+  /** Replies by the exact text sent, for tests with several passes. */
+  polishReplies?: Record<string, string>;
   /** Markdown line a kept recording ends with. */
   audio?: string;
   microphone?: "unknown" | "granted" | "denied" | "notNeeded";
@@ -232,7 +234,7 @@ function installBrowserHarness(seed: BrowserSeed) {
     language: "",
     device: "",
     keepAudio: Boolean(seed.speech?.keepAudio),
-    polish: seed.speech?.polish !== false,
+    polishLevel: seed.speech?.polishLevel ?? 2,
     installed: Boolean(seed.speech?.installed),
     microphone: seed.speech?.microphone ?? "granted",
     recordings: new Map(
@@ -643,7 +645,7 @@ function installBrowserHarness(seed: BrowserSeed) {
           language: speech.language,
           device: speech.device,
           keepAudio: speech.keepAudio,
-          polish: speech.polish,
+          polishLevel: speech.polishLevel,
           polishReady: Boolean(seed.speech?.polishReady),
           engine: {
             supported: seed.speech?.supported !== false,
@@ -656,7 +658,10 @@ function installBrowserHarness(seed: BrowserSeed) {
         };
       }
       case "save_speech_settings": {
-        for (const name of ["enabled", "keepAudio", "polish"] as const) {
+        if (typeof a.polishLevel === "number") {
+          speech.polishLevel = a.polishLevel;
+        }
+        for (const name of ["enabled", "keepAudio"] as const) {
           if (typeof a[name] === "boolean") {
             speech[name] = a[name];
           }
@@ -736,8 +741,16 @@ function installBrowserHarness(seed: BrowserSeed) {
       }
       case "recording_transcribe":
         return seed.speech?.transcribe ?? "";
-      case "speech_polish":
+      case "speech_polish": {
+        if (Number(a.level) <= 1) {
+          return String(a.dictated ?? "");
+        }
+        const replies = seed.speech?.polishReplies;
+        if (replies) {
+          return replies[String(a.dictated ?? "")] ?? String(a.dictated ?? "");
+        }
         return seed.speech?.polishReply ?? String(a.dictated ?? "");
+      }
       case "save_settings": {
         if (typeof a.baseUrl === "string") {
           state.settings.baseUrl = a.baseUrl;

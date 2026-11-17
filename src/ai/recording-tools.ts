@@ -7,10 +7,13 @@
 import { acceptWords, locateWords, wordDiff } from "../editor/recording-words";
 import { findTextRanges, keepScroll, setHighlight } from "../editor/view-keep";
 import {
+  DEFAULT_LEVEL,
+  improvementLevels,
+  levelSlider,
   polishSpeech,
   recordingsInfo,
+  topLevel,
   saveRecordingText,
-  speechSettings,
   transcribeRecording,
   watchSpeech,
   type RecordingInfo,
@@ -33,12 +36,16 @@ const SNIPPET = 90;
 type Proposal = {
   old: string;
   next: string;
-  refined: boolean;
+  /** Improvement level the new text was made with. */
+  level: number;
 };
 
 type ToolState = {
   info: RecordingInfo;
-  busy: "plain" | "refined" | null;
+  /** The level a run is going at, or null when none runs. */
+  busy: number | null;
+  /** The level the slider shows. It goes back to the default after each run. */
+  level: number;
   proposal: Proposal | null;
   error: string;
 };
@@ -114,7 +121,8 @@ export function mountRecordingTools(target: RecordingToolsTarget) {
     }
 
     if (state.proposal) {
-      const { old, next, refined } = state.proposal;
+      const { old, next } = state.proposal;
+      const levelName = improvementLevels.find((item) => item.level === state.proposal?.level)?.name ?? "";
       const diff = el("p", "rec-diff");
       for (const part of wordDiff(old, next)) {
         if (part.kind === "same") {
@@ -128,7 +136,7 @@ export function mountRecordingTools(target: RecordingToolsTarget) {
           diff.append(el("ins", "", part.hunk.added.join("")));
         }
       }
-      tools.append(el("p", "rec-note", refined ? "Re-analyzed and refined with the memo:" : "Re-analyzed:"), diff);
+      tools.append(el("p", "rec-note", `Re-analyzed (${levelName}):`), diff);
       const actions = el("div", "rec-actions");
       actions.append(
         button("rec-accept", old === next ? "Keep" : "Accept", () => {
@@ -149,23 +157,21 @@ export function mountRecordingTools(target: RecordingToolsTarget) {
       tools.append(actions);
     } else if (state.busy) {
       const row = el("p", "rec-note rec-busy");
-      row.append(
-        el("span", "ai-spinner"),
-        document.createTextNode(state.busy === "refined" ? " Re-analyzing and refining…" : " Re-analyzing…"),
-      );
+      const name = improvementLevels.find((item) => item.level === state.busy)?.name ?? "";
+      row.append(el("span", "ai-spinner"), document.createTextNode(` Re-analyzing (${name})…`));
       tools.append(row);
     } else {
-      const actions = el("div", "rec-actions");
-      const reanalyze = button("rec-link", "Re-analyze", () => void run(name, false));
-      reanalyze.title = "Turn the whole recording into text again";
+      const actions = el("div", "rec-actions rec-reanalyze");
+      // Without the chat model a re-analysis is the recognizer's text only.
+      const reanalyze = button("rec-link", "Re-analyze", () => void run(name, Math.min(state.level, topLevel())));
+      reanalyze.title = "Turn the whole recording into text again, improved to the level under it";
       actions.append(reanalyze);
-      const settings = speechSettings();
-      if (settings?.polishReady) {
-        const refine = button("rec-link", "Re-analyze with context", () => void run(name, true));
-        refine.title = "Turn the whole recording into text again, then let the model refine it with the memo around it";
-        actions.append(refine);
-      }
       tools.append(actions);
+      tools.append(
+        levelSlider(state.level, (next) => {
+          state.level = next;
+        }),
+      );
       if (state.error) {
         tools.append(el("p", "rec-note rec-error", state.error));
       }
@@ -183,19 +189,19 @@ export function mountRecordingTools(target: RecordingToolsTarget) {
     setHighlight("rewording", highlightOwner, words ? findTextRanges(target.roots(), words, figure) : []);
   }
 
-  async function run(name: string, refined: boolean) {
+  async function run(name: string, level: number) {
     const state = known.get(name);
     if (!state || state.busy) {
       return;
     }
-    state.busy = refined ? "refined" : "plain";
+    state.busy = level;
     state.error = "";
     paintAll();
     try {
       const memo = target.text();
       const old = locateWords(memo, state.info.text, name) ? state.info.text : "";
       let next = (await transcribeRecording(name)).trim();
-      if (refined && next !== "") {
+      if (level > 1 && next !== "") {
         const place = old ? locateWords(memo, old, name) : null;
         const token = memo.indexOf(`memose-media/${name}`);
         const lineStart = token < 0 ? memo.length : memo.lastIndexOf("\n", token) + 1;
@@ -203,9 +209,9 @@ export function mountRecordingTools(target: RecordingToolsTarget) {
         const end = place ? place.end : lineStart;
         const before = memo.slice(Math.max(0, start - CONTEXT_BEFORE), start);
         const after = memo.slice(end, end + CONTEXT_AFTER);
-        next = (await polishSpeech(before, after, next)).trim();
+        next = (await polishSpeech(before, after, next, level)).trim();
       }
-      state.proposal = next === "" ? null : { old, next, refined };
+      state.proposal = next === "" ? null : { old, next, level };
       if (next === "") {
         state.error = "No speech was found in the recording.";
       }
@@ -213,6 +219,8 @@ export function mountRecordingTools(target: RecordingToolsTarget) {
       state.error = String(error);
     } finally {
       state.busy = null;
+      // The slider starts from the default again for the next run.
+      state.level = DEFAULT_LEVEL;
       paintAll();
     }
   }
@@ -250,7 +258,13 @@ export function mountRecordingTools(target: RecordingToolsTarget) {
           known.set(
             name,
             info
-              ? { info: text === undefined ? info : { ...info, text }, busy: null, proposal: null, error: "" }
+              ? {
+                  info: text === undefined ? info : { ...info, text },
+                  busy: null,
+                  level: DEFAULT_LEVEL,
+                  proposal: null,
+                  error: "",
+                }
               : null,
           );
         }

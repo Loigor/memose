@@ -390,3 +390,10 @@ html[data-theme="dark"] .media-context-menu button.danger {
 .rec-diff del + ins {
   margin-left: 3px;
 }
+
+.rec-tools .level-slider {
+  align-self: flex-start;
+  padding-left: 0;
+  background: transparent;
+  box-shadow: none;
+}

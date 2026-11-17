@@ -274,7 +274,13 @@ html[data-theme="dark"][data-mdhl-scheme="mono"] {
   --tok-del: #fca5a5;
 }
 
+#card[data-coder] > header,
+.stack-note[data-coder] > header {
+  border-bottom: 0;
+}
+
 #card[data-coder] #composer-view {
+  padding-top: 0;
   padding-left: 0;
   padding-right: 0;
 }
@@ -292,6 +298,7 @@ html[data-theme="dark"][data-mdhl-scheme="mono"] {
 }
 
 .stack-note[data-coder] .stack-blocks {
+  padding-top: 0;
   padding-left: 0;
   padding-right: 0;
 }

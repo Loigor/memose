@@ -228,12 +228,12 @@ export function stackHeaderHtml(): string {
             </div>
           </div>
         </div>
-        <button class="pin-toggle icon-button" type="button" aria-label="Pin" aria-pressed="true">
-          <span class="pin-glyph" aria-hidden="true"></span>
-        </button>
       </div>
       <button class="fold-toggle icon-button" type="button" aria-label="Fold memo" title="Fold memo">
         <span class="collapsed-chevron" aria-hidden="true"></span>
+      </button>
+      <button class="pin-toggle icon-button" type="button" aria-label="Pin" aria-pressed="true">
+        <span class="pin-glyph" aria-hidden="true"></span>
       </button>
     </header>
   `;

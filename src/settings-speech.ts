@@ -38,7 +38,7 @@ export function initSpeechSettings(status: HTMLElement) {
   const keyRemove = required<HTMLButtonElement>("#speech-key-remove");
   const model = required<HTMLInputElement>("#speech-model");
   const language = required<HTMLInputElement>("#speech-language");
-  const polish = required<HTMLInputElement>("#speech-polish");
+  const polish = required<HTMLSelectElement>("#speech-polish");
   const polishHint = required<HTMLElement>("#speech-polish-hint");
   const permissionRow = required<HTMLElement>("#speech-permission");
   const permissionText = required<HTMLElement>("#speech-permission-text");
@@ -88,10 +88,10 @@ export function initSpeechSettings(status: HTMLElement) {
   const paint = (settings: SpeechSettings) => {
     enabled.checked = settings.enabled;
     keepAudio.checked = settings.keepAudio;
-    polish.checked = settings.polish;
-    polish.disabled = settings.source === "off";
+    polish.value = String(settings.polishReady ? settings.polishLevel : 1);
+    polish.disabled = settings.source === "off" || !settings.polishReady;
     polishHint.textContent = settings.polishReady
-      ? "The chat model fixes punctuation and misheard words as you speak, using the memo around the cursor."
+      ? "Where to start the slider under the listening mark. Basic keeps the words as heard; the others let the chat model fix them, from punctuation only up to proof-reading with the memo around the words. A longer pause starts a new paragraph, which then gets the full pass."
       : "Needs the chat model: turn on model prompts and pick a model in the Models tab.";
     for (const choice of sourceEl.querySelectorAll<HTMLButtonElement>("button")) {
       choice.setAttribute("aria-pressed", String(choice.dataset.source === settings.source));
@@ -170,7 +170,7 @@ export function initSpeechSettings(status: HTMLElement) {
     save({ keepAudio: keepAudio.checked }, "Saved.");
   });
   polish.addEventListener("change", () => {
-    save({ polish: polish.checked }, "Saved.");
+    save({ polishLevel: Number(polish.value) }, "Saved.");
   });
   device.addEventListener("change", () => {
     save({ device: device.value }, "Microphone saved. It is used from the next recording.");

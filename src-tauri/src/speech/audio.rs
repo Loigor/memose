@@ -95,6 +95,15 @@ pub struct Chunker {
     noise: f32,
     /// Loudest recent frame level, for a meter. Read and reset by `take_level`.
     peak: f32,
+    /// Frames seen so far, to measure pauses.
+    frame_no: usize,
+    last_voiced: usize,
+    /// End of the voice in the last slice that was kept.
+    voice_end: Option<usize>,
+    /// Silence before the slice being built, in frames.
+    slice_pause: usize,
+    /// Silence before each slice handed out and not yet taken, in ms.
+    pauses: std::collections::VecDeque<u32>,
 }
 
 impl Chunker {
@@ -109,7 +118,18 @@ impl Chunker {
             voiced: 0,
             noise: FLOOR,
             peak: 0.0,
+            frame_no: 0,
+            last_voiced: 0,
+            voice_end: None,
+            slice_pause: 0,
+            pauses: std::collections::VecDeque::new(),
         }
+    }
+
+    /// Silence before the next slice handed out, in ms, in the order the slices came.
+    /// The first slice of a recording has none.
+    pub fn take_pause(&mut self) -> u32 {
+        self.pauses.pop_front().unwrap_or(0)
     }
 
     pub fn take_level(&mut self) -> f32 {
@@ -140,6 +160,10 @@ impl Chunker {
         let level = rms(&frame);
         self.peak = self.peak.max(level);
         let voiced = level > self.threshold();
+        self.frame_no += 1;
+        if voiced {
+            self.last_voiced = self.frame_no;
+        }
         if !voiced {
             // The noise floor follows quiet frames slowly, so a fan does not count as speech.
             self.noise = self.noise * 0.95 + level.max(FLOOR * 0.5) * 0.05;
@@ -151,6 +175,9 @@ impl Chunker {
                 self.in_speech = true;
                 self.voiced = 1;
                 self.quiet_run = 0;
+                self.slice_pause = self
+                    .voice_end
+                    .map_or(0, |end| self.frame_no.saturating_sub(end + 1));
             } else if self.frames.len() > PRE_ROLL_FRAMES {
                 self.frames.remove(0);
                 self.levels.remove(0);
@@ -196,12 +223,19 @@ impl Chunker {
             .count();
         self.in_speech = self.voiced > 0;
         self.quiet_run = 0;
+        let kept = voiced >= MIN_VOICED_FRAMES;
+        if kept {
+            self.pauses.push_back(self.slice_pause as u32 * FRAME_MS);
+            self.voice_end = Some(self.last_voiced);
+        }
+        // Speech carried into the next slice follows without a pause.
+        self.slice_pause = 0;
         if !self.in_speech {
             let extra = self.frames.len().saturating_sub(PRE_ROLL_FRAMES);
             self.frames.drain(..extra);
             self.levels.drain(..extra);
         }
-        (voiced >= MIN_VOICED_FRAMES).then_some(slice)
+        kept.then_some(slice)
     }
 
     /// The unfinished slice, when recording stops mid-sentence.
@@ -214,7 +248,11 @@ impl Chunker {
         self.levels.clear();
         self.in_speech = false;
         let voiced = std::mem::take(&mut self.voiced);
-        (voiced >= MIN_VOICED_FRAMES).then(|| frames.concat())
+        let kept = voiced >= MIN_VOICED_FRAMES;
+        if kept {
+            self.pauses.push_back(self.slice_pause as u32 * FRAME_MS);
+        }
+        kept.then(|| frames.concat())
     }
 }
 
@@ -352,6 +390,33 @@ mod tests {
         audio.extend(tone(1200, 0.01));
         let slices = chunker.push(&audio);
         assert_eq!(slices.len(), 1);
+    }
+
+    #[test]
+    fn each_slice_reports_the_silence_before_it() {
+        let mut chunker = Chunker::new(ChunkPlan::DICTATION);
+        let mut audio = quiet(300);
+        audio.extend(tone(1000, 0.2));
+        audio.extend(quiet(1000));
+        audio.extend(tone(1000, 0.2));
+        audio.extend(quiet(3000));
+        audio.extend(tone(1000, 0.2));
+        audio.extend(quiet(1000));
+        let slices = chunker.push(&audio);
+        assert_eq!(slices.len(), 3);
+        let pauses: Vec<u32> = (0..3).map(|_| chunker.take_pause()).collect();
+        assert_eq!(pauses[0], 0, "the first slice has no pause before it");
+        assert!(
+            (900..=1100).contains(&pauses[1]),
+            "short pause was {} ms",
+            pauses[1]
+        );
+        assert!(
+            (2900..=3100).contains(&pauses[2]),
+            "long pause was {} ms",
+            pauses[2]
+        );
+        assert_eq!(chunker.take_pause(), 0);
     }
 
     #[test]

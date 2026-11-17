@@ -115,6 +115,7 @@ html.collapsed:not(.hover-open) #card > header,
   box-sizing: border-box;
   padding-top: 0;
   padding-bottom: 0;
+  border-bottom: 0;
   align-items: center;
 }
 
@@ -125,9 +126,11 @@ html.collapsed:not(.hover-open) #note-title,
 
 html.collapsed:not(.hover-open) #composer-view,
 html.collapsed:not(.hover-open) #card .header-actions,
+html.collapsed:not(.hover-open) #card #pin-toggle,
 html.collapsed:not(.hover-open) #brand-name,
 #frame.has-stack #card.is-bar #composer-view,
 #frame.has-stack #card.is-bar .header-actions,
+#frame.has-stack #card.is-bar #pin-toggle,
 #frame.has-stack #card.is-bar #brand-name {
   display: none;
 }
@@ -277,6 +280,7 @@ html.collapsed:not(.hover-open) #frame:not(.has-stack) #notes {
 
 .stack-note.is-bar .brand-name,
 .stack-note.is-bar .header-actions,
+.stack-note.is-bar .pin-toggle,
 .stack-note.is-bar .md-toolbar,
 .stack-note.is-bar .stack-blocks,
 .stack-note.is-bar .stack-preview {
@@ -294,14 +298,14 @@ html.collapsed:not(.hover-open) #frame:not(.has-stack) #notes {
   flex-direction: column;
   overflow: auto;
   overflow-anchor: auto;
-  padding: 0 18px 16px;
+  padding: 10px 18px 16px;
 }
 
 .stack-preview {
   flex: 1;
   min-height: 0;
   overflow: auto;
-  padding: 0 18px 16px;
+  padding: 10px 18px 16px;
 }
 
 .stack-blocks[hidden],

@@ -11,7 +11,9 @@ import {
   type Span,
 } from "../editor/dictation-span";
 import {
+  levelSlider,
   polishSpeech,
+  saveImprovementLevel,
   speechAvailable,
   speechRunning,
   speechSettings,
@@ -45,6 +47,11 @@ export type DictationTarget = {
 const CONTEXT_BEFORE = 1500;
 const CONTEXT_AFTER = 400;
 const POLISH_DELAY = 450;
+/** Silence before a piece of speech that starts a new paragraph. */
+const PARAGRAPH_PAUSE_MS = 2500;
+const PARAGRAPH_BREAK = "\n\n";
+/** The quick pass on the paragraph still being spoken never goes past this level. */
+const LIVE_LEVEL = 2;
 
 /** Wires the record button inside `anchor`. It stays hidden until recording is turned on in settings. */
 export function mountDictation(anchor: HTMLElement, target: DictationTarget) {
@@ -57,7 +64,14 @@ export function mountDictation(anchor: HTMLElement, target: DictationTarget) {
   let starting = false;
   let span: Span | null = null;
   let polishing = false;
-  let again = false;
+  /** Improvement level of this recording. The slider under the listening mark changes it. */
+  let level = 2;
+  /** Paragraphs that ended and wait for the full pass, by their number in the dictation. */
+  let finalQueue: number[] = [];
+  /** The paragraph being spoken has new words for a quick pass. */
+  let livePending = false;
+  /** Each paragraph's text after its last pass, so an unchanged one is not sent again. */
+  let passed = new Map<number, string>();
   let polishOff = false;
   let polishTimer: number | undefined;
   let ended: SpeechDone | null = null;
@@ -80,8 +94,36 @@ export function mountDictation(anchor: HTMLElement, target: DictationTarget) {
   }
   const liveText = document.createElement("span");
   liveText.className = "rec-live-text";
-  live.append(bars, liveText);
+  const pill = document.createElement("div");
+  pill.className = "rec-pill";
+  pill.append(bars, liveText);
+  live.append(pill);
   target.host.append(live);
+
+  /** The improvement slider under the listening mark. Its level is saved for the next recording too. */
+  let slider: HTMLElement | null = null;
+  const setSlider = () => {
+    slider?.remove();
+    slider = levelSlider(level, (next) => {
+      level = next;
+      void saveImprovementLevel(next);
+      if (level <= 1) {
+        finalQueue = [];
+        livePending = false;
+      } else if (span) {
+        // A higher level is used from the next piece of speech or the next ended paragraph.
+        livePending = true;
+        schedulePolish();
+      }
+    });
+    slider.addEventListener("change", () => {
+      // The caret goes back to the dictation, so Enter still ends it.
+      if (span) {
+        target.placeCaret(span.end);
+      }
+    });
+    live.append(slider);
+  };
 
   const showLive = (state: "waiting" | "hearing" | "finishing") => {
     live.hidden = false;
@@ -255,7 +297,31 @@ export function mountDictation(anchor: HTMLElement, target: DictationTarget) {
   };
   const highlightOwner = {};
 
-  const heard = (piece: string) => {
+  /** The dictated text so far, as paragraphs. */
+  const paragraphs = (): string[] => {
+    const place = span ? locateSpan(span, target.text()) : null;
+    return place ? target.text().slice(place.start, place.end).split(PARAGRAPH_BREAK) : [];
+  };
+
+  /** Puts changed paragraphs back into the memo. Returns false when the dictation is gone. */
+  const writeParagraphs = (parts: string[]): boolean => {
+    const current = target.text();
+    const place = span ? locateSpan(span, current) : null;
+    if (!place) {
+      return false;
+    }
+    const next = parts.join(PARAGRAPH_BREAK);
+    if (next !== current.slice(place.start, place.end)) {
+      write(
+        `${current.slice(0, place.start)}${next}${current.slice(place.end)}`,
+        place.start,
+        place.start + next.length,
+      );
+    }
+    return true;
+  };
+
+  const heard = (piece: string, pauseMs = 0) => {
     const text = piece.trim();
     if (text === "") {
       return;
@@ -263,7 +329,18 @@ export function mountDictation(anchor: HTMLElement, target: DictationTarget) {
     const current = target.text();
     const place = span ? locateSpan(span, current) : null;
     if (place) {
-      const joined = joinDictation(current.slice(place.start, place.end), text);
+      const before = current.slice(place.start, place.end);
+      // A long pause ends the paragraph: it gets the full pass and the speech goes on below it.
+      const newParagraph = pauseMs >= PARAGRAPH_PAUSE_MS && before.trim() !== "";
+      if (newParagraph) {
+        const ended = before.split(PARAGRAPH_BREAK).length - 1;
+        if (!finalQueue.includes(ended)) {
+          finalQueue.push(ended);
+        }
+      }
+      const joined = newParagraph
+        ? `${before.replace(/\s+$/, "")}${PARAGRAPH_BREAK}${text}`
+        : joinDictation(before, text);
       write(
         `${current.slice(0, place.start)}${joined}${current.slice(place.end)}`,
         place.start,
@@ -284,6 +361,7 @@ export function mountDictation(anchor: HTMLElement, target: DictationTarget) {
         followCaret();
       }
     }
+    livePending = true;
     schedulePolish();
     placeLive();
   };
@@ -293,50 +371,76 @@ export function mountDictation(anchor: HTMLElement, target: DictationTarget) {
     polishTimer = window.setTimeout(() => void polish(), POLISH_DELAY);
   }
 
+  const canPolish = () => level > 1 && !polishOff && Boolean(speechSettings()?.polishReady);
+
+  /** Runs the waiting passes one at a time: ended paragraphs first, then the one being spoken. */
   async function polish() {
-    const settings = speechSettings();
-    if (!span || polishOff || !settings?.polish || !settings.polishReady) {
-      finishIfEnded();
-      return;
-    }
     if (polishing) {
-      again = true;
-      return;
-    }
-    const current = target.text();
-    const place = locateSpan(span, current);
-    if (!place) {
-      finishIfEnded();
-      return;
-    }
-    const { head, tail } = splitTail(current.slice(place.start, place.end));
-    if (tail.trim() === "") {
-      finishIfEnded();
       return;
     }
     polishing = true;
     try {
-      const before = `${current.slice(Math.max(0, place.start - CONTEXT_BEFORE), place.start)}${head}`;
-      const after = current.slice(place.end, place.end + CONTEXT_AFTER);
-      const polished = await polishSpeech(before, after, tail);
-      // A reply far longer than what was said is the model writing on its own. It is dropped.
-      const sane = polished.trim() !== "" && polished.length <= tail.length * 2 + 60;
-      const latest = target.text();
-      const now = span ? locateSpan(span, latest) : null;
-      if (sane && now) {
-        const next = applyPolish(latest.slice(now.start, now.end), head, tail, polished);
-        if (next !== null && next !== latest.slice(now.start, now.end)) {
-          write(`${latest.slice(0, now.start)}${next}${latest.slice(now.end)}`, now.start, now.start + next.length);
+      while (span && canPolish()) {
+        const finalIndex = finalQueue.shift();
+        const isFinal = finalIndex !== undefined;
+        if (!isFinal && !livePending) {
+          break;
         }
+        const parts = paragraphs();
+        const index = isFinal ? finalIndex : parts.length - 1;
+        const paragraph = parts[index];
+        if (paragraph === undefined) {
+          continue;
+        }
+        if (!isFinal) {
+          livePending = false;
+        }
+        if (passed.get(index) === paragraph && (isFinal ? level <= LIVE_LEVEL : true)) {
+          continue;
+        }
+        // The quick pass sends the end of the paragraph being spoken. The full pass sends a whole paragraph.
+        const { head, tail } = isFinal ? { head: "", tail: paragraph } : splitTail(paragraph);
+        if (tail.trim() === "") {
+          continue;
+        }
+        const passLevel = isFinal ? level : Math.min(level, LIVE_LEVEL);
+        const current = target.text();
+        const place = span ? locateSpan(span, current) : null;
+        const lead = parts.slice(0, index).join(PARAGRAPH_BREAK);
+        const trail = parts.slice(index + 1).join(PARAGRAPH_BREAK);
+        const before = place
+          ? `${current.slice(Math.max(0, place.start - CONTEXT_BEFORE), place.start)}${lead}${lead ? PARAGRAPH_BREAK : ""}${head}`
+          : "";
+        const after = place ? `${trail}${current.slice(place.end, place.end + CONTEXT_AFTER)}` : "";
+        const reply = await polishSpeech(before, after, tail, passLevel);
+        // A reply far longer than what was said is the model writing on its own. It is dropped.
+        if (reply.trim() === "" || reply.length > tail.length * 2 + 60) {
+          continue;
+        }
+        const now = paragraphs();
+        const latest = now[index];
+        if (latest === undefined) {
+          continue;
+        }
+        const next = isFinal ? (latest === paragraph ? reply.trim() : null) : applyPolish(latest, head, tail, reply);
+        if (next === null) {
+          continue;
+        }
+        now[index] = next;
+        if (!writeParagraphs(now)) {
+          break;
+        }
+        passed.set(index, next);
       }
     } catch (error) {
-      // One failure turns tidying off for this recording. The text stays as it was heard.
+      // One failure turns improving off for this recording. The text stays as it was heard.
       polishOff = true;
-      say(`Text was not tidied: ${String(error)}`);
+      finalQueue = [];
+      livePending = false;
+      say(`Text was not improved: ${String(error)}`);
     } finally {
       polishing = false;
-      if (again) {
-        again = false;
+      if (span && canPolish() && (finalQueue.length > 0 || livePending)) {
         void polish();
       } else {
         finishIfEnded();
@@ -346,7 +450,7 @@ export function mountDictation(anchor: HTMLElement, target: DictationTarget) {
 
   function finishIfEnded() {
     const done = ended;
-    if (!done || polishing) {
+    if (!done || polishing || (canPolish() && span && (finalQueue.length > 0 || livePending))) {
       return;
     }
     ended = null;
@@ -386,17 +490,23 @@ export function mountDictation(anchor: HTMLElement, target: DictationTarget) {
       span = null;
       ended = null;
       polishOff = false;
+      finalQueue = [];
+      livePending = false;
+      passed = new Map();
+      // The level last set on the slider carries over to the next recording.
+      level = speechSettings()?.polishLevel ?? 2;
+      setSlider();
       startRect = caretRect();
       quietSince = Date.now();
       sessionId = await startSpeech("memo", target.noteId(), {
-        onChunk: heard,
-        onLevel(level) {
-          button.style.setProperty("--rec-level", level.toFixed(2));
-          live.style.setProperty("--rec-level", level.toFixed(2));
+        onChunk: (text, _seq, pauseMs) => heard(text, pauseMs),
+        onLevel(loudness) {
+          button.style.setProperty("--rec-level", loudness.toFixed(2));
+          live.style.setProperty("--rec-level", loudness.toFixed(2));
           if (live.dataset.state === "finishing") {
             return;
           }
-          if (level > 0.12) {
+          if (loudness > 0.12) {
             quietSince = Date.now();
             showLive("hearing");
           } else if (Date.now() - quietSince > 900) {
@@ -409,6 +519,12 @@ export function mountDictation(anchor: HTMLElement, target: DictationTarget) {
           if (done.error) {
             hideLive();
           }
+          // The last paragraph gets its full pass too.
+          const last = paragraphs().length - 1;
+          if (last >= 0 && !finalQueue.includes(last)) {
+            finalQueue.push(last);
+          }
+          livePending = false;
           void polish();
         },
       });
@@ -449,12 +565,14 @@ export function mountDictation(anchor: HTMLElement, target: DictationTarget) {
   });
 
   // The listening mark is also a stop button.
-  live.title = "Stop recording (Enter)";
+  pill.title = "Stop recording (Enter)";
   live.addEventListener("mousedown", (event) => {
-    event.preventDefault();
+    if (!(event.target instanceof Element && event.target.closest(".level-slider"))) {
+      event.preventDefault();
+    }
     event.stopPropagation();
   });
-  live.addEventListener("click", (event) => {
+  pill.addEventListener("click", (event) => {
     event.stopPropagation();
     if (recordingHere()) {
       stop();

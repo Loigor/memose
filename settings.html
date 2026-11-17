@@ -510,10 +510,15 @@
 
             <label class="toggle-row" for="speech-polish">
               <span class="toggle-copy">
-                <span class="toggle-title">Improve text while dictating</span>
+                <span class="toggle-title">Text improvement while dictating</span>
                 <span id="speech-polish-hint" class="hint"></span>
               </span>
-              <input id="speech-polish" type="checkbox" />
+              <select id="speech-polish">
+                <option value="1">Basic</option>
+                <option value="2">Improved</option>
+                <option value="3">Proof-read</option>
+                <option value="4">Proof-read with context</option>
+              </select>
             </label>
           </div>
         </section>

@@ -40,7 +40,8 @@ export type SpeechSettings = {
   language: string;
   device: string;
   keepAudio: boolean;
-  polish: boolean;
+  /** How much the chat model improves dictated text, 1 to 4. */
+  polishLevel: number;
   polishReady: boolean;
   engine: SpeechEngineStatus;
   microphone: MicrophonePermission;
@@ -57,7 +58,8 @@ export type SpeechDone = {
 };
 
 export type SpeechHandlers = {
-  onChunk?(text: string, seq: number): void;
+  /** A piece of heard text, its number, and the silence before it in ms. */
+  onChunk?(text: string, seq: number, pauseMs: number): void;
   onLevel?(level: number): void;
   onDone?(done: SpeechDone): void;
 };
@@ -97,8 +99,9 @@ function ensureListening() {
     running = event.payload.recording ? event.payload : null;
     notify();
   });
-  void listen<{ sessionId: string; seq: number; text: string }>("speech-chunk", (event) => {
-    sessions.get(event.payload.sessionId)?.onChunk?.(event.payload.text, event.payload.seq);
+  void listen<{ sessionId: string; seq: number; text: string; pauseMs?: number }>("speech-chunk", (event) => {
+    const { sessionId, text, seq, pauseMs } = event.payload;
+    sessions.get(sessionId)?.onChunk?.(text, seq, pauseMs ?? 0);
   });
   void listen<{ sessionId: string; level: number }>("speech-level", (event) => {
     sessions.get(event.payload.sessionId)?.onLevel?.(event.payload.level);
@@ -158,8 +161,68 @@ export function stopSpeech() {
 }
 
 /** Lets the chat model tidy dictated text. `before` and `after` are the note around it. */
-export function polishSpeech(before: string, after: string, dictated: string): Promise<string> {
-  return invoke<string>("speech_polish", { before, after, dictated });
+export function polishSpeech(before: string, after: string, dictated: string, level: number): Promise<string> {
+  return invoke<string>("speech_polish", { before, after, dictated, level });
+}
+
+/** Improvement levels, from as heard to proof-read with the memo as context. */
+export const improvementLevels = [
+  { level: 1, name: "Basic", hint: "As the recognizer heard it" },
+  { level: 2, name: "Improved", hint: "Punctuation, capitals, and clear mistakes. Dialect stays." },
+  { level: 3, name: "Proof-read", hint: "Spelling and grammar into standard written language" },
+  { level: 4, name: "Proof-read with context", hint: "Proof-read, using the memo around the words" },
+] as const;
+
+export const DEFAULT_LEVEL = 2;
+
+/** The highest level that can run: without the chat model only Basic. */
+export function topLevel(): number {
+  return speechSettings()?.polishReady ? 4 : 1;
+}
+
+/** Saves the level for live dictation. Recording that runs now uses it from the next piece. */
+export function saveImprovementLevel(level: number): Promise<void> {
+  if (settings) {
+    settings.polishLevel = level;
+  }
+  return invoke("save_speech_settings", { polishLevel: level });
+}
+
+/**
+ * A small four-step slider with the level's name under it. `onChange` gets the new level.
+ * Clicks on it never reach the memo or the recording.
+ */
+export function levelSlider(value: number, onChange: (level: number) => void): HTMLElement {
+  const box = document.createElement("div");
+  box.className = "level-slider";
+  const input = document.createElement("input");
+  input.type = "range";
+  input.min = "1";
+  input.max = String(topLevel());
+  input.step = "1";
+  input.value = String(Math.min(value, topLevel()));
+  input.tabIndex = -1;
+  input.setAttribute("aria-label", "Text improvement");
+  const label = document.createElement("span");
+  label.className = "level-name";
+  const paint = () => {
+    const found = improvementLevels.find((item) => item.level === Number(input.value)) ?? improvementLevels[1];
+    label.textContent = found.name;
+    box.title = `${found.name}: ${found.hint}`;
+  };
+  input.addEventListener("input", () => {
+    paint();
+    onChange(Number(input.value));
+  });
+  for (const type of ["mousedown", "pointerdown", "click", "dragstart"] as const) {
+    box.addEventListener(type, (event) => {
+      event.stopPropagation();
+    });
+  }
+  box.append(input, label);
+  paint();
+  box.hidden = topLevel() === 1;
+  return box;
 }
 
 export function reloadSpeech(): Promise<void> {
