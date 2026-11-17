@@ -77,6 +77,21 @@ export type HarnessSeed = {
   previewName?: string | null;
   pinTabs?: PinTabsSeed;
   hueSwatches?: number[];
+  ai?: AiSeed;
+};
+
+export type AiSeed = {
+  llmEnabled?: boolean;
+  llmBaseUrl?: string;
+  llmModel?: string;
+  /** Text the mocked model returns for every prompt. */
+  llmReply?: string;
+  /** What the mocked model decides for an "auto" prompt. */
+  llmKind?: "edit" | "answer";
+  /** Keeps every prompt running until it is cancelled. */
+  llmHold?: boolean;
+  models?: string[];
+  memoContentLimit?: number;
 };
 
 export type Invocation = { cmd: string; args: unknown };
@@ -161,7 +176,38 @@ function installBrowserHarness(seed: BrowserSeed) {
     notes.push(makeNote({ ...seed.draft, syncState: "draft" }));
   }
 
+  const ai = {
+    llmEnabled: Boolean(seed.ai?.llmEnabled),
+    llmBaseUrl: seed.ai?.llmBaseUrl ?? "",
+    llmModel: seed.ai?.llmModel ?? "",
+    hasLlmKey: false,
+    privateOkHost: "",
+    presets: [
+      { name: "Summarize", instruction: "Summarize the text.", mode: "ask" },
+      { name: "Clean up wording", instruction: "Fix spelling.", mode: "edit" },
+    ] as { name: string; instruction: string; mode: string }[],
+  };
+  type ChatSeedEntry = {
+    id: string;
+    noteId: string;
+    title: string;
+    instruction: string;
+    mode: string;
+    status: string;
+    text: string;
+    source: string;
+    lineStart: number | null;
+    lineEnd: number | null;
+    selection: boolean;
+    startedAt: number;
+    finishedAt: number | null;
+  };
+  const chats = new Map<string, ChatSeedEntry[]>();
+  const held = new Map<string, () => void>();
+
   const settings = {
+    memoContentLimit: seed.ai?.memoContentLimit ?? 8192,
+    uploadLimit: 0,
     baseUrl: seed.settings?.baseUrl ?? "",
     hasToken: Boolean(seed.settings?.hasToken),
     launchAtLogin: Boolean(seed.settings?.launchAtLogin),
@@ -430,6 +476,114 @@ function installBrowserHarness(seed: BrowserSeed) {
           pinnedAlwaysOnTop: alwaysOnTop,
           showInSwitcher: Boolean(state.settings.showInSwitcher) || !alwaysOnTop,
         };
+      }
+      case "get_ai_settings": {
+        const base = ai.llmBaseUrl;
+        const host = base.replace(/^[a-z]+:\/\//, "").split(/[/:]/)[0] ?? "";
+        return {
+          llmEnabled: ai.llmEnabled,
+          llmBaseUrl: base,
+          hasLlmKey: ai.hasLlmKey,
+          llmModel: ai.llmModel,
+          llmHost: host,
+          llmLocal: host === "localhost" || host.startsWith("127."),
+          privateOkHost: ai.privateOkHost,
+          presets: ai.presets,
+        };
+      }
+      case "save_ai_settings": {
+        if (typeof a.llmEnabled === "boolean") {
+          ai.llmEnabled = a.llmEnabled;
+        }
+        if (typeof a.llmBaseUrl === "string") {
+          ai.llmBaseUrl = a.llmBaseUrl;
+        }
+        if (typeof a.llmKey === "string") {
+          ai.hasLlmKey = a.llmKey !== "";
+        }
+        if (typeof a.llmModel === "string") {
+          ai.llmModel = a.llmModel;
+        }
+        if (Array.isArray(a.presets)) {
+          ai.presets = a.presets;
+        }
+        if (typeof a.privateOkHost === "string") {
+          ai.privateOkHost = a.privateOkHost;
+        }
+        emit("ai-settings-changed");
+        return null;
+      }
+      case "llm_models":
+        return { models: seed.ai?.models ?? [], ollama: true };
+      case "llm_ask": {
+        const noteId = String(a.noteId ?? "");
+        const mode = String(a.mode ?? "auto");
+        const kind = mode === "auto" ? (seed.ai?.llmKind ?? "edit") : mode === "ask" ? "answer" : "edit";
+        const entry = {
+          id: String(a.requestId ?? ""),
+          noteId,
+          title: String(a.title ?? ""),
+          instruction: String(a.instruction ?? ""),
+          mode,
+          status: "running",
+          text: "",
+          source: String(a.text ?? ""),
+          lineStart: typeof a.lineStart === "number" ? a.lineStart : null,
+          lineEnd: typeof a.lineEnd === "number" ? a.lineEnd : null,
+          selection: typeof a.context === "string",
+          startedAt: Date.now(),
+          finishedAt: null as number | null,
+        };
+        const log = chats.get(noteId) ?? [];
+        chats.set(noteId, log);
+        log.push(entry);
+        emit("llm-changed", noteId);
+        if (seed.ai?.llmHold) {
+          await new Promise<void>((resolve) => {
+            held.set(entry.id, resolve);
+          });
+        }
+        if (entry.status === "running") {
+          entry.status = kind;
+          entry.text = seed.ai?.llmReply ?? entry.source;
+        }
+        entry.finishedAt = Date.now();
+        emit("llm-changed", noteId);
+        return entry;
+      }
+      case "llm_cancel": {
+        const id = String(a.requestId ?? "");
+        for (const log of chats.values()) {
+          for (const entry of log) {
+            if (entry.id === id && entry.status === "running") {
+              entry.status = "cancelled";
+            }
+          }
+        }
+        held.get(id)?.();
+        held.delete(id);
+        return null;
+      }
+      case "llm_chat":
+        return chats.get(String(a.noteId ?? "")) ?? [];
+      case "llm_jobs":
+        return [...chats.values()].flat().filter((entry) => entry.status === "running");
+      case "llm_mark": {
+        const entry = (chats.get(String(a.noteId ?? "")) ?? []).find((item) => item.id === a.requestId);
+        if (entry && entry.status === "edit") {
+          entry.status = String(a.status);
+        }
+        emit("llm-changed", String(a.noteId ?? ""));
+        return null;
+      }
+      case "llm_clear_chat": {
+        const noteId = String(a.noteId ?? "");
+        chats.set(
+          noteId,
+          (chats.get(noteId) ?? []).filter((entry) => entry.status === "running"),
+        );
+        emit("llm-changed", noteId);
+        return null;
       }
       case "save_settings": {
         if (typeof a.baseUrl === "string") {

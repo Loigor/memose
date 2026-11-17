@@ -645,3 +645,61 @@ header.compact-meta #edited-sep {
 .hue-add:disabled {
   opacity: 0.35;
 }
+
+.ai-anchor {
+  position: relative;
+  display: flex;
+}
+
+.ai-anchor[hidden] {
+  display: none;
+}
+
+.ai-toggle {
+  position: relative;
+  color: var(--ai-accent);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+}
+
+.ai-toggle[aria-expanded="true"] {
+  background: var(--ai-soft);
+}
+
+/* A ring turns around the button while a prompt for this memo is running. */
+.ai-toggle.ai-busy::before {
+  content: "";
+  position: absolute;
+  inset: 1px;
+  border: 2px solid var(--ai-line);
+  border-top-color: var(--ai-accent);
+  border-radius: 50%;
+  animation: ai-spin 0.9s linear infinite;
+  pointer-events: none;
+}
+
+.ai-toggle.ai-unread::after {
+  content: "";
+  position: absolute;
+  top: 2px;
+  right: 2px;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--ai-tint);
+  box-shadow: 0 0 0 1.5px var(--paper);
+}
+
+@keyframes ai-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ai-toggle.ai-busy::before,
+  .ai-spinner {
+    animation-duration: 2.4s;
+  }
+}

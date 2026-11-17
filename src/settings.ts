@@ -17,6 +17,7 @@ import {
 import { isOfflinePrivate, visibilityOptions } from "./look/visibility";
 import { clampFont, CODE_FONT, MEMO_FONT } from "./editor/font-size";
 import { isMac } from "./platform";
+import { initAiSettings } from "./settings-ai";
 
 type Settings = {
   baseUrl: string;
@@ -38,7 +39,7 @@ type Settings = {
   pinnedAlwaysOnTop: boolean;
 };
 
-type TabId = "visibility" | "window" | "editor" | "shortcuts" | "sync";
+type TabId = "visibility" | "window" | "editor" | "shortcuts" | "sync" | "models";
 
 const baseUrl = document.querySelector<HTMLInputElement>("#base-url");
 const token = document.querySelector<HTMLInputElement>("#token");
@@ -939,6 +940,8 @@ void listen<{
 });
 
 selectTab("visibility");
+
+initAiSettings(statusEl);
 
 void loadSettings().catch((error: unknown) => {
   statusEl.textContent = String(error);

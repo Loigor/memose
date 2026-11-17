@@ -42,7 +42,7 @@ h2 {
 
 .settings-tabs {
   display: grid;
-  grid-template-columns: repeat(5, minmax(0, 1fr));
+  grid-template-columns: repeat(6, minmax(0, 1fr));
   gap: 4px;
   padding: 4px;
   border: 1px solid #e0d9cc;
@@ -475,4 +475,53 @@ button.danger {
   margin-top: auto;
   padding-top: 4px;
   min-height: 20px;
+}
+
+.preset-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.preset-row {
+  display: grid;
+  grid-template-columns: 1fr auto auto;
+  gap: 6px;
+}
+
+.preset-row input,
+.preset-row select {
+  min-width: 0;
+  font-size: 13px;
+}
+
+.model-choices {
+  max-height: 168px;
+  overflow: auto;
+}
+
+.preset-row textarea {
+  grid-column: 1 / -1;
+  box-sizing: border-box;
+  width: 100%;
+  padding: 8px 10px;
+  border: 1px solid #d5cebf;
+  border-radius: 8px;
+  background: #fff;
+  color: inherit;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 400;
+  line-height: 1.4;
+  resize: vertical;
+}
+
+.preset-row textarea:focus {
+  outline: 2px solid #8a795d;
+  outline-offset: 1px;
+}
+
+.hint code {
+  font-size: 0.95em;
+  user-select: text;
 }

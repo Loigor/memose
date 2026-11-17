@@ -1,6 +1,7 @@
 mod auth;
 mod commands;
 mod error;
+mod llm;
 mod media;
 mod mouse_hook;
 mod notes;
@@ -144,7 +145,16 @@ pub fn run() {
             commands::slide_into_view,
             commands::slide_back,
             commands::begin_corner_resize,
-            commands::detach_stack
+            commands::detach_stack,
+            commands::get_ai_settings,
+            commands::save_ai_settings,
+            commands::llm_models,
+            commands::llm_ask,
+            commands::llm_cancel,
+            commands::llm_chat,
+            commands::llm_jobs,
+            commands::llm_mark,
+            commands::llm_clear_chat
         ])
         .run(tauri::generate_context!())
         .expect("error while running memose");

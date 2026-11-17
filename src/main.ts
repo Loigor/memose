@@ -1,6 +1,7 @@
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 
+import { mountLlmBubble } from "./ai/llm-edit";
 import { createAppBackend } from "./app/backend";
 import { createAudienceController } from "./app/controllers/audience-controller";
 import { createEditorController } from "./app/controllers/editor-controller";
@@ -16,6 +17,7 @@ import { createSessionController, type SessionController } from "./app/controlle
 import { createAppContext } from "./app/context";
 import { createAppState } from "./app/state";
 import { memoUsesCoder, type EditorPrefs } from "./editor/editor-field";
+import { noteTitle } from "./editor/markdown-edit";
 import { resizeAllBlockTextareas } from "./editor/textarea";
 import { bindMediaEditor } from "./media/media-dnd";
 import { initLightbox } from "./media/media-elements";
@@ -84,6 +86,20 @@ const editorController = createEditorController(
     applyEditorChrome: () => stack.applyEditorChrome(),
   },
 );
+
+const aiAnchor = document.querySelector<HTMLElement>("#ai-anchor");
+if (aiAnchor && !isPreviewWindow()) {
+  mountLlmBubble(aiAnchor, {
+    host: cardEl,
+    noteId: () => sessionController.currentNoteId(),
+    title: () => noteTitle(editorController.content()),
+    text: () => editorController.content(),
+    replace: (next) => editorController.replaceContent(next),
+    visibility: () => appState.audience.visibility || null,
+    selectionRoots: () => [blocksEl, appContext.dom.preview],
+    onAvailability: () => stack.syncHeader(),
+  });
+}
 
 const audienceController = createAudienceController(
   appContext,

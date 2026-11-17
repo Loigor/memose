@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::sync::atomic::Ordering;
 
 use serde::Serialize;
@@ -5,6 +6,7 @@ use tauri::{AppHandle, Emitter, State};
 use tauri_plugin_autostart::ManagerExt;
 
 use crate::error::AppError;
+use crate::llm;
 use crate::notes::{self, request_sync, Note, PinTabHit, PinTabs, SpaceView};
 use crate::shortcuts::{self, ShortcutBinds};
 use crate::state::AppState;
@@ -31,6 +33,10 @@ pub(crate) struct SettingsView {
     code_font_size: u8,
     show_in_switcher: bool,
     pinned_always_on_top: bool,
+    /// Largest memo body the server accepts, in UTF-8 bytes. Zero is unlimited.
+    memo_content_limit: u64,
+    /// Largest single upload the server accepts, in bytes. Zero is unlimited or unknown.
+    upload_limit: u64,
 }
 
 #[tauri::command]
@@ -149,7 +155,10 @@ pub fn list_recent(state: State<AppState>, limit: Option<u32>) -> Result<Vec<Not
 
 #[tauri::command]
 pub fn get_settings(app: AppHandle, state: State<AppState>) -> Result<SettingsView, AppError> {
+    let limits = notes::limits::stored(&state.db)?;
     Ok(SettingsView {
+        memo_content_limit: limits.memo_content_bytes,
+        upload_limit: limits.upload_bytes,
         base_url: state.db.get_meta(notes::BASE_URL)?.unwrap_or_default(),
         has_token: state.db.access_token()?.is_some(),
         launch_at_login: app.autolaunch().is_enabled().unwrap_or(false),
@@ -977,4 +986,283 @@ pub fn hide_composer(app: AppHandle) {
 #[tauri::command]
 pub fn set_autostart(app: AppHandle, enabled: bool) -> Result<bool, String> {
     tray::set_launch_at_login(&app, Some(enabled))
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct AiSettingsView {
+    llm_enabled: bool,
+    llm_base_url: String,
+    has_llm_key: bool,
+    llm_model: String,
+    /// Host of the model server, shown before text is sent to it.
+    llm_host: String,
+    /// The model server runs on this computer.
+    llm_local: bool,
+    /// Host already allowed to receive offline-only memos.
+    private_ok_host: String,
+    presets: Vec<llm::Preset>,
+}
+
+#[tauri::command]
+pub fn get_ai_settings(state: State<AppState>) -> Result<AiSettingsView, AppError> {
+    let base = state.db.get_meta(llm::LLM_BASE_URL)?.unwrap_or_default();
+    Ok(AiSettingsView {
+        llm_enabled: state.db.get_meta(llm::LLM_ENABLED)?.as_deref() == Some("1"),
+        has_llm_key: state
+            .db
+            .get_meta(llm::LLM_API_KEY)?
+            .is_some_and(|key| !key.is_empty()),
+        llm_model: state.db.get_meta(llm::LLM_MODEL)?.unwrap_or_default(),
+        llm_host: llm::host_of(&base),
+        llm_local: llm::is_local(&base),
+        private_ok_host: state
+            .db
+            .get_meta(llm::LLM_PRIVATE_OK_HOST)?
+            .unwrap_or_default(),
+        presets: llm::presets(&state.db)?,
+        llm_base_url: base,
+    })
+}
+
+/// Saves the given fields and leaves the rest. An empty key removes the saved key.
+#[tauri::command]
+#[allow(clippy::too_many_arguments)]
+pub fn save_ai_settings(
+    app: AppHandle,
+    state: State<AppState>,
+    llm_enabled: Option<bool>,
+    llm_base_url: Option<String>,
+    llm_key: Option<String>,
+    llm_model: Option<String>,
+    presets: Option<Vec<llm::Preset>>,
+    private_ok_host: Option<String>,
+) -> Result<(), AppError> {
+    if let Some(base) = llm_base_url {
+        state
+            .db
+            .set_meta(llm::LLM_BASE_URL, &llm::clean_base(&base)?)?;
+    }
+    if let Some(enabled) = llm_enabled {
+        state
+            .db
+            .set_meta(llm::LLM_ENABLED, if enabled { "1" } else { "0" })?;
+    }
+    match llm_key.as_deref().map(str::trim) {
+        Some("") => state.db.clear_meta(llm::LLM_API_KEY)?,
+        Some(key) => state.db.set_meta(llm::LLM_API_KEY, key)?,
+        None => {}
+    }
+    if let Some(model) = llm_model {
+        state.db.set_meta(llm::LLM_MODEL, model.trim())?;
+    }
+    if let Some(presets) = presets {
+        llm::store_presets(&state.db, &presets)?;
+    }
+    if let Some(host) = private_ok_host {
+        state.db.set_meta(llm::LLM_PRIVATE_OK_HOST, host.trim())?;
+    }
+    let _ = app.emit("ai-settings-changed", ());
+    Ok(())
+}
+
+fn llm_server(state: &AppState) -> Result<(String, Option<String>), AppError> {
+    let base = state
+        .db
+        .get_meta(llm::LLM_BASE_URL)?
+        .filter(|url| !url.is_empty())
+        .ok_or_else(|| AppError::Message("model server URL is not set".into()))?;
+    Ok((base, state.db.get_meta(llm::LLM_API_KEY)?))
+}
+
+#[tauri::command]
+pub async fn llm_models(state: State<'_, AppState>) -> Result<llm::ModelList, AppError> {
+    let (base, key) = llm_server(&state)?;
+    llm::list_models(&state.http, &base, key.as_deref()).await
+}
+
+fn chats(state: &AppState) -> std::sync::MutexGuard<'_, HashMap<String, Vec<llm::ChatEntry>>> {
+    state
+        .llm_chats
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+}
+
+fn now_ms() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|duration| duration.as_millis() as i64)
+        .unwrap_or(0)
+}
+
+/// Sends one prompt about a memo and records it in that memo's chat.
+/// The result is an answer or a proposed edit. `llm_cancel` with the same id stops it.
+#[tauri::command]
+#[allow(clippy::too_many_arguments)]
+pub async fn llm_ask(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    request_id: String,
+    note_id: String,
+    title: String,
+    instruction: String,
+    mode: llm::Mode,
+    text: String,
+    context: Option<String>,
+    line_start: Option<u32>,
+    line_end: Option<u32>,
+) -> Result<llm::ChatEntry, AppError> {
+    if state.db.get_meta(llm::LLM_ENABLED)?.as_deref() != Some("1") {
+        return Err(AppError::Message("model prompts are turned off".into()));
+    }
+    if instruction.trim().is_empty() {
+        return Err(AppError::Message("write an instruction first".into()));
+    }
+    if text.trim().is_empty() {
+        return Err(AppError::Message("there is no text to send".into()));
+    }
+    let (base, key) = llm_server(&state)?;
+    let model = state
+        .db
+        .get_meta(llm::LLM_MODEL)?
+        .filter(|model| !model.is_empty())
+        .ok_or_else(|| AppError::Message("model is not set".into()))?;
+    let (cancel_tx, cancel_rx) = tokio::sync::oneshot::channel();
+    state
+        .llm_requests
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .insert(request_id.clone(), cancel_tx);
+    let entry = llm::ChatEntry {
+        id: request_id.clone(),
+        note_id: note_id.clone(),
+        title: title.trim().chars().take(80).collect(),
+        instruction: instruction.trim().to_string(),
+        mode,
+        status: llm::RUNNING.into(),
+        text: String::new(),
+        source: text.clone(),
+        line_start,
+        line_end,
+        selection: context.is_some(),
+        started_at: now_ms(),
+        finished_at: None,
+    };
+    {
+        let mut all = chats(&state);
+        let log = all.entry(note_id.clone()).or_default();
+        log.push(entry);
+        let extra = log.len().saturating_sub(llm::CHAT_KEEP);
+        let mut dropped = 0;
+        log.retain(|item| {
+            if dropped < extra && item.status != llm::RUNNING {
+                dropped += 1;
+                return false;
+            }
+            true
+        });
+    }
+    let _ = app.emit("llm-changed", &note_id);
+    let http = state.http.clone();
+    let result = tokio::select! {
+        reply = llm::ask(&http, &base, key.as_deref(), &model, mode, &instruction, &text, context.as_deref()) => reply.map(Some),
+        _ = cancel_rx => Ok(None),
+    };
+    state
+        .llm_requests
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .remove(&request_id);
+    let (status, body) = match result {
+        Ok(Some(reply)) => match reply.kind {
+            llm::ReplyKind::Answer => ("answer", reply.text),
+            llm::ReplyKind::Edit => ("edit", reply.text),
+        },
+        Ok(None) => ("cancelled", String::new()),
+        Err(err) => ("error", err.to_string()),
+    };
+    let finished = {
+        let mut all = chats(&state);
+        let found = all
+            .get_mut(&note_id)
+            .and_then(|log| log.iter_mut().find(|item| item.id == request_id));
+        found.map(|item| {
+            item.status = status.into();
+            item.text = body;
+            item.finished_at = Some(now_ms());
+            item.clone()
+        })
+    };
+    let _ = app.emit("llm-changed", &note_id);
+    finished.ok_or_else(|| AppError::Message("the prompt was cleared".into()))
+}
+
+#[tauri::command]
+pub fn llm_cancel(state: State<AppState>, request_id: String) {
+    let cancel = state
+        .llm_requests
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .remove(&request_id);
+    if let Some(cancel) = cancel {
+        let _ = cancel.send(());
+    }
+}
+
+/// Prompts and results of one memo, oldest first.
+#[tauri::command]
+pub fn llm_chat(state: State<AppState>, note_id: String) -> Vec<llm::ChatEntry> {
+    chats(&state).get(&note_id).cloned().unwrap_or_default()
+}
+
+/// Prompts still running, across all memos. Memo text is left out.
+#[tauri::command]
+pub fn llm_jobs(state: State<AppState>) -> Vec<llm::ChatEntry> {
+    let mut jobs: Vec<llm::ChatEntry> = chats(&state)
+        .values()
+        .flatten()
+        .filter(|item| item.status == llm::RUNNING)
+        .map(|item| llm::ChatEntry {
+            source: String::new(),
+            ..item.clone()
+        })
+        .collect();
+    jobs.sort_by_key(|item| item.started_at);
+    jobs
+}
+
+/// Records what happened to a proposed edit: `applied` or `dismissed`.
+#[tauri::command]
+pub fn llm_mark(
+    app: AppHandle,
+    state: State<AppState>,
+    note_id: String,
+    request_id: String,
+    status: String,
+) -> Result<(), AppError> {
+    if status != "applied" && status != "dismissed" {
+        return Err(AppError::Message("unknown prompt state".into()));
+    }
+    {
+        let mut all = chats(&state);
+        let found = all
+            .get_mut(&note_id)
+            .and_then(|log| log.iter_mut().find(|item| item.id == request_id));
+        if let Some(item) = found {
+            if item.status == "edit" {
+                item.status = status;
+            }
+        }
+    }
+    let _ = app.emit("llm-changed", &note_id);
+    Ok(())
+}
+
+/// Drops the finished prompts of one memo. Running ones stay.
+#[tauri::command]
+pub fn llm_clear_chat(app: AppHandle, state: State<AppState>, note_id: String) {
+    if let Some(log) = chats(&state).get_mut(&note_id) {
+        log.retain(|item| item.status == llm::RUNNING);
+    }
+    let _ = app.emit("llm-changed", &note_id);
 }

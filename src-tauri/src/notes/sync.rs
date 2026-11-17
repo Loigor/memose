@@ -11,8 +11,9 @@ use crate::media;
 use crate::state::AppState;
 
 use super::db::{canonical_visibility, Db, API_FLAVOR, BASE_URL, MEMO_SPACE, MEMO_VISIBILITY};
-use super::model::{is_offline_private, MemoSpace, Note, MEMOS_CONTENT_LIMIT, REMOTE};
+use super::model::{is_offline_private, MemoSpace, Note, REMOTE};
 
+pub mod limits;
 mod parse;
 
 use parse::{
@@ -254,6 +255,7 @@ async fn drain(
             Err(err) => eprintln!("memose: space list failed: {err}"),
         }
     }
+    let limits = limits::current(http, &db, &base, &token, flavor).await;
     let notes = db_call(db.clone(), |db| db.pending_and_errors()).await?;
     let mut retry = false;
     let mut did_push = false;
@@ -282,11 +284,12 @@ async fn drain(
             .await?;
             continue;
         }
-        if remote.chars().count() > MEMOS_CONTENT_LIMIT {
+        if !limits.content_fits(&remote) {
+            let message = limits::too_long_message(remote.len(), limits.memo_content_bytes);
             db_call(db.clone(), {
                 let id = note.id.clone();
                 move |db| {
-                    db.mark_error(&id, "content exceeds 8192 characters")?;
+                    db.mark_error(&id, &message)?;
                     Ok(())
                 }
             })
@@ -356,10 +359,20 @@ async fn drain(
                 }
             }
             Err(err) => {
-                let message = err.to_string();
+                let refused = match &err {
+                    AppError::Memos { body, .. } => limits::quota_content_limit(body),
+                    _ => None,
+                };
+                let message = match refused {
+                    Some(limit) => limits::too_long_message(remote.len(), limit),
+                    None => err.to_string(),
+                };
                 db_call(db.clone(), {
                     let id = note.id.clone();
                     move |db| {
+                        if let Some(limit) = refused {
+                            limits::remember_content_limit(&db, limit)?;
+                        }
                         db.mark_error(&id, &message)?;
                         Ok(())
                     }
@@ -1279,6 +1292,58 @@ mod tests {
             push_audience(Some("SPACE"), Some(""), "PRIVATE", ""),
             ("PRIVATE".into(), String::new())
         );
+    }
+
+    #[tokio::test]
+    async fn limits_come_from_the_usage_endpoint() {
+        let hits = Arc::new(Mutex::new(Vec::new()));
+        let base = spawn_server(
+            vec![
+                (200, r#"{"user":{"name":"users/ann"}}"#),
+                (200, r#"{"limits":{"memoContentBytes":"20000"}}"#),
+            ],
+            hits.clone(),
+        );
+        let found = limits::fetch(&test_client(), &base, "memos_pat_test", ApiFlavor::Latest)
+            .await
+            .unwrap();
+        assert_eq!(found.memo_content_bytes, 20000);
+        assert_eq!(found.upload_bytes, 0);
+        let paths = hits.lock().unwrap().clone();
+        assert!(paths[0].contains("/api/auth/me"));
+        assert!(paths[1].contains("/api/users/ann/usage"));
+    }
+
+    #[tokio::test]
+    async fn limits_fall_back_to_the_older_setting() {
+        let hits = Arc::new(Mutex::new(Vec::new()));
+        let base = spawn_server(
+            vec![
+                (404, "{}"),
+                (
+                    200,
+                    r#"{"memoRelatedSetting":{"contentLengthLimit":12000}}"#,
+                ),
+            ],
+            hits.clone(),
+        );
+        let found = limits::fetch(&test_client(), &base, "memos_pat_test", ApiFlavor::V1)
+            .await
+            .unwrap();
+        assert_eq!(found.memo_content_bytes, 12000);
+        let paths = hits.lock().unwrap().clone();
+        assert!(paths[0].contains("/api/v1/instance/settings/MEMO_RELATED"));
+        assert!(paths[1].contains("/api/v1/workspace/settings/MEMO_RELATED"));
+    }
+
+    #[tokio::test]
+    async fn limits_default_to_8192_when_the_server_reports_none() {
+        let hits = Arc::new(Mutex::new(Vec::new()));
+        let base = spawn_server(vec![(404, "{}"); 4], hits);
+        let found = limits::fetch(&test_client(), &base, "memos_pat_test", ApiFlavor::V1)
+            .await
+            .unwrap();
+        assert_eq!(found, limits::ServerLimits::FALLBACK);
     }
 
     #[tokio::test]

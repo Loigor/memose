@@ -24,6 +24,18 @@ import {
   foldSyntaxFor,
   sourceToDisplay,
 } from "../src/editor/code-fold.ts";
+import {
+  applyHunks,
+  applyToBlock,
+  byteLength,
+  diffLines,
+  formatKilobytes,
+  hunksOf,
+  isProtectedLine,
+  locateBlock,
+  resolveSelection,
+  splitProtected,
+} from "../src/editor/line-diff.ts";
 import { highlightMarkdown } from "../src/editor/md-highlight.ts";
 import { tagAtOffset } from "../src/editor/md-tags.ts";
 import { uniqueFiles } from "../src/media/files.ts";
@@ -433,6 +445,7 @@ test("settings window separates visibility, window, editor, shortcuts, and sync"
     { id: "editor", label: "Editor" },
     { id: "shortcuts", label: "Shortcuts" },
     { id: "sync", label: "Sync" },
+    { id: "models", label: "Models" },
   ]);
   assert.match(html, /id="tab-visibility"[\s\S]*?aria-selected="true"/);
   assert.match(html, /Default memo visibility/);
@@ -1135,4 +1148,86 @@ test("zoomKey reads cmd on macOS and ctrl elsewhere, across keyboard layouts", (
   assert.equal(zoomKey(key("=", "Equal", { metaKey: true }), false), null);
   assert.equal(zoomKey(key("0", "Digit0", { metaKey: true, altKey: true }), true), null);
   assert.equal(zoomKey(key("a", "KeyA", { metaKey: true }), true), null);
+});
+
+test("line diff groups changes and applies only the accepted ones", () => {
+  const before = ["title", "", "teh first line", "kept", "old tail"];
+  const after = ["title", "", "the first line", "kept", "new tail", "extra"];
+  const parts = diffLines(before, after);
+  const hunks = hunksOf(parts);
+  assert.equal(hunks.length, 2);
+  assert.deepEqual(hunks[0], { id: 0, removed: ["teh first line"], added: ["the first line"] });
+  assert.deepEqual(hunks[1], { id: 1, removed: ["old tail"], added: ["new tail", "extra"] });
+  assert.equal(applyHunks(parts, new Set()), before.join("\n"));
+  assert.equal(applyHunks(parts, new Set([0, 1])), after.join("\n"));
+  assert.equal(
+    applyHunks(parts, new Set([1])),
+    ["title", "", "teh first line", "kept", "new tail", "extra"].join("\n"),
+  );
+  assert.deepEqual(hunksOf(diffLines(before, before)), []);
+  assert.equal(hunksOf(diffLines([], ["a"])).length, 1);
+});
+
+test("model edits never see or move attachment and recording lines", () => {
+  const memo = [
+    '[memose-speech-1a2b]: # "audio=voice-1a2b.wav"',
+    "spoken words here",
+    "[memose-speech-end-1a2b]: #",
+    "![voice-1a2b.wav](memose-media/voice-1a2b.wav)",
+    "closing note",
+    "[report.pdf](memose-media/12345678-report.pdf)",
+  ].join("\n");
+  assert.equal(isProtectedLine("![pic](memose-media/a.png#w=200)"), true);
+  assert.equal(isProtectedLine("see ![pic](memose-media/a.png) inline"), false);
+  const { lines, kept } = splitProtected(memo, isProtectedLine);
+  assert.deepEqual(lines, ["spoken words here", "closing note"]);
+  assert.equal(kept.length, 4);
+  const parts = diffLines(lines, ["Spoken words here.", "closing note"]);
+  assert.equal(applyHunks(parts, new Set(), kept), memo);
+  assert.equal(applyHunks(parts, new Set([0]), kept), memo.replace("spoken words here", "Spoken words here."));
+  const shorter = diffLines(lines, ["one line"]);
+  const merged = applyHunks(shorter, new Set([0]), kept).split("\n");
+  assert.equal(merged.filter(isProtectedLine).length, 4);
+  assert.ok(merged.includes("one line"));
+});
+
+test("memo size is measured in bytes like the server does", () => {
+  assert.equal(byteLength("ääkkönen"), 11);
+  assert.equal(formatKilobytes(8192), "8 KB");
+  assert.equal(formatKilobytes(9318), "9.1 KB");
+});
+
+test("a selection is found in the memo by its lines, with or without markdown marks", () => {
+  const memo = [
+    "# Trip plan",
+    "- [ ] book **the** flights",
+    "![a](memose-media/a.png)",
+    "- [x] hotel",
+    "",
+    "Budget is 1200",
+  ].join("\n");
+  assert.deepEqual(resolveSelection(memo, "- [ ] book **the** flights\n- [x] hotel"), { start: 1, end: 3 });
+  assert.deepEqual(resolveSelection(memo, "the flights\nhotel\nBudget"), { start: 1, end: 5 });
+  assert.deepEqual(resolveSelection(memo, "1200"), { start: 5, end: 5 });
+  assert.equal(resolveSelection(memo, "not in the memo"), null);
+  assert.equal(resolveSelection("same\nsame", "same"), null);
+  assert.equal(resolveSelection(memo, "  \n"), null);
+});
+
+test("an edit of selected lines replaces only those lines", () => {
+  const { lines, kept } = splitProtected(
+    ["intro", "teh one", "![a](memose-media/a.png)", "teh two", "outro"].join("\n"),
+    isProtectedLine,
+  );
+  const block = ["teh one", "teh two"];
+  const at = locateBlock(lines, block, 1);
+  assert.equal(at, 1);
+  const parts = diffLines(block, ["the one", "the two"]);
+  const all = new Set(hunksOf(parts).map((hunk) => hunk.id));
+  assert.equal(
+    applyToBlock(lines, at, block.length, parts, all, kept),
+    ["intro", "the one", "the two", "![a](memose-media/a.png)", "outro"].join("\n"),
+  );
+  assert.equal(locateBlock(["a", "b", "a", "b"], ["a", "b"], 3), 2);
+  assert.equal(locateBlock(lines, ["gone"]), -1);
 });
