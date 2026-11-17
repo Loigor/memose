@@ -231,6 +231,37 @@ export function mountRecordingTools(target: RecordingToolsTarget) {
       .flatMap((root) => [...root.querySelectorAll<HTMLElement>("[data-media]")])
       .filter((figure) => Boolean(figure.querySelector(".media-audio")));
 
+  /**
+   * Recordings that follow each other, with at most empty lines between them, join into
+   * one bubble. The empty lines inside a group are hidden.
+   */
+  function group() {
+    for (const root of target.roots()) {
+      for (const node of root.querySelectorAll(".rec-joined, .rec-joins-next, .rec-group-gap")) {
+        node.classList.remove("rec-joined", "rec-joins-next", "rec-group-gap");
+      }
+    }
+    for (const figure of figures()) {
+      const row = figure.closest<HTMLElement>(".media-row");
+      if (!row || !figure.querySelector(".rec-tools")) {
+        continue;
+      }
+      const gaps: Element[] = [];
+      let prev = row.previousElementSibling;
+      while (prev && !prev.classList.contains("media-row") && (prev.textContent ?? "").trim() === "") {
+        gaps.push(prev);
+        prev = prev.previousElementSibling;
+      }
+      if (prev?.classList.contains("media-row") && prev.querySelector(".rec-tools")) {
+        row.classList.add("rec-joined");
+        prev.classList.add("rec-joins-next");
+        for (const gap of gaps) {
+          gap.classList.add("rec-group-gap");
+        }
+      }
+    }
+  }
+
   function paintAll() {
     // Cleared first: a figure with a proposal marks its words again while it is drawn.
     setHighlight("rewording", highlightOwner, []);
@@ -240,6 +271,7 @@ export function mountRecordingTools(target: RecordingToolsTarget) {
         render(figure, name);
       }
     }
+    group();
   }
 
   async function scan() {
@@ -278,6 +310,7 @@ export function mountRecordingTools(target: RecordingToolsTarget) {
         render(figure, name);
       }
     }
+    group();
     // A redraw makes new text nodes, so the marked words are found again.
     const open = found.find((figure) => known.get(figure.dataset.media ?? "")?.proposal);
     const proposal = open ? known.get(open.dataset.media ?? "")?.proposal : null;

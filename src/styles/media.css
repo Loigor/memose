@@ -397,3 +397,34 @@ html[data-theme="dark"] .media-context-menu button.danger {
   background: transparent;
   box-shadow: none;
 }
+
+/* Recordings made in the app share one width, and consecutive ones join into one bubble. */
+.media:has(.rec-tools) {
+  width: min(360px, 100%);
+}
+
+.media:has(.rec-tools) .media-audio {
+  box-sizing: border-box;
+  width: 100%;
+}
+
+/* An empty line between two recordings of one group. */
+.rec-group-gap {
+  display: none !important;
+}
+
+.media-row.rec-joined {
+  margin-top: -4px;
+}
+
+.media-row.rec-joins-next .media-audio {
+  border-bottom-width: 0;
+  border-bottom-right-radius: 0;
+  border-bottom-left-radius: 0;
+}
+
+.media-row.rec-joined .media-audio {
+  border-top: 1px dashed color-mix(in srgb, var(--ink) 16%, transparent);
+  border-top-right-radius: 0;
+  border-top-left-radius: 0;
+}

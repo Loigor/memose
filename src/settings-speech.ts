@@ -3,7 +3,15 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 
-import { megabytes, type MicrophonePermission, type SpeechSettings, type SpeechSource } from "./ai/speech";
+import {
+  megabytes,
+  speechLanguages,
+  type MicrophonePermission,
+  type SpeechModelId,
+  type SpeechModelStatus,
+  type SpeechSettings,
+  type SpeechSource,
+} from "./ai/speech";
 
 type Progress = {
   received: number;
@@ -28,9 +36,9 @@ export function initSpeechSettings(status: HTMLElement) {
   const localPanel = required<HTMLElement>("#speech-local");
   const serverPanel = required<HTMLElement>("#speech-server");
   const engineStatus = required<HTMLElement>("#speech-engine-status");
-  const progress = required<HTMLProgressElement>("#speech-progress");
-  const download = required<HTMLButtonElement>("#speech-download");
-  const remove = required<HTMLButtonElement>("#speech-remove");
+  const modelList = required<HTMLElement>("#speech-models");
+  const localLanguageRow = required<HTMLElement>("#speech-local-language-row");
+  const localLanguage = required<HTMLSelectElement>("#speech-local-language");
   const baseUrl = required<HTMLInputElement>("#speech-base-url");
   const where = required<HTMLElement>("#speech-where");
   const key = required<HTMLInputElement>("#speech-key");
@@ -44,7 +52,18 @@ export function initSpeechSettings(status: HTMLElement) {
   const permissionText = required<HTMLElement>("#speech-permission-text");
   const permissionAsk = required<HTMLButtonElement>("#speech-permission-ask");
   const permissionOpen = required<HTMLButtonElement>("#speech-permission-open");
-  let downloading = false;
+  /** The model being downloaded, and how far it is. */
+  let downloading: SpeechModelId | null = null;
+  let progressText = "";
+  let progressShare: number | null = null;
+  let last: SpeechSettings | null = null;
+
+  for (const [code, name] of speechLanguages) {
+    const option = document.createElement("option");
+    option.value = code;
+    option.textContent = name;
+    localLanguage.append(option);
+  }
 
   const paintPermission = (microphone: MicrophonePermission) => {
     const { access, borrowed } = microphone;
@@ -69,21 +88,147 @@ export function initSpeechSettings(status: HTMLElement) {
           : "macOS has not asked yet. It asks the first time you record, or now with the button.";
   };
 
+  const fact = (label: string, value: string) => {
+    const item = document.createElement("div");
+    const term = document.createElement("dt");
+    term.textContent = label;
+    const detail = document.createElement("dd");
+    detail.textContent = value;
+    item.append(term, detail);
+    return item;
+  };
+
+  const modelCard = (settings: SpeechSettings, item: SpeechModelStatus) => {
+    const chosen = settings.engine.model === item.id;
+    const card = document.createElement("div");
+    card.className = "model-card";
+    card.dataset.model = item.id;
+    card.dataset.chosen = String(chosen);
+    card.setAttribute("role", "radio");
+    card.setAttribute("aria-checked", String(chosen));
+
+    const head = document.createElement("div");
+    head.className = "model-head";
+    const dot = document.createElement("span");
+    dot.className = "model-dot";
+    const name = document.createElement("strong");
+    name.textContent = item.name;
+    head.append(dot, name);
+    const badge = document.createElement("span");
+    badge.className = "model-badge";
+    badge.textContent = chosen
+      ? item.installed
+        ? "In use"
+        : "Chosen, not downloaded"
+      : item.installed
+        ? "Downloaded"
+        : "";
+    badge.hidden = badge.textContent === "";
+    head.append(badge);
+
+    const summary = document.createElement("p");
+    summary.className = "hint";
+    summary.textContent = item.summary;
+
+    const facts = document.createElement("dl");
+    facts.className = "model-facts";
+    facts.append(
+      fact("Size", megabytes(item.diskBytes)),
+      fact("Memory", `${(item.memoryMb / 1000).toFixed(1)} GB RAM`),
+      fact("Speed", `${item.speed}× real time`),
+      fact("Start", `${item.loadSecs.toFixed(1)} s`),
+    );
+
+    const actions = document.createElement("div");
+    actions.className = "actions";
+    if (!chosen) {
+      const use = document.createElement("button");
+      use.type = "button";
+      use.textContent = "Use";
+      use.addEventListener("click", () => {
+        save({ localModel: item.id }, `${item.name} will be used from the next recording.`);
+      });
+      actions.append(use);
+    }
+    if (!item.installed && settings.engine.supported) {
+      const get = document.createElement("button");
+      get.type = "button";
+      get.className = chosen ? "primary" : "";
+      get.textContent = `Download (${megabytes(item.downloadBytes)})`;
+      get.disabled = downloading !== null;
+      get.addEventListener("click", () => startDownload(item));
+      actions.append(get);
+    }
+    if (item.installed) {
+      const drop = document.createElement("button");
+      drop.type = "button";
+      drop.className = "danger";
+      drop.textContent = "Remove";
+      drop.disabled = downloading !== null;
+      drop.addEventListener("click", () => {
+        act(async () => {
+          await invoke("speech_remove_model", { model: item.id });
+          await load();
+          return `${item.name} was removed.`;
+        });
+      });
+      actions.append(drop);
+    }
+    card.append(head, summary, facts);
+    if (downloading === item.id) {
+      const bar = document.createElement("progress");
+      bar.className = "model-progress";
+      if (progressShare === null) {
+        bar.removeAttribute("value");
+      } else {
+        bar.max = 1;
+        bar.value = progressShare;
+      }
+      const note = document.createElement("p");
+      note.className = "hint";
+      note.textContent = progressText;
+      card.append(bar, note);
+    }
+    card.append(actions);
+    return card;
+  };
+
   const paintEngine = (settings: SpeechSettings) => {
     const { engine } = settings;
-    remove.hidden = !engine.installed || downloading;
-    download.hidden = engine.installed || !engine.supported;
-    download.disabled = downloading;
+    modelList.replaceChildren(...engine.models.map((item) => modelCard(settings, item)));
+    modelList.hidden = !engine.supported;
+    const chosen = engine.models.find((item) => item.id === engine.model);
+    localLanguageRow.hidden = !chosen?.needsLanguage;
+    // The models that need a language start from this computer's language.
+    const preferred = settings.language || navigator.language.slice(0, 2).toLowerCase();
+    localLanguage.value = speechLanguages.some(([code]) => code === preferred) ? preferred : "en";
     if (!engine.supported) {
       engineStatus.textContent =
-        "The built-in recognizer is not available for this computer. Use a speech server instead.";
+        "The built-in recognizers are not available for this computer. Use a speech server instead.";
     } else if (engine.installed) {
-      engineStatus.textContent = `Ready. The download uses ${megabytes(engine.diskBytes)} on this computer.`;
-    } else if (!downloading) {
-      engineStatus.textContent = `Needs a one-time download of ${megabytes(engine.downloadBytes)}.`;
-      download.textContent = `Download (${megabytes(engine.downloadBytes)})`;
+      engineStatus.textContent = `${chosen?.name ?? "The model"} is ready. Downloads use ${megabytes(engine.diskBytes)} on this computer.`;
+    } else {
+      engineStatus.textContent = `${chosen?.name ?? "The model"} needs a one-time download of ${megabytes(engine.downloadBytes)}.`;
     }
   };
+
+  function startDownload(item: SpeechModelStatus) {
+    downloading = item.id;
+    progressShare = null;
+    progressText = "Starting the download…";
+    if (last) {
+      paintEngine(last);
+    }
+    act(async () => {
+      try {
+        await invoke("speech_download", { model: item.id });
+        return `${item.name} is ready.`;
+      } finally {
+        downloading = null;
+        await load();
+      }
+    }, "Downloading…");
+  }
 
   const paint = (settings: SpeechSettings) => {
     enabled.checked = settings.enabled;
@@ -117,6 +262,7 @@ export function initSpeechSettings(status: HTMLElement) {
 
   const load = async () => {
     const settings = await invoke<SpeechSettings>("get_speech_settings");
+    last = settings;
     paint(settings);
     return settings;
   };
@@ -216,47 +362,26 @@ export function initSpeechSettings(status: HTMLElement) {
     save({ key: "" }, "Key removed.");
   });
 
-  download.addEventListener("click", () => {
-    downloading = true;
-    download.disabled = true;
-    progress.hidden = false;
-    progress.removeAttribute("value");
-    engineStatus.textContent = "Starting the download…";
-    act(async () => {
-      try {
-        await invoke("speech_download");
-        return "The speech model is ready.";
-      } finally {
-        downloading = false;
-        progress.hidden = true;
-        await load();
-      }
-    }, "Downloading…");
-  });
-  remove.addEventListener("click", () => {
-    act(async () => {
-      await invoke("speech_remove_model");
-      await load();
-      return "The download was removed.";
-    });
+  localLanguage.addEventListener("change", () => {
+    save({ language: localLanguage.value }, "Language saved. It is used from the next recording.");
   });
 
   void listen<Progress>("speech-download", (event) => {
     const { received, total, stage } = event.payload;
-    if (stage === "done" || stage === "error") {
+    if (stage === "done" || stage === "error" || !downloading) {
       return;
     }
-    downloading = true;
-    progress.hidden = false;
     if (stage === "unpacking" || total === 0) {
-      progress.removeAttribute("value");
-      engineStatus.textContent = "Unpacking…";
-      return;
+      progressShare = null;
+      progressText = "Unpacking…";
+    } else {
+      progressShare = received / total;
+      const what = stage === "runtime" ? "the speech runtime" : "the model";
+      progressText = `Downloading ${what}: ${megabytes(received)} of ${megabytes(total)}.`;
     }
-    progress.max = total;
-    progress.value = received;
-    const what = stage === "runtime" ? "the speech runtime" : "the speech model";
-    engineStatus.textContent = `Downloading ${what}: ${megabytes(received)} of ${megabytes(total)}.`;
+    if (last) {
+      paintEngine(last);
+    }
   });
 
   void load().then(

@@ -34,6 +34,8 @@ pub const SPEECH_BASE_URL: &str = "speech_base_url";
 pub const SPEECH_API_KEY: &str = "speech_api_key";
 pub const SPEECH_MODEL: &str = "speech_model";
 pub const SPEECH_LANGUAGE: &str = "speech_language";
+/// The built-in model in use: `parakeet` or `canary`.
+pub const SPEECH_LOCAL_MODEL: &str = "speech_local_model";
 pub const SPEECH_DEVICE: &str = "speech_device";
 pub const SPEECH_KEEP_AUDIO: &str = "speech_keep_audio";
 pub const SPEECH_POLISH: &str = "speech_polish";
@@ -59,9 +61,12 @@ const SERVER_TIMEOUT: Duration = Duration::from_secs(120);
 const POLISH_TIMEOUT: Duration = Duration::from_secs(120);
 /// Rules every improvement level shares.
 const POLISH_COMMON: &str = "Reply with the corrected text only. Reply in the language of the text and never translate it. Do not add content, do not answer questions in it, do not add line breaks, and do not explain.";
-const POLISH_IMPROVED: &str = "You fix text that a speech recognizer heard. Add punctuation and capital letters. Fix only words that are clearly recognition errors. Keep the speaker's own words, dialect, and word order.";
-const POLISH_PROOF: &str = "You proof-read text that a speech recognizer heard. Correct spelling, grammar, punctuation, and misheard words, so it reads as correct standard written language. Keep the meaning, the tone, and everything that was said.";
-const POLISH_CONTEXT: &str = "You proof-read text that a user dictated into a note. You also get the note text before and after it. Correct spelling, grammar, punctuation, and misheard words, so it reads as correct standard written language. Use the note to pick the right names, terms, and form, and apply spoken corrections such as \"no, I mean\" or \"scratch that\". Keep the meaning, the tone, and everything that was said.";
+/// Level 2. Each level after it does everything the one before does, and more.
+const POLISH_IMPROVED: &str = "You fix text that a speech recognizer heard. Add punctuation and capital letters. Fix words that are clearly recognition errors. Keep the speaker's own words, dialect, and word order.";
+/// Level 3: level 2, then proof-reading.
+const POLISH_PROOF: &str = "You fix and proof-read text that a speech recognizer heard. First add punctuation and capital letters and fix words that are clearly recognition errors. Then proof-read it: correct spelling and grammar, so it reads as correct standard written language. Keep the meaning, the tone, and everything that was said.";
+/// Level 4: level 3, using the note around the words.
+const POLISH_CONTEXT: &str = "You fix and proof-read text that a user dictated into a note. You also get the note text before and after it. First add punctuation and capital letters and fix words that are clearly recognition errors. Then proof-read it: correct spelling and grammar, so it reads as correct standard written language. Use the note to pick the right names, terms, and form, and apply spoken corrections such as \"no, I mean\" or \"scratch that\". Keep the meaning, the tone, and everything that was said.";
 
 /// How much the chat model may change dictated text.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -191,6 +196,8 @@ pub struct Recognizer {
     pub key: Option<String>,
     pub model: String,
     pub language: String,
+    /// The built-in model, for the `local` source.
+    pub local_model: engine::ModelId,
 }
 
 /// The speech server falls back to the model server when it has no address of its own.
@@ -217,6 +224,7 @@ pub fn recognizer(db: &Db) -> Result<Recognizer, AppError> {
         key: server_key(db)?,
         model: db.get_meta(SPEECH_MODEL)?.unwrap_or_default(),
         language: db.get_meta(SPEECH_LANGUAGE)?.unwrap_or_default(),
+        local_model: engine::ModelId::parse(db.get_meta(SPEECH_LOCAL_MODEL)?.as_deref()),
     })
 }
 
@@ -706,12 +714,19 @@ async fn work(
     if recognizer.source == Source::Local {
         let dir = engine_dir(&app);
         let engine = engine.clone();
+        let model = recognizer.local_model;
+        let language = recognizer.language.clone();
         let loaded = tokio::task::spawn_blocking(move || {
             let mut slot = engine
                 .lock()
                 .unwrap_or_else(|poisoned| poisoned.into_inner());
-            if slot.is_none() {
-                *slot = Some(Engine::load(&dir?)?);
+            // A model or language picked since the last recording replaces the loaded one.
+            if !slot
+                .as_ref()
+                .is_some_and(|loaded| loaded.is(model, &language))
+            {
+                *slot = None;
+                *slot = Some(Engine::load(&dir?, model, &language)?);
             }
             Ok::<(), AppError>(())
         })
@@ -935,12 +950,18 @@ pub async fn transcribe_file(app: &AppHandle, path: &std::path::Path) -> Result<
             state.speech.uses.fetch_add(1, Ordering::SeqCst);
             let engine = state.speech.engine.clone();
             let dir = engine_dir(app)?;
+            let model = recognizer.local_model;
+            let language = recognizer.language.clone();
             let text = tokio::task::spawn_blocking(move || {
                 let mut slot = engine
                     .lock()
                     .unwrap_or_else(|poisoned| poisoned.into_inner());
-                if slot.is_none() {
-                    *slot = Some(Engine::load(&dir)?);
+                if !slot
+                    .as_ref()
+                    .is_some_and(|loaded| loaded.is(model, &language))
+                {
+                    *slot = None;
+                    *slot = Some(Engine::load(&dir, model, &language)?);
                 }
                 let loaded = slot
                     .as_mut()

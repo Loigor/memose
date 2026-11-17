@@ -1385,7 +1385,12 @@ pub fn get_speech_settings(
         keep_audio: flag(&state, speech::SPEECH_KEEP_AUDIO, false)?,
         polish_level: speech::stored_level(&state.db)? as u8,
         polish_ready: llm_ready,
-        engine: speech::engine::status(&speech::engine_dir(&app)?),
+        engine: speech::engine::status(
+            &speech::engine_dir(&app)?,
+            speech::engine::ModelId::parse(
+                state.db.get_meta(speech::SPEECH_LOCAL_MODEL)?.as_deref(),
+            ),
+        ),
         microphone: speech::permission::status(),
         recording: speech::current(&state),
         base_url,
@@ -1408,6 +1413,7 @@ pub fn save_speech_settings(
     device: Option<String>,
     keep_audio: Option<bool>,
     polish_level: Option<u8>,
+    local_model: Option<String>,
 ) -> Result<(), AppError> {
     let set_flag = |name: &str, value: Option<bool>| -> Result<(), AppError> {
         match value {
@@ -1455,6 +1461,12 @@ pub fn save_speech_settings(
     }
     set_flag(speech::SPEECH_ENABLED, enabled)?;
     set_flag(speech::SPEECH_KEEP_AUDIO, keep_audio)?;
+    if let Some(model) = local_model {
+        let model = speech::engine::ModelId::parse(Some(model.trim()));
+        state
+            .db
+            .set_meta(speech::SPEECH_LOCAL_MODEL, model.as_str())?;
+    }
     if let Some(level) = polish_level {
         let level = speech::Level::from_number(level) as u8;
         state
@@ -1475,8 +1487,18 @@ pub async fn speech_devices() -> Vec<String> {
 
 /// Downloads the built-in recognizer. Progress arrives as `speech-download` events.
 #[tauri::command]
-pub async fn speech_download(app: AppHandle, state: State<'_, AppState>) -> Result<(), AppError> {
+pub async fn speech_download(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    model: Option<String>,
+) -> Result<(), AppError> {
     let dir = speech::engine_dir(&app)?;
+    let id = match model.as_deref() {
+        Some(name) => speech::engine::ModelId::parse(Some(name)),
+        None => speech::engine::ModelId::parse(
+            state.db.get_meta(speech::SPEECH_LOCAL_MODEL)?.as_deref(),
+        ),
+    };
     let http = state.http.clone();
     let report = {
         let app = app.clone();
@@ -1484,8 +1506,8 @@ pub async fn speech_download(app: AppHandle, state: State<'_, AppState>) -> Resu
             let _ = app.emit("speech-download", progress);
         }
     };
-    let result = speech::engine::install(&http, &dir, &report).await;
-    let status = speech::engine::status(&dir);
+    let result = speech::engine::install(&http, &dir, id, &report).await;
+    let status = speech::engine::status(&dir, id);
     report(speech::engine::Progress {
         received: 0,
         total: status.download_bytes,
@@ -1498,11 +1520,20 @@ pub async fn speech_download(app: AppHandle, state: State<'_, AppState>) -> Resu
 
 /// Deletes the built-in recognizer's files.
 #[tauri::command]
-pub fn speech_remove_model(app: AppHandle, state: State<AppState>) -> Result<(), AppError> {
+pub fn speech_remove_model(
+    app: AppHandle,
+    state: State<AppState>,
+    model: Option<String>,
+) -> Result<(), AppError> {
     if speech::current(&state).is_some() {
         return Err(AppError::Message("stop the recording first".into()));
     }
-    speech::engine::remove(&speech::engine_dir(&app)?)?;
+    let id = speech::engine::ModelId::parse(
+        model
+            .or(state.db.get_meta(speech::SPEECH_LOCAL_MODEL)?)
+            .as_deref(),
+    );
+    speech::engine::remove(&speech::engine_dir(&app)?, id)?;
     let _ = app.emit("speech-settings-changed", ());
     Ok(())
 }
@@ -1522,7 +1553,7 @@ pub async fn speech_start(
     let keep_audio = flag(&state, speech::SPEECH_KEEP_AUDIO, false)?;
     match recognizer.source {
         speech::Source::Local => {
-            let status = speech::engine::status(&speech::engine_dir(&app)?);
+            let status = speech::engine::status(&speech::engine_dir(&app)?, recognizer.local_model);
             if !status.supported {
                 return Err(AppError::Message(
                     "the built-in recognizer is not available on this computer; use a speech server".into(),
@@ -1530,7 +1561,7 @@ pub async fn speech_start(
             }
             if !status.installed {
                 return Err(AppError::Message(
-                    "download the speech model in Settings first".into(),
+                    "download the chosen speech model in Settings first".into(),
                 ));
             }
         }

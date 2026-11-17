@@ -450,15 +450,16 @@
 
             <div id="speech-local" class="source-panel">
               <p id="speech-engine-status" class="hint"></p>
-              <progress id="speech-progress" max="1" value="0" hidden></progress>
-              <div class="actions">
-                <button id="speech-download" class="primary" type="button">Download</button>
-                <button id="speech-remove" class="danger" type="button" hidden>Remove download</button>
-              </div>
+              <div id="speech-models" class="model-list" role="radiogroup" aria-label="Speech model"></div>
+              <label id="speech-local-language-row" hidden>
+                Language
+                <select id="speech-local-language"></select>
+              </label>
               <p class="hint">
-                Uses NVIDIA Parakeet v3. It understands 25 European languages, Finnish and English among them, finds the
-                language by itself, and never sends sound anywhere. It uses about 1.3 GB of memory while you record and
-                gives it back afterwards.
+                Sound never leaves this computer. A model is loaded when you record or re-analyze, and its memory is
+                given back about a minute and a half later. Memory and speed were measured on an Apple M1 Pro. The
+                models run on the processor, so they use no graphics memory (VRAM). The speech runtime (about 31 MB) is
+                downloaded once with the first model.
               </p>
             </div>
 

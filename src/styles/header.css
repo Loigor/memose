@@ -871,19 +871,20 @@ header.compact-meta #edited-sep {
   background-color: color-mix(in srgb, #7a5cf0 18%, transparent);
 }
 
-/* The four-step improvement slider, under the listening mark and under "Re-analyze". */
+/* The four-step improvement slider, beside the listening mark and under "Re-analyze". */
 .level-slider {
+  --level-accent: #7a5cf0;
   display: flex;
   align-items: center;
-  gap: 6px;
-  padding: 1px 8px 1px 6px;
+  gap: 7px;
+  padding: 3px 9px 3px 8px;
   border-radius: 999px;
-  background: color-mix(in srgb, var(--paper) 92%, transparent);
-  box-shadow: 0 0 0 1px var(--line);
-  color: color-mix(in srgb, var(--ink) 65%, transparent);
+  background: color-mix(in srgb, var(--paper) 90%, var(--level-accent));
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--level-accent) 18%, transparent);
+  color: color-mix(in srgb, var(--ink) 75%, var(--level-accent));
   font-family: system-ui, sans-serif;
   font-size: 10.5px;
-  letter-spacing: 0;
+  letter-spacing: 0.01em;
   text-transform: none;
   white-space: nowrap;
   cursor: default;
@@ -893,12 +894,66 @@ header.compact-meta #edited-sep {
   display: none;
 }
 
-.level-slider input {
-  width: 52px;
+.level-track {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 46px;
   height: 12px;
-  margin: 0;
-  accent-color: #7a5cf0;
   cursor: pointer;
+  touch-action: none;
+  outline: none;
+}
+
+/* The thin line under the dots, and its filled part up to the current level. */
+.level-track::before,
+.level-fill {
+  position: absolute;
+  top: 50%;
+  left: 3px;
+  height: 2px;
+  border-radius: 1px;
+  transform: translateY(-50%);
+  content: "";
+}
+
+.level-track::before {
+  right: 3px;
+  background: color-mix(in srgb, var(--ink) 16%, transparent);
+}
+
+.level-fill {
+  width: calc((100% - 6px) * var(--level-at, 0));
+  background: var(--level-accent);
+  transition: width 140ms ease;
+}
+
+.level-step {
+  position: relative;
+  z-index: 1;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: color-mix(in srgb, var(--paper) 80%, var(--ink));
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--ink) 18%, transparent);
+  transition:
+    transform 140ms ease,
+    background 140ms ease;
+}
+
+.level-step.is-on {
+  background: var(--level-accent);
+  box-shadow: none;
+}
+
+.level-step.is-current {
+  transform: scale(1.7);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--paper) 85%, transparent);
+}
+
+.level-track:hover .level-step:not(.is-current) {
+  transform: scale(1.2);
 }
 
 .level-name {

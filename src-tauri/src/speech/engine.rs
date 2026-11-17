@@ -1,31 +1,170 @@
-//! The built-in recognizer: NVIDIA Parakeet v3 through ONNX Runtime.
+//! The built-in recognizers, run through ONNX Runtime: NVIDIA Parakeet v3 and Canary 1B v2.
 //!
-//! Neither the runtime library nor the model ships with the app. Both are downloaded
-//! into the app data folder when the user asks for them, checked against a known
-//! SHA-256, and loaded only while a recording runs.
+//! Neither the runtime library nor a model ships with the app. They are downloaded into
+//! the app data folder when the user asks for them, checked against a known SHA-256, and
+//! loaded only while recording or re-analysis uses them.
 
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
 use std::time::Duration;
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
+use transcribe_rs::onnx::canary::{CanaryModel, CanaryParams};
 use transcribe_rs::onnx::parakeet::{ParakeetModel, ParakeetParams};
 use transcribe_rs::onnx::Quantization;
 
 use crate::error::AppError;
 
-const MODEL_DIR: &str = "parakeet-tdt-0.6b-v3-int8";
-const MODEL_URL: &str = "https://blob.handy.computer/parakeet-v3-int8.tar.gz";
-const MODEL_SHA256: &str = "43d37191602727524a7d8c6da0eef11c4ba24320f5b4730f1a2497befc2efa77";
-const MODEL_BYTES: u64 = 478_517_071;
-/// Files that must exist for the model to load.
-const MODEL_FILES: [&str; 4] = [
-    "encoder-model.int8.onnx",
-    "decoder_joint-model.int8.onnx",
-    "nemo128.onnx",
-    "vocab.txt",
-];
+/// A speech model the app can download and run.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ModelId {
+    Parakeet,
+    Canary,
+}
+
+impl ModelId {
+    pub const ALL: [Self; 2] = [Self::Parakeet, Self::Canary];
+
+    pub fn parse(value: Option<&str>) -> Self {
+        match value {
+            Some("canary") => Self::Canary,
+            _ => Self::Parakeet,
+        }
+    }
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Parakeet => "parakeet",
+            Self::Canary => "canary",
+        }
+    }
+
+    fn spec(self) -> &'static ModelSpec {
+        match self {
+            Self::Parakeet => &PARAKEET,
+            Self::Canary => &CANARY,
+        }
+    }
+}
+
+/// One file of a model, fetched on its own.
+struct ModelFile {
+    url: &'static str,
+    name: &'static str,
+    sha256: &'static str,
+    bytes: u64,
+}
+
+enum Source {
+    /// One archive with a folder of the model's name.
+    Archive {
+        url: &'static str,
+        sha256: &'static str,
+        bytes: u64,
+    },
+    Files(&'static [ModelFile]),
+}
+
+/// What the settings show for a model. Memory and speed were measured on an Apple M1 Pro,
+/// running on the CPU, with three Finnish test clips.
+struct ModelSpec {
+    name: &'static str,
+    summary: &'static str,
+    /// The folder under the speech folder.
+    dir: &'static str,
+    /// Files that must exist for the model to load.
+    files: &'static [&'static str],
+    source: Source,
+    /// Disk space once installed, in bytes.
+    disk_bytes: u64,
+    /// Peak memory while it runs, in MB.
+    memory_mb: u32,
+    /// How many times faster than real time.
+    speed: u32,
+    /// Seconds to load before the first words.
+    load_secs: f32,
+    /// The language must be named; the model does not detect it.
+    needs_language: bool,
+}
+
+const PARAKEET: ModelSpec = ModelSpec {
+    name: "Parakeet v3",
+    summary:
+        "Fast. Finds the language by itself. 25 European languages, Finnish and English among them.",
+    dir: "parakeet-tdt-0.6b-v3-int8",
+    files: &[
+        "encoder-model.int8.onnx",
+        "decoder_joint-model.int8.onnx",
+        "nemo128.onnx",
+        "vocab.txt",
+    ],
+    source: Source::Archive {
+        url: "https://blob.handy.computer/parakeet-v3-int8.tar.gz",
+        sha256: "43d37191602727524a7d8c6da0eef11c4ba24320f5b4730f1a2497befc2efa77",
+        bytes: 478_517_071,
+    },
+    disk_bytes: 670_620_000,
+    memory_mb: 1270,
+    speed: 23,
+    load_secs: 1.2,
+    needs_language: false,
+};
+
+const CANARY: ModelSpec = ModelSpec {
+    name: "Canary 1B v2",
+    summary: "More accurate, about half as fast. The same 25 European languages; set the language below.",
+    dir: "canary-1b-v2-int8",
+    files: &["encoder-model.int8.onnx", "decoder-model.int8.onnx", "nemo128.onnx", "vocab.txt"],
+    source: Source::Files(&[
+        ModelFile {
+            url: "https://huggingface.co/istupakov/canary-1b-v2-onnx/resolve/main/encoder-model.int8.onnx",
+            name: "encoder-model.int8.onnx",
+            sha256: "6d96e9945898e5ace48f4efecd459ca1df81859730be27b8af6b197639403ee1",
+            bytes: 859_078_138,
+        },
+        ModelFile {
+            url: "https://huggingface.co/istupakov/canary-1b-v2-onnx/resolve/main/decoder-model.int8.onnx",
+            name: "decoder-model.int8.onnx",
+            sha256: "52d83aa7aad41fbbe4f9dfcd341d784735a6eb4c6eb0d3290fc27a0d8ac39abf",
+            bytes: 170_040_374,
+        },
+        ModelFile {
+            url: "https://huggingface.co/istupakov/canary-1b-v2-onnx/resolve/main/vocab.txt",
+            name: "vocab.txt",
+            sha256: "2c9efe6104fd29522ea27ce0e3aef5d37c690af4e5a4232e643e23ca403ffea3",
+            bytes: 208_022,
+        },
+        ModelFile {
+            url: "https://huggingface.co/istupakov/canary-1b-v2-onnx/resolve/main/config.json",
+            name: "config.json",
+            sha256: "f90ace8e35326dcd47c7330b230644fa0835083ed1e89e2f59aa08ba10d74f54",
+            bytes: 68,
+        },
+        // Canary's repository has no audio preprocessor. It uses the same one as Parakeet.
+        ModelFile {
+            url: "https://huggingface.co/istupakov/parakeet-tdt-0.6b-v3-onnx/resolve/main/nemo128.onnx",
+            name: "nemo128.onnx",
+            sha256: "a9fde1486ebfcc08f328d75ad4610c67835fea58c73ba57e3209a6f6cf019e9f",
+            bytes: 139_764,
+        },
+    ]),
+    disk_bytes: 1_029_466_366,
+    memory_mb: 1770,
+    speed: 12,
+    load_secs: 5.6,
+    needs_language: true,
+};
+
+impl Source {
+    fn bytes(&self) -> u64 {
+        match self {
+            Self::Archive { bytes, .. } => *bytes,
+            Self::Files(files) => files.iter().map(|file| file.bytes).sum(),
+        }
+    }
+}
 
 const RUNTIME_BASE: &str = "https://github.com/microsoft/onnxruntime/releases/download/v1.24.2/";
 
@@ -88,30 +227,53 @@ fn runtime() -> Option<Runtime> {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ModelStatus {
+    pub id: ModelId,
+    pub name: &'static str,
+    pub summary: &'static str,
+    pub installed: bool,
+    /// What a download fetches now, the runtime included when it is missing.
+    pub download_bytes: u64,
+    /// Disk space once installed.
+    pub disk_bytes: u64,
+    pub memory_mb: u32,
+    pub speed: u32,
+    pub load_secs: f32,
+    pub needs_language: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Status {
-    /// The built-in recognizer can run on this computer.
+    /// The built-in recognizers can run on this computer.
     pub supported: bool,
-    /// The runtime library and the model are both on disk.
+    /// The runtime and `model` are both on disk.
     pub installed: bool,
-    /// Size of what is still to download, in bytes.
+    /// The model in use.
+    pub model: ModelId,
+    /// What a download of `model` fetches now, in bytes.
     pub download_bytes: u64,
-    /// Disk space the installed files use, in bytes.
+    /// Disk space the speech folder uses, in bytes.
     pub disk_bytes: u64,
+    pub models: Vec<ModelStatus>,
 }
 
 fn runtime_path(dir: &Path) -> Option<PathBuf> {
     runtime().map(|runtime| dir.join(runtime.file))
 }
 
-fn model_path(dir: &Path) -> PathBuf {
-    dir.join(MODEL_DIR)
+fn model_path(dir: &Path, id: ModelId) -> PathBuf {
+    dir.join(id.spec().dir)
 }
 
-fn model_ready(dir: &Path) -> bool {
-    let model = model_path(dir);
-    MODEL_FILES.iter().all(|name| model.join(name).is_file())
+fn model_ready(dir: &Path, id: ModelId) -> bool {
+    let model = model_path(dir, id);
+    id.spec()
+        .files
+        .iter()
+        .all(|name| model.join(name).is_file())
 }
 
 fn runtime_ready(dir: &Path) -> bool {
@@ -135,35 +297,54 @@ fn dir_bytes(dir: &Path) -> u64 {
         .sum()
 }
 
-pub fn status(dir: &Path) -> Status {
-    let Some(runtime) = runtime() else {
-        return Status {
-            supported: false,
-            installed: false,
-            download_bytes: 0,
-            disk_bytes: 0,
-        };
+pub fn status(dir: &Path, model: ModelId) -> Status {
+    let runtime = runtime();
+    let missing_runtime = match &runtime {
+        Some(runtime) if !runtime_ready(dir) => runtime.bytes,
+        _ => 0,
     };
-    let has_runtime = runtime_ready(dir);
-    let has_model = model_ready(dir);
-    let mut download_bytes = 0;
-    if !has_runtime {
-        download_bytes += runtime.bytes;
-    }
-    if !has_model {
-        download_bytes += MODEL_BYTES;
-    }
+    let models: Vec<ModelStatus> = ModelId::ALL
+        .iter()
+        .map(|id| {
+            let spec = id.spec();
+            let installed = runtime.is_some() && model_ready(dir, *id);
+            ModelStatus {
+                id: *id,
+                name: spec.name,
+                summary: spec.summary,
+                installed: installed && missing_runtime == 0,
+                download_bytes: if model_ready(dir, *id) {
+                    0
+                } else {
+                    spec.source.bytes()
+                } + missing_runtime,
+                disk_bytes: spec.disk_bytes,
+                memory_mb: spec.memory_mb,
+                speed: spec.speed,
+                load_secs: spec.load_secs,
+                needs_language: spec.needs_language,
+            }
+        })
+        .collect();
+    let chosen = models.iter().find(|item| item.id == model);
     Status {
-        supported: true,
-        installed: has_runtime && has_model,
-        download_bytes,
+        supported: runtime.is_some(),
+        installed: chosen.is_some_and(|item| item.installed),
+        model,
+        download_bytes: chosen.map_or(0, |item| item.download_bytes),
         disk_bytes: dir_bytes(dir),
+        models,
     }
 }
 
-/// Deletes the runtime and the model. A loaded model keeps working until it is dropped.
-pub fn remove(dir: &Path) -> Result<(), AppError> {
-    if dir.is_dir() {
+/// Deletes one model. The runtime goes too when no model is left.
+/// A loaded model keeps working until it is dropped.
+pub fn remove(dir: &Path, id: ModelId) -> Result<(), AppError> {
+    let path = model_path(dir, id);
+    if path.is_dir() {
+        std::fs::remove_dir_all(&path)?;
+    }
+    if ModelId::ALL.iter().all(|other| !model_ready(dir, *other)) && dir.is_dir() {
         std::fs::remove_dir_all(dir)?;
     }
     Ok(())
@@ -266,8 +447,8 @@ fn unpack_runtime(archive: &Path, runtime: &Runtime, target: &Path) -> Result<()
     unpack_tgz_member(archive, runtime.member, target)
 }
 
-/// Unpacks the model archive into `dir`. Only plain files under the model folder are written.
-fn unpack_model(archive: &Path, dir: &Path) -> Result<(), AppError> {
+/// Unpacks a model archive into `dir`. Only plain files under the model folder are written.
+fn unpack_model(archive: &Path, dir: &Path, id: ModelId) -> Result<(), AppError> {
     let file = std::fs::File::open(archive)?;
     let mut tar = tar::Archive::new(flate2::read::GzDecoder::new(file));
     for entry in tar.entries()? {
@@ -282,10 +463,10 @@ fn unpack_model(archive: &Path, dir: &Path) -> Result<(), AppError> {
         let Some(name) = name.filter(|name| !name.starts_with("._")) else {
             continue;
         };
-        if !safe_member(&path) || !path.starts_with(MODEL_DIR) {
+        if !safe_member(&path) || !path.starts_with(id.spec().dir) {
             continue;
         }
-        let target = model_path(dir);
+        let target = model_path(dir, id);
         std::fs::create_dir_all(&target)?;
         let mut out = std::fs::File::create(target.join(name))?;
         std::io::copy(&mut entry, &mut out)?;
@@ -293,17 +474,18 @@ fn unpack_model(archive: &Path, dir: &Path) -> Result<(), AppError> {
     Ok(())
 }
 
-/// Downloads whatever is missing. `report` gets the running total.
+/// Downloads what `id` needs that is missing. `report` gets the running total.
 pub async fn install(
     http: &reqwest::Client,
     dir: &Path,
+    id: ModelId,
     report: impl Fn(Progress) + Send + Sync,
 ) -> Result<(), AppError> {
     let runtime = runtime().ok_or_else(|| {
         AppError::Message("the built-in recognizer is not available on this computer".into())
     })?;
     std::fs::create_dir_all(dir)?;
-    let total = status(dir).download_bytes;
+    let total = status(dir, id).download_bytes;
     let mut received = 0_u64;
     let mut last = 0_u64;
     let mut tick = |stage: &str, received: u64, force: bool| {
@@ -349,27 +531,50 @@ pub async fn install(
         unpacked?;
     }
 
-    if !model_ready(dir) {
-        let archive = dir.join("model.tar.gz.part");
-        tick("model", received, true);
-        fetch(http, MODEL_URL, &archive, MODEL_SHA256, |bytes| {
-            received += bytes;
-            tick("model", received, false);
-        })
-        .await?;
-        tick("unpacking", received, true);
-        let unpacked = {
-            let archive = archive.clone();
-            let dir = dir.to_path_buf();
-            tokio::task::spawn_blocking(move || unpack_model(&archive, &dir))
-                .await
-                .map_err(|err| AppError::Message(format!("unpacking stopped: {err}")))?
-        };
-        let _ = std::fs::remove_file(&archive);
-        unpacked?;
-        if !model_ready(dir) {
+    if !model_ready(dir, id) {
+        let target = model_path(dir, id);
+        match &id.spec().source {
+            Source::Archive { url, sha256, .. } => {
+                let archive = dir.join(format!("{}.tar.gz.part", id.as_str()));
+                tick("model", received, true);
+                fetch(http, url, &archive, sha256, |bytes| {
+                    received += bytes;
+                    tick("model", received, false);
+                })
+                .await?;
+                tick("unpacking", received, true);
+                let unpacked = {
+                    let archive = archive.clone();
+                    let dir = dir.to_path_buf();
+                    tokio::task::spawn_blocking(move || unpack_model(&archive, &dir, id))
+                        .await
+                        .map_err(|err| AppError::Message(format!("unpacking stopped: {err}")))?
+                };
+                let _ = std::fs::remove_file(&archive);
+                unpacked?;
+            }
+            Source::Files(files) => {
+                std::fs::create_dir_all(&target)?;
+                tick("model", received, true);
+                for file in files.iter() {
+                    let done = target.join(file.name);
+                    if done.is_file() {
+                        received += file.bytes;
+                        continue;
+                    }
+                    let part = target.join(format!("{}.part", file.name));
+                    fetch(http, file.url, &part, file.sha256, |bytes| {
+                        received += bytes;
+                        tick("model", received, false);
+                    })
+                    .await?;
+                    std::fs::rename(&part, &done)?;
+                }
+            }
+        }
+        if !model_ready(dir, id) {
             return Err(AppError::Message(
-                "the model archive is missing files".into(),
+                "the model download is missing files".into(),
             ));
         }
     }
@@ -397,29 +602,72 @@ fn load_runtime(dir: &Path) -> Result<(), AppError> {
         .map_err(AppError::Message)
 }
 
-/// A loaded model. It holds about 1.3 GB of memory, so it lives only while recording is in use.
+enum Loaded {
+    Parakeet(ParakeetModel),
+    Canary(CanaryModel),
+}
+
+/// A loaded model. It holds well over a gigabyte of memory, so it lives only while in use.
 pub struct Engine {
-    model: ParakeetModel,
+    id: ModelId,
+    language: String,
+    model: Loaded,
 }
 
 impl Engine {
-    /// Loads the runtime and the model. Takes about a second. Call it off the async threads.
-    pub fn load(dir: &Path) -> Result<Self, AppError> {
-        if !model_ready(dir) {
-            return Err(AppError::Message(
-                "download the speech model in Settings first".into(),
-            ));
+    /// Loads the runtime and a model. Takes one to six seconds. Call it off the async threads.
+    pub fn load(dir: &Path, id: ModelId, language: &str) -> Result<Self, AppError> {
+        if !model_ready(dir, id) {
+            return Err(AppError::Message(format!(
+                "download {} in Settings first",
+                id.spec().name
+            )));
         }
         load_runtime(dir)?;
-        let model = ParakeetModel::load(&model_path(dir), &Quantization::Int8)
-            .map_err(|err| AppError::Message(format!("could not load the speech model: {err}")))?;
-        Ok(Self { model })
+        let path = model_path(dir, id);
+        let failed = |err: transcribe_rs::TranscribeError| {
+            AppError::Message(format!("could not load the speech model: {err}"))
+        };
+        let model = match id {
+            ModelId::Parakeet => {
+                Loaded::Parakeet(ParakeetModel::load(&path, &Quantization::Int8).map_err(failed)?)
+            }
+            ModelId::Canary => {
+                Loaded::Canary(CanaryModel::load(&path, &Quantization::Int8).map_err(failed)?)
+            }
+        };
+        Ok(Self {
+            id,
+            language: language.to_string(),
+            model,
+        })
     }
 
-    /// Text of one slice of 16 kHz mono speech. The language is detected by the model.
+    /// True when this engine is `id` set up for `language`.
+    pub fn is(&self, id: ModelId, language: &str) -> bool {
+        self.id == id && (self.language == language || !id.spec().needs_language)
+    }
+
+    /// Text of one slice of 16 kHz mono speech.
     pub fn transcribe(&mut self, samples: &[f32]) -> Result<String, AppError> {
-        self.model
-            .transcribe_with(samples, &ParakeetParams::default())
+        let result = match &mut self.model {
+            Loaded::Parakeet(model) => model.transcribe_with(samples, &ParakeetParams::default()),
+            Loaded::Canary(model) => {
+                let language = if self.language.is_empty() {
+                    "en".to_string()
+                } else {
+                    self.language.clone()
+                };
+                model.transcribe_with(
+                    samples,
+                    &CanaryParams {
+                        language: Some(language),
+                        ..Default::default()
+                    },
+                )
+            }
+        };
+        result
             .map(|result| result.text.trim().to_string())
             .map_err(|err| AppError::Message(format!("speech recognition failed: {err}")))
     }
@@ -465,41 +713,77 @@ mod tests {
         builder.into_inner().unwrap().finish().unwrap()
     }
 
+    fn fake_install(dir: &Path, id: ModelId) {
+        let model = model_path(dir, id);
+        std::fs::create_dir_all(&model).unwrap();
+        for name in id.spec().files {
+            std::fs::write(model.join(name), b"x").unwrap();
+        }
+    }
+
     #[test]
-    fn status_reports_what_is_missing() {
+    fn status_reports_each_model_and_what_is_missing() {
         let dir = temp_dir("status");
-        let empty = status(&dir);
+        let empty = status(&dir, ModelId::Parakeet);
         if !empty.supported {
             return;
         }
         assert!(!empty.installed);
-        assert!(empty.download_bytes > MODEL_BYTES);
-        let model = model_path(&dir);
-        std::fs::create_dir_all(&model).unwrap();
-        for name in MODEL_FILES {
-            std::fs::write(model.join(name), b"x").unwrap();
-        }
-        let partly = status(&dir);
-        assert!(!partly.installed);
-        assert!(partly.download_bytes < MODEL_BYTES);
+        assert_eq!(empty.models.len(), 2);
+        assert!(empty.download_bytes > PARAKEET.source.bytes());
+        fake_install(&dir, ModelId::Parakeet);
+        let partly = status(&dir, ModelId::Parakeet);
+        assert!(!partly.installed, "the runtime is still missing");
+        assert!(partly.download_bytes < PARAKEET.source.bytes());
         std::fs::write(runtime_path(&dir).unwrap(), b"lib").unwrap();
-        let full = status(&dir);
+        let full = status(&dir, ModelId::Parakeet);
         assert!(full.installed);
         assert_eq!(full.download_bytes, 0);
-        assert_eq!(full.disk_bytes, 7);
-        remove(&dir).unwrap();
-        assert!(!status(&dir).installed);
+        let canary = status(&dir, ModelId::Canary);
+        assert!(!canary.installed);
+        assert_eq!(canary.download_bytes, CANARY.source.bytes());
+        assert!(canary
+            .models
+            .iter()
+            .any(|item| item.id == ModelId::Parakeet && item.installed));
+        remove(&dir, ModelId::Parakeet).unwrap();
+        assert!(!dir.exists(), "the runtime goes with the last model");
+    }
+
+    #[test]
+    fn removing_one_model_keeps_the_other_and_the_runtime() {
+        let dir = temp_dir("remove");
+        if runtime().is_none() {
+            return;
+        }
+        fake_install(&dir, ModelId::Parakeet);
+        fake_install(&dir, ModelId::Canary);
+        std::fs::write(runtime_path(&dir).unwrap(), b"lib").unwrap();
+        remove(&dir, ModelId::Canary).unwrap();
+        assert!(model_ready(&dir, ModelId::Parakeet));
+        assert!(!model_ready(&dir, ModelId::Canary));
+        assert!(runtime_ready(&dir));
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn canary_download_sizes_add_up() {
+        assert_eq!(CANARY.source.bytes(), CANARY.disk_bytes);
+        assert_eq!(ModelId::parse(Some("canary")), ModelId::Canary);
+        assert_eq!(ModelId::parse(None), ModelId::Parakeet);
     }
 
     #[test]
     fn model_archive_unpacks_only_its_own_files() {
         let dir = temp_dir("unpack");
         let archive = dir.join("model.tar.gz");
-        let mut entries: Vec<(String, &[u8])> = MODEL_FILES
+        let folder = PARAKEET.dir;
+        let mut entries: Vec<(String, &[u8])> = PARAKEET
+            .files
             .iter()
-            .map(|name| (format!("{MODEL_DIR}/{name}"), b"data".as_slice()))
+            .map(|name| (format!("{folder}/{name}"), b"data".as_slice()))
             .collect();
-        entries.push((format!("{MODEL_DIR}/._vocab.txt"), b"mac"));
+        entries.push((format!("{folder}/._vocab.txt"), b"mac"));
         entries.push(("elsewhere/evil.txt".to_string(), b"no"));
         let borrowed: Vec<(&str, &[u8])> = entries
             .iter()
@@ -510,11 +794,13 @@ mod tests {
             .write_all(&tgz(&borrowed))
             .unwrap();
         assert_eq!(head(&archive, 2), [0x1f, 0x8b]);
-        unpack_model(&archive, &dir).unwrap();
-        assert!(model_ready(&dir));
-        assert!(!model_path(&dir).join("._vocab.txt").exists());
+        unpack_model(&archive, &dir, ModelId::Parakeet).unwrap();
+        assert!(model_ready(&dir, ModelId::Parakeet));
+        assert!(!model_path(&dir, ModelId::Parakeet)
+            .join("._vocab.txt")
+            .exists());
         assert!(!dir.join("elsewhere").exists());
-        remove(&dir).unwrap();
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]
@@ -533,16 +819,17 @@ mod tests {
         unpack_tgz_member(&archive, "pkg/lib/libonnx.so", &target).unwrap();
         assert_eq!(std::fs::read(&target).unwrap(), b"library");
         assert!(unpack_tgz_member(&archive, "pkg/lib/missing", &target).is_err());
-        remove(&dir).unwrap();
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]
     fn loading_without_files_fails_at_once() {
         let dir = temp_dir("load");
         let started = std::time::Instant::now();
-        assert!(Engine::load(&dir).is_err());
+        assert!(Engine::load(&dir, ModelId::Parakeet, "").is_err());
+        assert!(Engine::load(&dir, ModelId::Canary, "fi").is_err());
         assert!(started.elapsed() < Duration::from_secs(2));
-        remove(&dir).unwrap();
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 
     /// Runs the real model. Needs the downloaded files and a 16 kHz mono 16-bit WAV:
@@ -555,8 +842,10 @@ mod tests {
         let wav =
             std::fs::read(std::env::var("MEMOSE_SPEECH_WAV").expect("MEMOSE_SPEECH_WAV")).unwrap();
         let samples = crate::speech::wav_samples(&wav).unwrap();
-        assert!(status(&dir).installed);
-        let mut engine = Engine::load(&dir).unwrap();
+        let id = ModelId::parse(std::env::var("MEMOSE_SPEECH_MODEL").ok().as_deref());
+        let language = std::env::var("MEMOSE_SPEECH_LANGUAGE").unwrap_or_default();
+        assert!(status(&dir, id).installed);
+        let mut engine = Engine::load(&dir, id, &language).unwrap();
         // The same cut as re-analysis of a saved recording.
         let mut chunker = Chunker::new(ChunkPlan {
             pause_ms: 900,

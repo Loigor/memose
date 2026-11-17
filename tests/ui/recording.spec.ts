@@ -17,11 +17,7 @@ function chunk(page: Page, sessionId: string, seq: number, text: string, pauseMs
 }
 
 async function setSlider(slider: import("@playwright/test").Locator, value: number) {
-  await slider.evaluate((input: HTMLInputElement, next) => {
-    input.value = String(next);
-    input.dispatchEvent(new Event("input", { bubbles: true }));
-    input.dispatchEvent(new Event("change", { bubbles: true }));
-  }, value);
+  await slider.locator(`.level-step[data-level="${value}"]`).click();
 }
 
 test("the record button stays hidden until recording is on", async ({ page }) => {
@@ -100,14 +96,28 @@ test("a prompt can be spoken and is sent when recording stops", async ({ page })
   await expect(page.locator("#blocks")).not.toContainText("how many tasks");
 });
 
-test("recording settings download the model and pick the microphone", async ({ page }) => {
+test("recording settings list the models, download one, and pick the microphone", async ({ page }) => {
   await openSettings(page);
   await page.locator("#tab-recording").click();
+  const parakeet = page.locator(".model-card[data-model='parakeet']");
+  const canary = page.locator(".model-card[data-model='canary']");
+  await expect(parakeet).toHaveAttribute("data-chosen", "true");
+  await expect(parakeet.locator(".model-facts")).toContainText("1.3 GB RAM");
+  await expect(parakeet.locator(".model-facts")).toContainText("23× real time");
+  await expect(canary.locator(".model-facts")).toContainText("1.8 GB RAM");
   await expect(page.locator("#speech-engine-status")).toContainText("one-time download of 510 MB");
-  await page.locator("#speech-download").click();
-  await expect(page.locator("#settings-status")).toHaveText("The speech model is ready.");
-  await expect(page.locator("#speech-engine-status")).toContainText("Ready.");
-  await expect(page.locator("#speech-remove")).toBeVisible();
+  await parakeet.locator("button", { hasText: "Download (510 MB)" }).click();
+  await expect(page.locator("#settings-status")).toHaveText("Parakeet v3 is ready.");
+  await expect(parakeet.locator(".model-badge")).toHaveText("In use");
+  await expect(parakeet.locator("button", { hasText: "Remove" })).toBeVisible();
+  await expect(page.locator("#speech-local-language-row")).toBeHidden();
+  await canary.locator("button", { hasText: "Use" }).click();
+  await expect(canary).toHaveAttribute("data-chosen", "true");
+  await expect(canary.locator(".model-badge")).toHaveText("Chosen, not downloaded");
+  await expect(parakeet.locator(".model-badge")).toHaveText("Downloaded");
+  await expect(page.locator("#speech-local-language-row")).toBeVisible();
+  await page.locator("#speech-local-language").selectOption("fi");
+  await expect(page.locator("#settings-status")).toContainText("Language saved");
   await page.locator("#speech-device").selectOption("Headset");
   await expect(page.locator("#settings-status")).toContainText("Microphone saved");
   await page.locator("#speech-enabled").check();
@@ -295,8 +305,8 @@ test("re-analyzing at the context level refines the new text with the memo aroun
     },
   });
   const tools = page.locator("#blocks .rec-tools");
-  const slider = tools.locator(".level-slider input");
-  await expect(slider).toHaveValue("2");
+  const slider = tools.locator(".level-slider [role='slider']");
+  await expect(slider).toHaveAttribute("aria-valuenow", "2");
   await expect(tools.locator(".level-name")).toHaveText("Improved");
   await setSlider(slider, 4);
   await expect(tools.locator(".level-name")).toHaveText("Proof-read with context");
@@ -308,7 +318,7 @@ test("re-analyzing at the context level refines the new text with the memo aroun
   expect(polished).toMatchObject({ dictated: "we ship on thursday", before: "Meeting notes\n", level: 4 });
   await tools.locator("button", { hasText: "Accept" }).click();
   await expect.poll(async () => lastDraft(page)).toBe(`Meeting notes\nWe ship on Thursday.\n${recLine}`);
-  await expect(page.locator("#blocks .rec-tools .level-slider input")).toHaveValue("2");
+  await expect(page.locator("#blocks .rec-tools .level-slider [role='slider']")).toHaveAttribute("aria-valuenow", "2");
 });
 
 test("audio that was not recorded in the app gets no tools", async ({ page }) => {
@@ -432,8 +442,8 @@ test("the slider under the listening mark changes the level and keeps it for the
   await page.keyboard.press("End");
   const record = page.locator("#rec-anchor .rec-toggle");
   await record.click();
-  const slider = page.locator("#card .rec-live .level-slider input");
-  await expect(slider).toHaveValue("2");
+  const slider = page.locator("#card .rec-live .level-slider [role='slider']");
+  await expect(slider).toHaveAttribute("aria-valuenow", "2");
   await setSlider(slider, 1);
   await expect(page.locator("#card .rec-live .level-name")).toHaveText("Basic");
   await chunk(page, "speech-1", 0, "plain words");
@@ -449,7 +459,7 @@ test("the slider under the listening mark changes the level and keeps it for the
   );
   expect(saved).toMatchObject({ polishLevel: 1 });
   await record.click();
-  await expect(page.locator("#card .rec-live .level-slider input")).toHaveValue("1");
+  await expect(page.locator("#card .rec-live .level-slider [role='slider']")).toHaveAttribute("aria-valuenow", "1");
   await record.click();
 });
 
@@ -459,4 +469,69 @@ test("without the chat model there is no slider and the words stay as heard", as
   await page.locator("#rec-anchor .rec-toggle").click();
   await expect(page.locator("#card .rec-live .rec-pill")).toBeVisible();
   await expect(page.locator("#card .rec-live .level-slider")).toBeHidden();
+});
+
+test("a second recording started while the first is still finishing keeps both in order", async ({ page }) => {
+  await openComposer(page, {
+    draft: { content: "Notes" },
+    speech: {
+      ...ready,
+      keepAudio: true,
+      polishReady: true,
+      polishDelayMs: 700,
+      audio: "![voice-{n}.wav](memose-media/1234567{n}-voice-{n}.wav)",
+    },
+  });
+  await page.locator("#blocks .md-lines").first().click();
+  await page.keyboard.press("End");
+  await page.keyboard.press("Enter");
+  const record = page.locator("#rec-anchor .rec-toggle");
+  await record.click();
+  await chunk(page, "speech-1", 0, "first dictation");
+  await expect(page.locator("#blocks")).toContainText("first dictation");
+  await record.click();
+  // The first recording is still waiting for its last pass. A second one starts on a new line.
+  await page.keyboard.press("Enter");
+  await record.click();
+  await expect(record).toHaveClass(/rec-on/);
+  await chunk(page, "speech-2", 0, "second dictation");
+  await expect(page.locator("#blocks")).toContainText("second dictation");
+  await page.locator("#card .rec-live .rec-pill").click();
+  await expect(record).not.toHaveClass(/rec-on/);
+  const one = "![voice-1.wav](memose-media/12345671-voice-1.wav)";
+  const two = "![voice-2.wav](memose-media/12345672-voice-2.wav)";
+  await expect.poll(async () => lastDraft(page), { timeout: 8000 }).toContain(two);
+  const final = (await lastDraft(page)) ?? "";
+  expect(final.indexOf("first dictation")).toBeLessThan(final.indexOf(one));
+  expect(final.indexOf(one)).toBeLessThan(final.indexOf("second dictation"));
+  expect(final.indexOf("second dictation")).toBeLessThan(final.indexOf(two));
+  for (const line of final.split("\n")) {
+    const hasAudio = line.includes("memose-media/");
+    expect(!hasAudio || /^!\[[^\]]*\]\(memose-media\/[^)]+\)$/.test(line), `audio on its own line: ${line}`).toBe(true);
+  }
+});
+
+test("recordings that follow each other join into one bubble", async ({ page }) => {
+  await openComposer(page, {
+    draft: {
+      content:
+        "Palaveri\nsovittiin\n![v1.wav](memose-media/12345671-v1.wav)\n![v2.wav](memose-media/12345672-v2.wav)\nLopuksi\n![v3.wav](memose-media/12345673-v3.wav)",
+    },
+    speech: {
+      ...ready,
+      recordings: {
+        "12345671-v1.wav": { text: "sovittiin" },
+        "12345672-v2.wav": { text: "lisää" },
+        "12345673-v3.wav": { text: "Lopuksi" },
+      },
+    },
+  });
+  await expect(page.locator("#blocks .rec-tools")).toHaveCount(3);
+  const rows = page.locator("#blocks .media-row:has(.rec-tools)");
+  await expect(rows.nth(0)).toHaveClass(/rec-joins-next/);
+  await expect(rows.nth(1)).toHaveClass(/rec-joined/);
+  await expect(rows.nth(2)).not.toHaveClass(/rec-joined/);
+  const first = await rows.nth(0).boundingBox();
+  const second = await rows.nth(1).boundingBox();
+  expect(first && second && Math.abs(second.y - (first.y + first.height)) < 4).toBeTruthy();
 });

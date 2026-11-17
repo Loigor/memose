@@ -53,6 +53,25 @@ const PARAGRAPH_BREAK = "\n\n";
 /** The quick pass on the paragraph still being spoken never goes past this level. */
 const LIVE_LEVEL = 2;
 
+/** One recording: its words in the memo and the passes that improve them. */
+type Take = {
+  /** Session id once recording has started. */
+  id: string | null;
+  span: Span | null;
+  polishing: boolean;
+  /** Improvement level. The slider beside the listening mark changes it while recording. */
+  level: number;
+  /** Paragraphs that ended and wait for the full pass, by their number in the dictation. */
+  finalQueue: number[];
+  /** The paragraph being spoken has new words for a quick pass. */
+  livePending: boolean;
+  /** Each paragraph's text after its last pass, so an unchanged one is not sent again. */
+  passed: Map<number, string>;
+  polishOff: boolean;
+  polishTimer: number | undefined;
+  ended: SpeechDone | null;
+};
+
 /** Wires the record button inside `anchor`. It stays hidden until recording is turned on in settings. */
 export function mountDictation(anchor: HTMLElement, target: DictationTarget) {
   const toggle = anchor.querySelector<HTMLButtonElement>(".rec-toggle");
@@ -60,21 +79,9 @@ export function mountDictation(anchor: HTMLElement, target: DictationTarget) {
     return;
   }
   const button = toggle;
-  let sessionId: string | null = null;
+  /** The recording the button, the listening mark, and the slider belong to. */
+  let take: Take | null = null;
   let starting = false;
-  let span: Span | null = null;
-  let polishing = false;
-  /** Improvement level of this recording. The slider under the listening mark changes it. */
-  let level = 2;
-  /** Paragraphs that ended and wait for the full pass, by their number in the dictation. */
-  let finalQueue: number[] = [];
-  /** The paragraph being spoken has new words for a quick pass. */
-  let livePending = false;
-  /** Each paragraph's text after its last pass, so an unchanged one is not sent again. */
-  let passed = new Map<number, string>();
-  let polishOff = false;
-  let polishTimer: number | undefined;
-  let ended: SpeechDone | null = null;
   let message: HTMLElement | null = null;
   let messageTimer: number | undefined;
   /** Where the first words will land, measured when recording starts. */
@@ -100,26 +107,26 @@ export function mountDictation(anchor: HTMLElement, target: DictationTarget) {
   live.append(pill);
   target.host.append(live);
 
-  /** The improvement slider under the listening mark. Its level is saved for the next recording too. */
+  /** The improvement slider beside the listening mark. Its level is saved for the next recording too. */
   let slider: HTMLElement | null = null;
-  const setSlider = () => {
+  const setSlider = (t: Take) => {
     slider?.remove();
-    slider = levelSlider(level, (next) => {
-      level = next;
+    slider = levelSlider(t.level, (next) => {
+      t.level = next;
       void saveImprovementLevel(next);
-      if (level <= 1) {
-        finalQueue = [];
-        livePending = false;
-      } else if (span) {
+      if (t.level <= 1) {
+        t.finalQueue = [];
+        t.livePending = false;
+      } else if (t.span) {
         // A higher level is used from the next piece of speech or the next ended paragraph.
-        livePending = true;
-        schedulePolish();
+        t.livePending = true;
+        schedulePolish(t);
       }
     });
     slider.addEventListener("change", () => {
       // The caret goes back to the dictation, so Enter still ends it.
-      if (span) {
-        target.placeCaret(span.end);
+      if (t.span && take === t) {
+        target.placeCaret(t.span.end);
       }
     });
     live.append(slider);
@@ -167,6 +174,7 @@ export function mountDictation(anchor: HTMLElement, target: DictationTarget) {
 
   /** The screen box just after the dictated text, found by its last words in the rendered memo. */
   const spanEndRect = (): DOMRect | null => {
+    const span = take?.span;
     if (!span) {
       return null;
     }
@@ -246,7 +254,7 @@ export function mountDictation(anchor: HTMLElement, target: DictationTarget) {
       target.onAvailability?.();
     }
     const running = speechRunning();
-    const mine = sessionId !== null && running?.sessionId === sessionId;
+    const mine = recordingHere();
     const elsewhere = running !== null && !mine;
     button.classList.toggle("rec-on", mine || starting);
     button.classList.toggle("rec-elsewhere", elsewhere);
@@ -266,53 +274,57 @@ export function mountDictation(anchor: HTMLElement, target: DictationTarget) {
   };
 
   /** Writes the memo and finds the dictated text again in what the editor made of it. */
-  const write = (next: string, start: number, end: number) => {
+  const write = (t: Take, next: string, start: number, end: number) => {
     keepScroll(target.fieldRoots(), () => target.replace(next, true));
     const now = target.text();
     if (now === next) {
-      span = { content: now, start, end };
+      t.span = { content: now, start, end };
     } else {
-      span = { content: next, start, end };
-      const place = locateSpan(span, now);
-      span = place ? { content: now, ...place } : null;
+      const place = locateSpan({ content: next, start, end }, now);
+      t.span = place ? { content: now, ...place } : null;
     }
-    followCaret();
+    if (take === t) {
+      followCaret(t);
+    } else {
+      // A recording that is still finishing updates its words but leaves the caret to the new one.
+      markSpan(t);
+    }
   };
 
   /** The caret stays at the end of the dictated text, where the next words go, and that place is shown. */
-  const followCaret = () => {
-    if (span) {
-      target.placeCaret(span.end);
+  const followCaret = (t: Take) => {
+    if (t.span) {
+      target.placeCaret(t.span.end);
     }
-    markSpan();
+    markSpan(t);
     revealRect(target.fieldRoots(), spanEndRect() ?? caretRect());
     placeLive();
   };
 
   /** Marks the words dictated so far. The mark goes when the recording ends. */
-  const markSpan = () => {
-    const place = span ? locateSpan(span, target.text()) : null;
+  const markSpan = (t: Take) => {
+    const place = t.span ? locateSpan(t.span, target.text()) : null;
     const words = place ? target.text().slice(place.start, place.end) : "";
-    setHighlight("dictation", highlightOwner, words ? findTextRanges(target.fieldRoots(), words) : []);
+    setHighlight("dictation", t, words ? findTextRanges(target.fieldRoots(), words) : []);
   };
-  const highlightOwner = {};
 
   /** The dictated text so far, as paragraphs. */
-  const paragraphs = (): string[] => {
-    const place = span ? locateSpan(span, target.text()) : null;
+  const paragraphs = (t: Take): string[] => {
+    const place = t.span ? locateSpan(t.span, target.text()) : null;
     return place ? target.text().slice(place.start, place.end).split(PARAGRAPH_BREAK) : [];
   };
 
   /** Puts changed paragraphs back into the memo. Returns false when the dictation is gone. */
-  const writeParagraphs = (parts: string[]): boolean => {
+  const writeParagraphs = (t: Take, parts: string[]): boolean => {
     const current = target.text();
-    const place = span ? locateSpan(span, current) : null;
+    const place = t.span ? locateSpan(t.span, current) : null;
     if (!place) {
       return false;
     }
     const next = parts.join(PARAGRAPH_BREAK);
     if (next !== current.slice(place.start, place.end)) {
       write(
+        t,
         `${current.slice(0, place.start)}${next}${current.slice(place.end)}`,
         place.start,
         place.start + next.length,
@@ -321,27 +333,28 @@ export function mountDictation(anchor: HTMLElement, target: DictationTarget) {
     return true;
   };
 
-  const heard = (piece: string, pauseMs = 0) => {
+  const heard = (t: Take, piece: string, pauseMs = 0) => {
     const text = piece.trim();
     if (text === "") {
       return;
     }
     const current = target.text();
-    const place = span ? locateSpan(span, current) : null;
+    const place = t.span ? locateSpan(t.span, current) : null;
     if (place) {
       const before = current.slice(place.start, place.end);
       // A long pause ends the paragraph: it gets the full pass and the speech goes on below it.
       const newParagraph = pauseMs >= PARAGRAPH_PAUSE_MS && before.trim() !== "";
       if (newParagraph) {
         const ended = before.split(PARAGRAPH_BREAK).length - 1;
-        if (!finalQueue.includes(ended)) {
-          finalQueue.push(ended);
+        if (!t.finalQueue.includes(ended)) {
+          t.finalQueue.push(ended);
         }
       }
       const joined = newParagraph
         ? `${before.replace(/\s+$/, "")}${PARAGRAPH_BREAK}${text}`
         : joinDictation(before, text);
       write(
+        t,
         `${current.slice(0, place.start)}${joined}${current.slice(place.end)}`,
         place.start,
         place.start + joined.length,
@@ -349,53 +362,54 @@ export function mountDictation(anchor: HTMLElement, target: DictationTarget) {
     } else {
       target.insertAtCursor(text);
       const after = target.text();
-      span = spanFromInsert(current, after);
-      if (!span) {
+      t.span = spanFromInsert(current, after);
+      if (!t.span) {
         // No field had the cursor: the dictation goes to the end of the memo.
         const base = current.replace(/\s+$/, "");
         const next = base === "" ? text : `${base}\n${text}`;
-        write(next, next.length - text.length, next.length);
-      } else if (span.start > 0 && !/[\s([{"'“‘-]/.test(after[span.start - 1])) {
-        write(`${after.slice(0, span.start)} ${after.slice(span.start)}`, span.start + 1, span.end + 1);
-      } else {
-        followCaret();
+        write(t, next, next.length - text.length, next.length);
+      } else if (t.span.start > 0 && !/[\s([{"'“‘-]/.test(after[t.span.start - 1])) {
+        write(t, `${after.slice(0, t.span.start)} ${after.slice(t.span.start)}`, t.span.start + 1, t.span.end + 1);
+      } else if (take === t) {
+        followCaret(t);
       }
     }
-    livePending = true;
-    schedulePolish();
+    t.livePending = true;
+    schedulePolish(t);
     placeLive();
   };
 
-  function schedulePolish() {
-    window.clearTimeout(polishTimer);
-    polishTimer = window.setTimeout(() => void polish(), POLISH_DELAY);
+  function schedulePolish(t: Take) {
+    window.clearTimeout(t.polishTimer);
+    t.polishTimer = window.setTimeout(() => void polish(t), POLISH_DELAY);
   }
 
-  const canPolish = () => level > 1 && !polishOff && Boolean(speechSettings()?.polishReady);
+  const canPolish = (t: Take) => t.level > 1 && !t.polishOff && Boolean(speechSettings()?.polishReady);
+  const passesWaiting = (t: Take) => canPolish(t) && t.span !== null && (t.finalQueue.length > 0 || t.livePending);
 
-  /** Runs the waiting passes one at a time: ended paragraphs first, then the one being spoken. */
-  async function polish() {
-    if (polishing) {
+  /** Runs one recording's waiting passes one at a time: ended paragraphs first, then the one being spoken. */
+  async function polish(t: Take) {
+    if (t.polishing) {
       return;
     }
-    polishing = true;
+    t.polishing = true;
     try {
-      while (span && canPolish()) {
-        const finalIndex = finalQueue.shift();
+      while (t.span && canPolish(t)) {
+        const finalIndex = t.finalQueue.shift();
         const isFinal = finalIndex !== undefined;
-        if (!isFinal && !livePending) {
+        if (!isFinal && !t.livePending) {
           break;
         }
-        const parts = paragraphs();
+        const parts = paragraphs(t);
         const index = isFinal ? finalIndex : parts.length - 1;
         const paragraph = parts[index];
         if (paragraph === undefined) {
           continue;
         }
         if (!isFinal) {
-          livePending = false;
+          t.livePending = false;
         }
-        if (passed.get(index) === paragraph && (isFinal ? level <= LIVE_LEVEL : true)) {
+        if (t.passed.get(index) === paragraph && (isFinal ? t.level <= LIVE_LEVEL : true)) {
           continue;
         }
         // The quick pass sends the end of the paragraph being spoken. The full pass sends a whole paragraph.
@@ -403,9 +417,9 @@ export function mountDictation(anchor: HTMLElement, target: DictationTarget) {
         if (tail.trim() === "") {
           continue;
         }
-        const passLevel = isFinal ? level : Math.min(level, LIVE_LEVEL);
+        const passLevel = isFinal ? t.level : Math.min(t.level, LIVE_LEVEL);
         const current = target.text();
-        const place = span ? locateSpan(span, current) : null;
+        const place = t.span ? locateSpan(t.span, current) : null;
         const lead = parts.slice(0, index).join(PARAGRAPH_BREAK);
         const trail = parts.slice(index + 1).join(PARAGRAPH_BREAK);
         const before = place
@@ -417,7 +431,7 @@ export function mountDictation(anchor: HTMLElement, target: DictationTarget) {
         if (reply.trim() === "" || reply.length > tail.length * 2 + 60) {
           continue;
         }
-        const now = paragraphs();
+        const now = paragraphs(t);
         const latest = now[index];
         if (latest === undefined) {
           continue;
@@ -427,80 +441,92 @@ export function mountDictation(anchor: HTMLElement, target: DictationTarget) {
           continue;
         }
         now[index] = next;
-        if (!writeParagraphs(now)) {
+        if (!writeParagraphs(t, now)) {
           break;
         }
-        passed.set(index, next);
+        t.passed.set(index, next);
       }
     } catch (error) {
       // One failure turns improving off for this recording. The text stays as it was heard.
-      polishOff = true;
-      finalQueue = [];
-      livePending = false;
+      t.polishOff = true;
+      t.finalQueue = [];
+      t.livePending = false;
       say(`Text was not improved: ${String(error)}`);
     } finally {
-      polishing = false;
-      if (span && canPolish() && (finalQueue.length > 0 || livePending)) {
-        void polish();
+      t.polishing = false;
+      if (passesWaiting(t)) {
+        void polish(t);
       } else {
-        finishIfEnded();
+        finishIfEnded(t);
       }
     }
   }
 
-  function finishIfEnded() {
-    const done = ended;
-    if (!done || polishing || (canPolish() && span && (finalQueue.length > 0 || livePending))) {
+  function finishIfEnded(t: Take) {
+    const done = t.ended;
+    if (!done || t.polishing || passesWaiting(t)) {
       return;
     }
-    ended = null;
+    t.ended = null;
+    const current = take === t;
     if (done.audio) {
-      const current = target.text();
-      const place = span ? locateSpan(span, current) : null;
-      const at = place ? recordingPlace(current, place.start, place.end) : current.replace(/\s+$/, "").length;
-      const placed = insertLine(current, at, done.audio);
-      keepScroll(target.fieldRoots(), () => target.replace(placed.text, span !== null));
+      const memo = target.text();
+      const place = t.span ? locateSpan(t.span, memo) : null;
+      const at = place ? recordingPlace(memo, place.start, place.end) : memo.replace(/\s+$/, "").length;
+      const placed = insertLine(memo, at, done.audio);
+      keepScroll(target.fieldRoots(), () => target.replace(placed.text, t.span !== null));
       const name = /\(memose-media\/([^)#]+)/.exec(done.audio)?.[1];
       if (name) {
         // The recording remembers the words it put into the memo, for its snippet and for re-analysis.
-        const words = place ? current.slice(place.start, place.end).trim() : "";
+        const words = place ? memo.slice(place.start, place.end).trim() : "";
         rememberRecordingText(name, words);
       }
-      if (place && place.end === at) {
+      if (current && place && place.end === at) {
         target.placeCaret(placed.end);
-      } else if (place) {
+      } else if (current && place) {
         target.placeCaret(place.end);
       }
     }
     if (done.error) {
       say(done.error);
     }
-    span = null;
-    sessionId = null;
-    polishOff = false;
-    setHighlight("dictation", highlightOwner, []);
-    hideLive();
+    t.span = null;
+    setHighlight("dictation", t, []);
+    if (current) {
+      take = null;
+      hideLive();
+    }
     paint();
   }
 
   const begin = async () => {
     starting = true;
     paint();
-    try {
-      span = null;
-      ended = null;
-      polishOff = false;
-      finalQueue = [];
-      livePending = false;
-      passed = new Map();
+    // A recording that is still finishing keeps its own state and ends on its own.
+    const t: Take = {
+      id: null,
+      span: null,
+      polishing: false,
       // The level last set on the slider carries over to the next recording.
-      level = speechSettings()?.polishLevel ?? 2;
-      setSlider();
+      level: speechSettings()?.polishLevel ?? 2,
+      finalQueue: [],
+      livePending: false,
+      passed: new Map(),
+      polishOff: false,
+      polishTimer: undefined,
+      ended: null,
+    };
+    take = t;
+    try {
+      setSlider(t);
       startRect = caretRect();
       quietSince = Date.now();
-      sessionId = await startSpeech("memo", target.noteId(), {
-        onChunk: (text, _seq, pauseMs) => heard(text, pauseMs),
+      t.id = await startSpeech("memo", target.noteId(), {
+        onChunk: (text, _seq, pauseMs) => heard(t, text, pauseMs),
         onLevel(loudness) {
+          if (take !== t) {
+            return;
+          }
           button.style.setProperty("--rec-level", loudness.toFixed(2));
           live.style.setProperty("--rec-level", loudness.toFixed(2));
           if (live.dataset.state === "finishing") {
@@ -514,24 +540,26 @@ export function mountDictation(anchor: HTMLElement, target: DictationTarget) {
           }
         },
         onDone(done) {
-          ended = done;
-          window.clearTimeout(polishTimer);
-          if (done.error) {
+          t.ended = done;
+          window.clearTimeout(t.polishTimer);
+          if (done.error && take === t) {
             hideLive();
           }
           // The last paragraph gets its full pass too.
-          const last = paragraphs().length - 1;
-          if (last >= 0 && !finalQueue.includes(last)) {
-            finalQueue.push(last);
+          const last = paragraphs(t).length - 1;
+          if (last >= 0 && !t.finalQueue.includes(last)) {
+            t.finalQueue.push(last);
           }
-          livePending = false;
-          void polish();
+          t.livePending = false;
+          void polish(t);
         },
       });
       showLive("waiting");
       placeLive();
     } catch (error) {
-      sessionId = null;
+      if (take === t) {
+        take = null;
+      }
       hideLive();
       say(String(error));
     } finally {
@@ -544,7 +572,9 @@ export function mountDictation(anchor: HTMLElement, target: DictationTarget) {
     // The cursor stays in the memo, so the first words land where it is.
     event.preventDefault();
   });
-  const recordingHere = () => sessionId !== null && speechRunning()?.sessionId === sessionId;
+  function recordingHere(): boolean {
+    return take?.id != null && speechRunning()?.sessionId === take.id;
+  }
 
   const stop = () => {
     if (recordingHere()) {

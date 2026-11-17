@@ -93,9 +93,12 @@ export type SpeechSeed = {
   polishReply?: string;
   /** Replies by the exact text sent, for tests with several passes. */
   polishReplies?: Record<string, string>;
+  /** How long the mocked chat model takes per pass, in ms. */
+  polishDelayMs?: number;
   /** Markdown line a kept recording ends with. */
   audio?: string;
   microphone?: "unknown" | "granted" | "denied" | "notNeeded";
+  localModel?: "parakeet" | "canary";
   /** Recordings made in the app, by media name: what was heard and the text in the memo. */
   recordings?: Record<string, { heard?: string; text?: string }>;
   /** What re-analyzing any recording gives. */
@@ -236,6 +239,9 @@ function installBrowserHarness(seed: BrowserSeed) {
     keepAudio: Boolean(seed.speech?.keepAudio),
     polishLevel: seed.speech?.polishLevel ?? 2,
     installed: Boolean(seed.speech?.installed),
+    localModel: seed.speech?.localModel ?? "parakeet",
+    /** Downloaded models. `installed` stands for the one in use. */
+    downloaded: new Set<string>(seed.speech?.installed ? [seed.speech?.localModel ?? "parakeet"] : []),
     microphone: seed.speech?.microphone ?? "granted",
     recordings: new Map(
       Object.entries(seed.speech?.recordings ?? {}).map(([name, info]) => [
@@ -647,12 +653,46 @@ function installBrowserHarness(seed: BrowserSeed) {
           keepAudio: speech.keepAudio,
           polishLevel: speech.polishLevel,
           polishReady: Boolean(seed.speech?.polishReady),
-          engine: {
-            supported: seed.speech?.supported !== false,
-            installed: speech.installed,
-            downloadBytes: speech.installed ? 0 : 510_000_000,
-            diskBytes: speech.installed ? 690_000_000 : 0,
-          },
+          engine: (() => {
+            const catalog = [
+              {
+                id: "parakeet",
+                name: "Parakeet v3",
+                summary: "Fast. Finds the language by itself.",
+                bytes: 510_000_000,
+                diskBytes: 670_000_000,
+                memoryMb: 1270,
+                speed: 23,
+                loadSecs: 1.2,
+                needsLanguage: false,
+              },
+              {
+                id: "canary",
+                name: "Canary 1B v2",
+                summary: "More accurate, about half as fast.",
+                bytes: 1_030_000_000,
+                diskBytes: 1_030_000_000,
+                memoryMb: 1770,
+                speed: 12,
+                loadSecs: 5.6,
+                needsLanguage: true,
+              },
+            ];
+            const models = catalog.map(({ bytes, ...item }) => ({
+              ...item,
+              installed: speech.downloaded.has(item.id),
+              downloadBytes: speech.downloaded.has(item.id) ? 0 : bytes,
+            }));
+            const chosen = models.find((item) => item.id === speech.localModel) ?? models[0];
+            return {
+              supported: seed.speech?.supported !== false,
+              installed: chosen.installed,
+              model: chosen.id,
+              downloadBytes: chosen.downloadBytes,
+              diskBytes: models.filter((item) => item.installed).reduce((sum, item) => sum + item.diskBytes, 0),
+              models,
+            };
+          })(),
           microphone: { access: speech.microphone, borrowed: false },
           recording: speech.session ? { recording: true, ...speech.session } : null,
         };
@@ -665,6 +705,9 @@ function installBrowserHarness(seed: BrowserSeed) {
           if (typeof a[name] === "boolean") {
             speech[name] = a[name];
           }
+        }
+        if (typeof a.localModel === "string") {
+          speech.localModel = a.localModel;
         }
         for (const name of ["source", "baseUrl", "model", "language", "device"] as const) {
           if (typeof a[name] === "string") {
@@ -680,13 +723,14 @@ function installBrowserHarness(seed: BrowserSeed) {
       case "speech_devices":
         return ["Desk Microphone", "Headset"];
       case "speech_download": {
+        const model = String(a.model ?? speech.localModel);
         emit("speech-download", { received: 255_000_000, total: 510_000_000, stage: "model", error: null });
-        speech.installed = true;
+        speech.downloaded.add(model);
         emit("speech-settings-changed");
         return null;
       }
       case "speech_remove_model": {
-        speech.installed = false;
+        speech.downloaded.delete(String(a.model ?? speech.localModel));
         emit("speech-settings-changed");
         return null;
       }
@@ -708,7 +752,10 @@ function installBrowserHarness(seed: BrowserSeed) {
         if (ending) {
           speech.session = null;
           emit("speech-state", { recording: false, ...ending });
-          const audio = ending.purpose === "memo" && speech.keepAudio ? (seed.speech?.audio ?? null) : null;
+          const audio =
+            ending.purpose === "memo" && speech.keepAudio
+              ? ((seed.speech?.audio ?? null)?.replaceAll("{n}", ending.sessionId.replace("speech-", "")) ?? null)
+              : null;
           const name = audio ? /\(memose-media\/([^)#]+)/.exec(audio)?.[1] : undefined;
           if (name) {
             speech.recordings.set(name, { heard: "heard words", text: "heard words" });
@@ -742,6 +789,9 @@ function installBrowserHarness(seed: BrowserSeed) {
       case "recording_transcribe":
         return seed.speech?.transcribe ?? "";
       case "speech_polish": {
+        if (seed.speech?.polishDelayMs) {
+          await new Promise((resolve) => setTimeout(resolve, seed.speech?.polishDelayMs));
+        }
         if (Number(a.level) <= 1) {
           return String(a.dictated ?? "");
         }
