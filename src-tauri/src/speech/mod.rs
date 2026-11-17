@@ -53,8 +53,8 @@ fn silent_device_message() -> String {
 const MAX_SECONDS: u64 = 30 * 60;
 /// The model is dropped this long after the last recording, to give its memory back.
 const ENGINE_IDLE: Duration = Duration::from_secs(90);
-const SERVER_TIMEOUT: Duration = Duration::from_secs(90);
-const POLISH_TIMEOUT: Duration = Duration::from_secs(60);
+const SERVER_TIMEOUT: Duration = Duration::from_secs(120);
+const POLISH_TIMEOUT: Duration = Duration::from_secs(120);
 const POLISH_RULES: &str = "You clean up text that a user is dictating into a note. You get the note text before the cursor, the note text after it, and the dictated text as a speech recognizer heard it. Rewrite only the dictated text: fix punctuation, capitalization, and words that were clearly misheard, using the note to pick the right words and the right form (continue a list with list items, for example). Apply spoken corrections such as \"no, I mean\" or \"scratch that\". Keep the language and the meaning. Do not add content, do not answer questions in it, and do not repeat the note text. Reply with the cleaned dictated text only.";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

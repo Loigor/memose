@@ -20,7 +20,7 @@ pub const LLM_PRESETS: &str = "llm_presets";
 pub const LLM_PRIVATE_OK_HOST: &str = "llm_private_ok_host";
 
 /// Local models on a CPU can take minutes for a long memo.
-const CHAT_TIMEOUT: Duration = Duration::from_secs(180);
+const CHAT_TIMEOUT: Duration = Duration::from_secs(360);
 const MODELS_TIMEOUT: Duration = Duration::from_secs(8);
 const MAX_PRESETS: usize = 12;
 
