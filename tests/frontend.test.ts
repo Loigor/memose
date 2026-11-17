@@ -36,7 +36,16 @@ import {
   resolveSelection,
   splitProtected,
 } from "../src/editor/line-diff.ts";
-import { applyPolish, joinDictation, locateSpan, spanFromInsert, splitTail } from "../src/editor/dictation-span.ts";
+import {
+  applyPolish,
+  insertLine,
+  joinDictation,
+  locateSpan,
+  recordingPlace,
+  spanFromInsert,
+  splitTail,
+} from "../src/editor/dictation-span.ts";
+import { acceptWords, locateWords, wordDiff } from "../src/editor/recording-words.ts";
 import { highlightMarkdown } from "../src/editor/md-highlight.ts";
 import { tagAtOffset } from "../src/editor/md-tags.ts";
 import { uniqueFiles } from "../src/media/files.ts";
@@ -1270,4 +1279,41 @@ test("a reworded tail keeps speech that arrived while the model worked", () => {
   assert.equal(applyPolish("teh cat sat and purred", "", "teh cat sat", "The cat sat."), "The cat sat. and purred");
   assert.equal(applyPolish("Done. teh cat", "Done. ", "teh cat", "The cat."), "Done. The cat.");
   assert.equal(applyPolish("user rewrote it", "", "teh cat sat", "The cat sat."), null);
+});
+
+test("a recording goes under the text block its words went into, after earlier recordings", () => {
+  const v1 = "![v1.wav](memose-media/a-v1.wav)";
+  const memo = `Para one line\nsecond line\n\nOther para`;
+  const start = "Para one line".length;
+  const words = " and more";
+  const withWords = `${memo.slice(0, start)}${words}${memo.slice(start)}`;
+  const at = recordingPlace(withWords, start, start + words.length);
+  assert.equal(at, withWords.indexOf("\n\nOther"));
+  const once = insertLine(withWords, at, v1);
+  assert.equal(once.text, `Para one line and more\nsecond line\n${v1}\n\nOther para`);
+  const again = recordingPlace(once.text, 0, 4);
+  assert.equal(again, once.end, "a second recording of the same block goes after the first");
+  const own = "Intro\nspoken words\nOutro";
+  assert.equal(recordingPlace(own, 6, 18), 18, "dictation on its own line takes its recording right under it");
+  assert.equal(recordingPlace("one\n```js\ncode\n```", 0, 3), 3, "a fence ends the block");
+  assert.equal(recordingPlace("last words", 5, 10), 10);
+});
+
+test("re-analysis replaces the recording's own words and shows a word diff", () => {
+  const memo = "Same words here\n![r.wav](memose-media/r.wav)\nSame words here";
+  const place = locateWords(memo, "Same words here", "r.wav");
+  assert.deepEqual(place, { start: 0, end: 15 }, "the copy before the recording is the one it made");
+  assert.equal(
+    acceptWords(memo, "r.wav", "Same words here", "The same words."),
+    "The same words.\n![r.wav](memose-media/r.wav)\nSame words here",
+  );
+  assert.equal(
+    acceptWords("Text\n![r.wav](memose-media/r.wav)", "r.wav", "", "New words."),
+    "Text\nNew words.\n![r.wav](memose-media/r.wav)",
+    "words that are gone go right above the recording",
+  );
+  const parts = wordDiff("we ship friday", "we ship on Thursday");
+  const changed = parts.filter((part) => part.kind === "hunk");
+  assert.equal(changed.length, 1);
+  assert.equal(parts.map((part) => (part.kind === "same" ? part.lines.join("") : "")).join(""), "we ship ");
 });

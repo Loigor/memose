@@ -224,9 +224,9 @@ test("a recording goes right under dictation that has lines of its own", async (
   await expect(page.locator("#blocks")).toContainText("Outro");
 });
 
-test("a recording of words put inside a line goes to the end of the memo", async ({ page }) => {
+test("recordings of words put into a text block go under that block, in order", async ({ page }) => {
   await openComposer(page, {
-    draft: { content: "Shopping list\nmilk\nbread" },
+    draft: { content: "Shopping list\nmilk\n\nOther notes" },
     speech: { ...ready, keepAudio: true, audio: voice },
   });
   await page.locator("#blocks .md-row").first().click();
@@ -236,5 +236,70 @@ test("a recording of words put inside a line goes to the end of the memo", async
   await chunk(page, "speech-1", 0, "for the weekend");
   await expect(page.locator("#blocks")).toContainText("Shopping list for the weekend");
   await record.click();
-  await expect.poll(async () => lastDraft(page)).toBe(`Shopping list for the weekend\nmilk\nbread\n${voice}`);
+  await expect.poll(async () => lastDraft(page)).toBe(`Shopping list for the weekend\nmilk\n${voice}\n\nOther notes`);
+});
+
+const rec = "12345678-voice-1.wav";
+const recLine = `![voice-1.wav](memose-media/${rec})`;
+
+test("a recording shows its words and can be re-analyzed into a diff to accept", async ({ page }) => {
+  await openComposer(page, {
+    draft: { content: `Notes\nwe ship friday\n${recLine}\nEnd` },
+    speech: {
+      ...ready,
+      recordings: { [rec]: { heard: "we ship friday", text: "we ship friday" } },
+      transcribe: "We ship on Thursday.",
+    },
+  });
+  const tools = page.locator("#blocks .rec-tools");
+  await expect(tools.locator(".rec-snippet")).toHaveText("“we ship friday”");
+  await tools.locator("button", { hasText: /^Re-analyze$/ }).click();
+  await expect(tools.locator(".rec-note")).toHaveText("Re-analyzed:");
+  await expect(tools.locator(".rec-diff del").first()).toBeVisible();
+  await expect(tools.locator(".rec-diff ins").first()).toBeVisible();
+  await tools.locator("button", { hasText: "Accept" }).click();
+  await expect.poll(async () => lastDraft(page)).toBe(`Notes\nWe ship on Thursday.\n${recLine}\nEnd`);
+  await expect(page.locator("#blocks .rec-snippet")).toHaveText("“We ship on Thursday.”");
+});
+
+test("declining a re-analysis leaves the memo as it was", async ({ page }) => {
+  await openComposer(page, {
+    draft: { content: `we ship friday\n${recLine}` },
+    speech: { ...ready, recordings: { [rec]: { text: "we ship friday" } }, transcribe: "something else" },
+  });
+  const tools = page.locator("#blocks .rec-tools");
+  await tools.locator("button", { hasText: /^Re-analyze$/ }).click();
+  await tools.locator("button", { hasText: "Decline" }).click();
+  await expect(tools.locator(".rec-diff")).toHaveCount(0);
+  await expect(page.locator("#blocks")).toContainText("we ship friday");
+  expect(await invokedCmds(page)).not.toContain("upsert_draft");
+});
+
+test("re-analyzing with context refines the new text with the memo around it", async ({ page }) => {
+  await openComposer(page, {
+    draft: { content: `Meeting notes\nwe ship friday\n${recLine}` },
+    speech: {
+      ...ready,
+      polishReady: true,
+      polishReply: "We ship on Thursday.",
+      recordings: { [rec]: { text: "we ship friday" } },
+      transcribe: "we ship on thursday",
+    },
+  });
+  const tools = page.locator("#blocks .rec-tools");
+  await tools.locator("button", { hasText: "Re-analyze with context" }).click();
+  await expect(tools.locator(".rec-note")).toHaveText("Re-analyzed and refined with the memo:");
+  const polished = await page.evaluate(
+    () => window.__memoseHarness?.getInvocations().find((item) => item.cmd === "speech_polish")?.args,
+  );
+  expect(polished).toMatchObject({ dictated: "we ship on thursday", before: "Meeting notes\n" });
+  await tools.locator("button", { hasText: "Accept" }).click();
+  await expect.poll(async () => lastDraft(page)).toBe(`Meeting notes\nWe ship on Thursday.\n${recLine}`);
+});
+
+test("audio that was not recorded in the app gets no tools", async ({ page }) => {
+  await openComposer(page, { draft: { content: "Song\n![song.mp3](memose-media/abcd1234-song.mp3)" }, speech: ready });
+  await expect(page.locator("#blocks .media-audio")).toBeVisible();
+  await expect.poll(async () => invokedCmds(page)).toContain("recordings_info");
+  await expect(page.locator("#blocks .rec-tools")).toHaveCount(0);
 });

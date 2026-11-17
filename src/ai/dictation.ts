@@ -1,6 +1,15 @@
 /** The record button of a memo: speech goes into the memo at the cursor and is tidied while it arrives. */
 
-import { applyPolish, joinDictation, locateSpan, spanFromInsert, splitTail, type Span } from "../editor/dictation-span";
+import {
+  applyPolish,
+  insertLine,
+  joinDictation,
+  locateSpan,
+  recordingPlace,
+  spanFromInsert,
+  splitTail,
+  type Span,
+} from "../editor/dictation-span";
 import {
   polishSpeech,
   speechAvailable,
@@ -11,6 +20,7 @@ import {
   watchSpeech,
   type SpeechDone,
 } from "./speech";
+import { rememberRecordingText } from "./recording-tools";
 
 /** The memo a record button writes into. */
 export type DictationTarget = {
@@ -233,13 +243,6 @@ export function mountDictation(anchor: HTMLElement, target: DictationTarget) {
     }
   };
 
-  /**
-   * Dictation on lines of its own takes its recording right under it. Dictation that was
-   * put into a line of other text leaves that text whole: the recording goes to the end.
-   */
-  const ownLines = (current: string, start: number, end: number) =>
-    (start === 0 || current[start - 1] === "\n") && (end === current.length || current[end] === "\n");
-
   const heard = (piece: string) => {
     const text = piece.trim();
     if (text === "") {
@@ -338,15 +341,19 @@ export function mountDictation(anchor: HTMLElement, target: DictationTarget) {
     if (done.audio) {
       const current = target.text();
       const place = span ? locateSpan(span, current) : null;
-      const below = place !== null && ownLines(current, place.start, place.end);
-      const at = below && place ? place.end : current.replace(/\s+$/, "").length;
-      const lead = at > 0 && current[at - 1] !== "\n" ? "\n" : "";
-      const rest = below ? current.slice(at) : "";
-      const trail = rest !== "" && rest[0] !== "\n" ? "\n" : "";
-      const head = current.slice(0, at);
-      target.replace(`${head}${lead}${done.audio}${trail}${rest}`, span !== null);
-      if (below) {
-        target.placeCaret(head.length + lead.length + done.audio.length);
+      const at = place ? recordingPlace(current, place.start, place.end) : current.replace(/\s+$/, "").length;
+      const placed = insertLine(current, at, done.audio);
+      target.replace(placed.text, span !== null);
+      const name = /\(memose-media\/([^)#]+)/.exec(done.audio)?.[1];
+      if (name) {
+        // The recording remembers the words it put into the memo, for its snippet and for re-analysis.
+        const words = place ? current.slice(place.start, place.end).trim() : "";
+        rememberRecordingText(name, words);
+      }
+      if (place && place.end === at) {
+        target.placeCaret(placed.end);
+      } else if (place) {
+        target.placeCaret(place.end);
       }
     }
     if (done.error) {

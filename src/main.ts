@@ -3,6 +3,7 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 
 import { mountDictation } from "./ai/dictation";
 import { mountLlmBubble } from "./ai/llm-edit";
+import { mountRecordingTools } from "./ai/recording-tools";
 import { createAppBackend } from "./app/backend";
 import { createAudienceController } from "./app/controllers/audience-controller";
 import { createEditorController } from "./app/controllers/editor-controller";
@@ -100,6 +101,13 @@ if (aiAnchor && !isPreviewWindow()) {
     visibility: () => appState.audience.visibility || null,
     selectionRoots: () => [blocksEl, appContext.dom.preview],
     onAvailability: () => stack.syncHeader(),
+  });
+}
+if (!isPreviewWindow()) {
+  mountRecordingTools({
+    roots: () => [blocksEl],
+    text: () => editorController.content(),
+    replace: (next) => editorController.replaceContent(next),
   });
 }
 const recAnchor = document.querySelector<HTMLElement>("#rec-anchor");

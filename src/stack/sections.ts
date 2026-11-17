@@ -22,6 +22,7 @@ import { paintLanguageMenu, pickedLanguage, toggleLanguageList } from "../look/l
 import { namedTheme } from "../look/look";
 import { mountDictation } from "../ai/dictation";
 import { mountLlmBubble } from "../ai/llm-edit";
+import { mountRecordingTools } from "../ai/recording-tools";
 import { markdownToolbarHtml, stackHeaderHtml } from "../look/memo-chrome";
 import { hueSwatches, saveHueSwatches } from "../look/swatches";
 import { filesFromTransfer } from "../media/files";
@@ -649,6 +650,26 @@ export function mountSections(ctx: StackCtx) {
             return root ? [root] : [];
           }),
         onAvailability: () => ctx.api.syncHeaderCompact(),
+      });
+    }
+    if (!isPreviewWindow()) {
+      mountRecordingTools({
+        roots: () => {
+          const root = section.querySelector<HTMLElement>(".stack-blocks");
+          return root ? [root] : [];
+        },
+        text: () => ctx.notes.get(note.id)?.content ?? "",
+        replace(next) {
+          const held = ctx.notes.get(note.id);
+          if (!held) {
+            return;
+          }
+          ctx.api.pushSectionUndo(held, true);
+          held.blocks = parseBlocks(next);
+          held.content = serializeBlocks(held.blocks);
+          ctx.api.renderSectionBlocks(section, held);
+          ctx.api.scheduleSectionSave(section, held);
+        },
       });
     }
     const recAnchor = section.querySelector<HTMLElement>(".rec-anchor");

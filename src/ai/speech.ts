@@ -171,3 +171,23 @@ export function reloadSpeech(): Promise<void> {
 export function megabytes(bytes: number): string {
   return bytes >= 1_000_000_000 ? `${(bytes / 1_000_000_000).toFixed(1)} GB` : `${Math.round(bytes / 1_000_000)} MB`;
 }
+
+/** A recording made in this app, with the words it put into a memo. */
+export type RecordingInfo = {
+  name: string;
+  heard: string;
+  text: string;
+};
+
+export function recordingsInfo(names: string[]): Promise<RecordingInfo[]> {
+  return invoke<RecordingInfo[]>("recordings_info", { names });
+}
+
+export function saveRecordingText(name: string, text: string): Promise<void> {
+  return invoke("recording_set_text", { name, text });
+}
+
+/** Turns the whole saved recording into text again. */
+export function transcribeRecording(name: string): Promise<string> {
+  return invoke<string>("recording_transcribe", { name });
+}

@@ -105,3 +105,49 @@ export function applyPolish(current: string, head: string, sent: string, polishe
   const lead = /^\s*/.exec(sent)?.[0] ?? "";
   return `${head}${lead}${polished.trim()}${later}`;
 }
+
+const mediaLine = /^!?\[[^\]]*\]\(memose-media\/[A-Za-z0-9._-]+\.[A-Za-z0-9]+(?:#[^)]*)?\)$/;
+const fenceLine = /^\s*```/;
+
+/**
+ * Where a recording of dictation goes: under the text block the words went into,
+ * after the recordings already under it, so several recordings keep their order.
+ * A block ends at a blank line, a code fence, an attachment, or the end of the memo.
+ * Dictation on lines of its own is a block of its own.
+ */
+export function recordingPlace(content: string, start: number, end: number): number {
+  const lineEnd = (from: number) => {
+    const at = content.indexOf("\n", from);
+    return at < 0 ? content.length : at;
+  };
+  const ownLines = (start === 0 || content[start - 1] === "\n") && (end === content.length || content[end] === "\n");
+  let at = ownLines ? end : lineEnd(end);
+  if (!ownLines) {
+    // The rest of the block: text lines up to a blank line, a fence, or an attachment.
+    while (at < content.length) {
+      const next = content.slice(at + 1, lineEnd(at + 1));
+      if (next.trim() === "" || fenceLine.test(next) || mediaLine.test(next.trim())) {
+        break;
+      }
+      at = lineEnd(at + 1);
+    }
+  }
+  // Recordings already under the block stay first.
+  while (at < content.length) {
+    const next = content.slice(at + 1, lineEnd(at + 1));
+    if (!mediaLine.test(next.trim())) {
+      break;
+    }
+    at = lineEnd(at + 1);
+  }
+  return at;
+}
+
+/** The memo with `line` put on a line of its own at `at`. Returns the text and where the line ends. */
+export function insertLine(content: string, at: number, line: string): { text: string; end: number } {
+  const lead = at > 0 && content[at - 1] !== "\n" ? "\n" : "";
+  const rest = content.slice(at);
+  const trail = rest !== "" && rest[0] !== "\n" ? "\n" : "";
+  const head = `${content.slice(0, at)}${lead}${line}`;
+  return { text: `${head}${trail}${rest}`, end: head.length };
+}

@@ -554,18 +554,14 @@ mod tests {
         let dir = PathBuf::from(std::env::var("MEMOSE_SPEECH_DIR").expect("MEMOSE_SPEECH_DIR"));
         let wav =
             std::fs::read(std::env::var("MEMOSE_SPEECH_WAV").expect("MEMOSE_SPEECH_WAV")).unwrap();
-        let data = wav
-            .windows(4)
-            .position(|w| w == b"data")
-            .expect("data chunk")
-            + 8;
-        let samples: Vec<f32> = wav[data..]
-            .chunks_exact(2)
-            .map(|pair| f32::from(i16::from_le_bytes([pair[0], pair[1]])) / 32768.0)
-            .collect();
+        let samples = crate::speech::wav_samples(&wav).unwrap();
         assert!(status(&dir).installed);
         let mut engine = Engine::load(&dir).unwrap();
-        let mut chunker = Chunker::new(ChunkPlan::DICTATION);
+        // The same cut as re-analysis of a saved recording.
+        let mut chunker = Chunker::new(ChunkPlan {
+            pause_ms: 900,
+            max_ms: 28_000,
+        });
         let mut slices = chunker.push(&samples);
         slices.extend(chunker.finish());
         assert!(!slices.is_empty());

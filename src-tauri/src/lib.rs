@@ -165,6 +165,9 @@ pub fn run() {
             commands::speech_stop,
             commands::speech_request_microphone,
             commands::speech_open_privacy,
+            commands::recordings_info,
+            commands::recording_set_text,
+            commands::recording_transcribe,
             commands::speech_polish
         ])
         .run(tauri::generate_context!())

@@ -1597,6 +1597,56 @@ pub async fn speech_start(
         .map_err(|err| AppError::Message(format!("recording did not start: {err}")))?
 }
 
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct RecordingInfo {
+    name: String,
+    /// What the recognizer gave while recording.
+    heard: String,
+    /// The recording's text as it was put into the memo.
+    text: String,
+}
+
+/// Recordings made in this app among the given media names.
+#[tauri::command]
+pub fn recordings_info(
+    state: State<AppState>,
+    names: Vec<String>,
+) -> Result<Vec<RecordingInfo>, AppError> {
+    let names: Vec<String> = names.into_iter().take(200).collect();
+    Ok(state
+        .db
+        .recordings(&names)?
+        .into_iter()
+        .map(|(name, heard, text)| RecordingInfo { name, heard, text })
+        .collect())
+}
+
+/// Remembers the text a recording put into the memo.
+#[tauri::command]
+pub fn recording_set_text(
+    state: State<AppState>,
+    name: String,
+    text: String,
+) -> Result<(), AppError> {
+    state.db.set_recording_text(&name, &text)?;
+    Ok(())
+}
+
+/// Turns a whole saved recording into text again.
+#[tauri::command]
+pub async fn recording_transcribe(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    name: String,
+) -> Result<String, AppError> {
+    let path = crate::media::resolve(&state.media_dir, &name)?;
+    if speech::current(&state).is_some() {
+        return Err(AppError::Message("stop the recording first".into()));
+    }
+    speech::transcribe_file(&app, &path).await
+}
+
 /// Asks the system for the microphone now, from settings, instead of at the first recording.
 #[tauri::command]
 pub async fn speech_request_microphone(

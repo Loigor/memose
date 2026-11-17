@@ -680,7 +680,12 @@ async fn work(
                         Some(&name),
                         Some("audio/wav"),
                     ) {
-                        Ok(line) => audio_line = Some(line),
+                        Ok(line) => {
+                            if let Some(media) = crate::media::parse_media_token(&line) {
+                                let _ = state.db.save_recording(&media.name, &heard);
+                            }
+                            audio_line = Some(line);
+                        }
                         Err(err) => {
                             failure.get_or_insert(format!("the recording was not saved: {err}"));
                         }
@@ -714,7 +719,13 @@ async fn work(
         },
     );
 
-    // Give the model's memory back unless another recording starts soon.
+    release_later(&app).await;
+}
+
+/// Gives the model's memory back unless it is used again soon.
+async fn release_later(app: &AppHandle) {
+    let state = app.state::<AppState>();
+    let engine = state.speech.engine.clone();
     let uses = state.speech.uses.clone();
     let seen = uses.load(Ordering::SeqCst);
     tokio::time::sleep(ENGINE_IDLE).await;
@@ -735,6 +746,121 @@ async fn work(
         })
         .await;
     }
+}
+
+/// Samples of a WAV file as 16 kHz mono. Handles 16-bit PCM at any rate and channel count.
+pub fn wav_samples(bytes: &[u8]) -> Result<Vec<f32>, AppError> {
+    let bad = || AppError::Message("the recording is not a WAV file this app can read".into());
+    if bytes.len() < 12 || &bytes[..4] != b"RIFF" || &bytes[8..12] != b"WAVE" {
+        return Err(bad());
+    }
+    let mut at = 12;
+    let (mut channels, mut rate, mut bits) = (0_u16, 0_u32, 0_u16);
+    while at + 8 <= bytes.len() {
+        let id = &bytes[at..at + 4];
+        let len = u32::from_le_bytes(bytes[at + 4..at + 8].try_into().map_err(|_| bad())?) as usize;
+        let body = at + 8;
+        let end = (body + len).min(bytes.len());
+        if id == b"fmt " && end >= body + 16 {
+            let format = u16::from_le_bytes([bytes[body], bytes[body + 1]]);
+            channels = u16::from_le_bytes([bytes[body + 2], bytes[body + 3]]);
+            rate = u32::from_le_bytes(bytes[body + 4..body + 8].try_into().map_err(|_| bad())?);
+            bits = u16::from_le_bytes([bytes[body + 14], bytes[body + 15]]);
+            if format != 1 {
+                return Err(bad());
+            }
+        } else if id == b"data" {
+            if bits != 16 || channels == 0 || rate == 0 {
+                return Err(bad());
+            }
+            let raw: Vec<f32> = bytes[body..end]
+                .chunks_exact(2)
+                .map(|pair| f32::from(i16::from_le_bytes([pair[0], pair[1]])) / 32768.0)
+                .collect();
+            if rate == audio::RATE && channels == 1 {
+                return Ok(raw);
+            }
+            let mut out = Vec::with_capacity(raw.len());
+            Resampler::new(rate, channels).push(&raw, &mut out);
+            return Ok(out);
+        }
+        at = body + len + (len & 1);
+    }
+    Err(bad())
+}
+
+/// Turns a whole saved recording into text again, cut at pauses, with the recognizer in settings.
+pub async fn transcribe_file(app: &AppHandle, path: &std::path::Path) -> Result<String, AppError> {
+    let state = app.state::<AppState>();
+    let recognizer = recognizer(&state.db)?;
+    if recognizer.source == Source::Off {
+        return Err(AppError::Message("speech to text is turned off".into()));
+    }
+    let bytes = std::fs::read(path)?;
+    let slices = tokio::task::spawn_blocking(move || {
+        let samples = wav_samples(&bytes)?;
+        // Long pieces give the recognizer the most context. It still cuts at pauses.
+        let mut chunker = Chunker::new(ChunkPlan {
+            pause_ms: 900,
+            max_ms: 28_000,
+        });
+        let mut slices = chunker.push(&samples);
+        slices.extend(chunker.finish());
+        Ok::<_, AppError>(slices)
+    })
+    .await
+    .map_err(|err| AppError::Message(format!("reading the recording stopped: {err}")))??;
+    if slices.is_empty() {
+        return Err(AppError::Message(
+            "no speech was found in the recording".into(),
+        ));
+    }
+    let mut heard = String::new();
+    match recognizer.source {
+        Source::Local => {
+            state.speech.uses.fetch_add(1, Ordering::SeqCst);
+            let engine = state.speech.engine.clone();
+            let dir = engine_dir(app)?;
+            let text = tokio::task::spawn_blocking(move || {
+                let mut slot = engine
+                    .lock()
+                    .unwrap_or_else(|poisoned| poisoned.into_inner());
+                if slot.is_none() {
+                    *slot = Some(Engine::load(&dir)?);
+                }
+                let loaded = slot
+                    .as_mut()
+                    .ok_or_else(|| AppError::Message("the speech model is not loaded".into()))?;
+                let mut parts = Vec::new();
+                for slice in &slices {
+                    let part = loaded.transcribe(slice)?;
+                    if !part.is_empty() {
+                        parts.push(part);
+                    }
+                }
+                Ok::<_, AppError>(parts.join(" "))
+            })
+            .await
+            .map_err(|err| AppError::Message(format!("the speech model stopped: {err}")))?;
+            let release = app.clone();
+            tauri::async_runtime::spawn(async move { release_later(&release).await });
+            heard = text?;
+        }
+        Source::Server => {
+            for slice in slices {
+                let wav = audio::wav_bytes(&audio::to_pcm(&slice));
+                let part = transcribe_remote(&state.http, &recognizer, wav, &heard).await?;
+                if !part.is_empty() {
+                    if !heard.is_empty() {
+                        heard.push(' ');
+                    }
+                    heard.push_str(&part);
+                }
+            }
+        }
+        Source::Off => {}
+    }
+    Ok(heard)
 }
 
 #[cfg(test)]
@@ -793,6 +919,24 @@ mod tests {
             }
         }
         println!("samples {count} nonzero {nonzero} peak {peak}");
+    }
+
+    #[test]
+    fn wav_files_of_other_formats_are_read_as_16k_mono() {
+        let mut stereo = Vec::new();
+        for _ in 0..48_000 {
+            stereo.extend_from_slice(&[1000_i16, 3000_i16]);
+        }
+        let mut wav = audio::wav_bytes(&stereo);
+        // Rewrite the header as 48 kHz stereo.
+        wav[22..24].copy_from_slice(&2_u16.to_le_bytes());
+        wav[24..28].copy_from_slice(&48_000_u32.to_le_bytes());
+        let samples = wav_samples(&wav).unwrap();
+        assert!((samples.len() as i64 - 16_000).abs() <= 1);
+        assert!((samples[100] - 2000.0 / 32768.0).abs() < 1e-4);
+        let own = audio::wav_bytes(&[0, 16384, -16384]);
+        assert_eq!(wav_samples(&own).unwrap(), vec![0.0, 0.5, -0.5]);
+        assert!(wav_samples(b"not a wav file").is_err());
     }
 
     #[test]

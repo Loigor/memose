@@ -94,6 +94,10 @@ export type SpeechSeed = {
   /** Markdown line a kept recording ends with. */
   audio?: string;
   microphone?: "unknown" | "granted" | "denied" | "notNeeded";
+  /** Recordings made in the app, by media name: what was heard and the text in the memo. */
+  recordings?: Record<string, { heard?: string; text?: string }>;
+  /** What re-analyzing any recording gives. */
+  transcribe?: string;
 };
 
 export type AiSeed = {
@@ -231,6 +235,12 @@ function installBrowserHarness(seed: BrowserSeed) {
     polish: seed.speech?.polish !== false,
     installed: Boolean(seed.speech?.installed),
     microphone: seed.speech?.microphone ?? "granted",
+    recordings: new Map(
+      Object.entries(seed.speech?.recordings ?? {}).map(([name, info]) => [
+        name,
+        { heard: info.heard ?? "", text: info.text ?? info.heard ?? "" },
+      ]),
+    ),
     session: null as { sessionId: string; noteId: string | null; purpose: string } | null,
     count: 0,
   };
@@ -693,11 +703,12 @@ function installBrowserHarness(seed: BrowserSeed) {
         if (ending) {
           speech.session = null;
           emit("speech-state", { recording: false, ...ending });
-          emit("speech-done", {
-            ...ending,
-            audio: ending.purpose === "memo" && speech.keepAudio ? (seed.speech?.audio ?? null) : null,
-            error: null,
-          });
+          const audio = ending.purpose === "memo" && speech.keepAudio ? (seed.speech?.audio ?? null) : null;
+          const name = audio ? /\(memose-media\/([^)#]+)/.exec(audio)?.[1] : undefined;
+          if (name) {
+            speech.recordings.set(name, { heard: "heard words", text: "heard words" });
+          }
+          emit("speech-done", { ...ending, audio, error: null });
         }
         return null;
       }
@@ -710,6 +721,21 @@ function installBrowserHarness(seed: BrowserSeed) {
       }
       case "speech_open_privacy":
         return null;
+      case "recordings_info": {
+        const names = Array.isArray(a.names) ? (a.names as string[]) : [];
+        return names.flatMap((name) => {
+          const info = speech.recordings.get(name);
+          return info ? [{ name, ...info }] : [];
+        });
+      }
+      case "recording_set_text": {
+        const name = String(a.name ?? "");
+        const info = speech.recordings.get(name) ?? { heard: "", text: "" };
+        speech.recordings.set(name, { ...info, text: String(a.text ?? "") });
+        return null;
+      }
+      case "recording_transcribe":
+        return seed.speech?.transcribe ?? "";
       case "speech_polish":
         return seed.speech?.polishReply ?? String(a.dictated ?? "");
       case "save_settings": {

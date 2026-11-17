@@ -54,6 +54,12 @@ impl Db {
                 remote_memo TEXT NOT NULL DEFAULT '',
                 filename TEXT NOT NULL DEFAULT ''
             );
+            CREATE TABLE IF NOT EXISTS recordings (
+                name TEXT PRIMARY KEY,
+                heard TEXT NOT NULL DEFAULT '',
+                text TEXT NOT NULL DEFAULT '',
+                created_at INTEGER NOT NULL
+            );
             ",
         )?;
         ensure_note_columns(&conn)?;
@@ -517,6 +523,44 @@ impl Db {
         })
     }
 
+    /// Remembers a recording made in the app. `heard` is what the recognizer gave.
+    pub fn save_recording(&self, name: &str, heard: &str) -> Result<(), AppError> {
+        self.with(|conn| {
+            conn.execute(
+                "INSERT INTO recordings (name, heard, text, created_at) VALUES (?1, ?2, ?2, ?3)
+                 ON CONFLICT(name) DO UPDATE SET heard = excluded.heard",
+                params![name, heard, now_ms()],
+            )?;
+            Ok(())
+        })
+    }
+
+    /// The text of a recording as it stands in the memo now.
+    pub fn set_recording_text(&self, name: &str, text: &str) -> Result<bool, AppError> {
+        self.with(|conn| {
+            Ok(conn.execute(
+                "UPDATE recordings SET text = ?2 WHERE name = ?1",
+                params![name, text],
+            )? > 0)
+        })
+    }
+
+    /// Known recordings among `names`: name, what was heard, and the text in the memo.
+    pub fn recordings(&self, names: &[String]) -> Result<Vec<(String, String, String)>, AppError> {
+        self.with(|conn| {
+            let mut stmt =
+                conn.prepare("SELECT name, heard, text FROM recordings WHERE name = ?1")?;
+            let mut found = Vec::new();
+            for name in names {
+                let mut rows = stmt.query(params![name])?;
+                if let Some(row) = rows.next()? {
+                    found.push((row.get(0)?, row.get(1)?, row.get(2)?));
+                }
+            }
+            Ok(found)
+        })
+    }
+
     pub fn record_media_upload(
         &self,
         local_name: &str,
@@ -934,6 +978,30 @@ fn theme_column(value: Option<String>) -> Option<String> {
         Some("dark") => Some("dark".into()),
         Some("light") => Some("light".into()),
         _ => None,
+    }
+}
+
+#[cfg(test)]
+mod recording_tests {
+    use super::*;
+
+    #[test]
+    fn a_recording_keeps_what_was_heard_and_its_text() {
+        let db = Db::open_memory().unwrap();
+        db.save_recording("a.wav", "teh words").unwrap();
+        assert!(db.set_recording_text("a.wav", "The words.").unwrap());
+        assert!(!db.set_recording_text("missing.wav", "x").unwrap());
+        let found = db
+            .recordings(&["a.wav".into(), "missing.wav".into()])
+            .unwrap();
+        assert_eq!(
+            found,
+            vec![("a.wav".into(), "teh words".into(), "The words.".into())]
+        );
+        db.save_recording("a.wav", "again").unwrap();
+        let again = db.recordings(&["a.wav".into()]).unwrap();
+        assert_eq!(again[0].1, "again");
+        assert_eq!(again[0].2, "The words.");
     }
 }
 
