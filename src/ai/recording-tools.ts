@@ -5,6 +5,7 @@
  */
 
 import { acceptWords, locateWords, wordDiff } from "../editor/recording-words";
+import { findTextRanges, keepScroll, setHighlight } from "../editor/view-keep";
 import {
   polishSpeech,
   recordingsInfo,
@@ -133,7 +134,7 @@ export function mountRecordingTools(target: RecordingToolsTarget) {
         button("rec-accept", old === next ? "Keep" : "Accept", () => {
           const memo = target.text();
           if (old !== next) {
-            target.replace(acceptWords(memo, name, old, next));
+            keepScroll(target.roots(), () => target.replace(acceptWords(memo, name, old, next)));
           }
           state.info = { ...state.info, text: next };
           state.proposal = null;
@@ -170,7 +171,17 @@ export function mountRecordingTools(target: RecordingToolsTarget) {
       }
     }
     wrap.append(tools);
+    if (state.proposal) {
+      // The words a re-analysis would replace are marked in the memo until it is accepted or declined.
+      markWords(figure, state.proposal.old);
+    }
   };
+
+  const highlightOwner = {};
+
+  function markWords(figure: HTMLElement, words: string) {
+    setHighlight("rewording", highlightOwner, words ? findTextRanges(target.roots(), words, figure) : []);
+  }
 
   async function run(name: string, refined: boolean) {
     const state = known.get(name);
@@ -213,6 +224,8 @@ export function mountRecordingTools(target: RecordingToolsTarget) {
       .filter((figure) => Boolean(figure.querySelector(".media-audio")));
 
   function paintAll() {
+    // Cleared first: a figure with a proposal marks its words again while it is drawn.
+    setHighlight("rewording", highlightOwner, []);
     for (const figure of figures()) {
       const name = figure.dataset.media;
       if (name) {
@@ -250,6 +263,12 @@ export function mountRecordingTools(target: RecordingToolsTarget) {
       if (name && known.get(name) && !figure.querySelector(".rec-tools")) {
         render(figure, name);
       }
+    }
+    // A redraw makes new text nodes, so the marked words are found again.
+    const open = found.find((figure) => known.get(figure.dataset.media ?? "")?.proposal);
+    const proposal = open ? known.get(open.dataset.media ?? "")?.proposal : null;
+    if (open && proposal) {
+      markWords(open, proposal.old);
     }
   }
 

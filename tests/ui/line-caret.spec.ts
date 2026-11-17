@@ -26,6 +26,31 @@ test("typing keeps the caret after the character just typed", async ({ page }) =
   await expect.poll(() => caretOf(page)).toEqual({ value: "helXYlo", start: 5, end: 5 });
 });
 
+test("a new memo heading keeps the caret at the end of the title", async ({ page }) => {
+  await openComposer(page);
+  const lines = page.locator("#blocks .md-lines").first();
+  await lines.click();
+  await lines.evaluate((el) => {
+    const log: number[] = [];
+    (window as unknown as { __caretLog: number[] }).__caretLog = log;
+    document.addEventListener("selectionchange", () => {
+      const field = el as HTMLElement & { selectionStart: number };
+      log.push(field.selectionStart);
+    });
+  });
+  await page.keyboard.type("# Title", { delay: 0 });
+  const logged = await page.evaluate(() => (window as unknown as { __caretLog: number[] }).__caretLog);
+  const caret = await caretOf(page);
+  const movedBack = logged.filter((at, index) => index > 0 && at < logged[index - 1]!);
+  expect({ caret, movedBack }).toEqual({ caret: { value: "# Title", start: 7, end: 7 }, movedBack: [] });
+  const bodySize = await lines.evaluate((el) => getComputedStyle(el).fontSize);
+  const liveSize = await page.locator(".md-row.is-live").evaluate((el) => getComputedStyle(el).fontSize);
+  expect(liveSize).toBe(bodySize);
+  await page.keyboard.press("Enter");
+  const headingSize = await page.locator(".md-row.is-h1").evaluate((el) => getComputedStyle(el).fontSize);
+  expect(Number.parseFloat(headingSize)).toBeGreaterThan(Number.parseFloat(bodySize));
+});
+
 test("a trailing break in the row does not split the line or leave the caret behind", async ({ page }) => {
   await openComposer(page);
   const lines = page.locator("#blocks .md-lines").first();

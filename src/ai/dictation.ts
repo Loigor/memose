@@ -20,6 +20,7 @@ import {
   watchSpeech,
   type SpeechDone,
 } from "./speech";
+import { findTextRanges, keepScroll, revealRect, setHighlight } from "../editor/view-keep";
 import { rememberRecordingText } from "./recording-tools";
 
 /** The memo a record button writes into. */
@@ -224,7 +225,7 @@ export function mountDictation(anchor: HTMLElement, target: DictationTarget) {
 
   /** Writes the memo and finds the dictated text again in what the editor made of it. */
   const write = (next: string, start: number, end: number) => {
-    target.replace(next, true);
+    keepScroll(target.fieldRoots(), () => target.replace(next, true));
     const now = target.text();
     if (now === next) {
       span = { content: now, start, end };
@@ -236,12 +237,23 @@ export function mountDictation(anchor: HTMLElement, target: DictationTarget) {
     followCaret();
   };
 
-  /** The caret stays at the end of the dictated text, where the next words go. */
+  /** The caret stays at the end of the dictated text, where the next words go, and that place is shown. */
   const followCaret = () => {
     if (span) {
       target.placeCaret(span.end);
     }
+    markSpan();
+    revealRect(target.fieldRoots(), spanEndRect() ?? caretRect());
+    placeLive();
   };
+
+  /** Marks the words dictated so far. The mark goes when the recording ends. */
+  const markSpan = () => {
+    const place = span ? locateSpan(span, target.text()) : null;
+    const words = place ? target.text().slice(place.start, place.end) : "";
+    setHighlight("dictation", highlightOwner, words ? findTextRanges(target.fieldRoots(), words) : []);
+  };
+  const highlightOwner = {};
 
   const heard = (piece: string) => {
     const text = piece.trim();
@@ -343,7 +355,7 @@ export function mountDictation(anchor: HTMLElement, target: DictationTarget) {
       const place = span ? locateSpan(span, current) : null;
       const at = place ? recordingPlace(current, place.start, place.end) : current.replace(/\s+$/, "").length;
       const placed = insertLine(current, at, done.audio);
-      target.replace(placed.text, span !== null);
+      keepScroll(target.fieldRoots(), () => target.replace(placed.text, span !== null));
       const name = /\(memose-media\/([^)#]+)/.exec(done.audio)?.[1];
       if (name) {
         // The recording remembers the words it put into the memo, for its snippet and for re-analysis.
@@ -362,6 +374,7 @@ export function mountDictation(anchor: HTMLElement, target: DictationTarget) {
     span = null;
     sessionId = null;
     polishOff = false;
+    setHighlight("dictation", highlightOwner, []);
     hideLive();
     paint();
   }
@@ -415,19 +428,69 @@ export function mountDictation(anchor: HTMLElement, target: DictationTarget) {
     // The cursor stays in the memo, so the first words land where it is.
     event.preventDefault();
   });
+  const recordingHere = () => sessionId !== null && speechRunning()?.sessionId === sessionId;
+
+  const stop = () => {
+    if (recordingHere()) {
+      showLive("finishing");
+    }
+    stopSpeech();
+  };
+
   button.addEventListener("click", () => {
     if (starting) {
       return;
     }
     if (speechRunning()) {
-      if (sessionId && speechRunning()?.sessionId === sessionId) {
-        showLive("finishing");
-      }
-      stopSpeech();
+      stop();
       return;
     }
     void begin();
   });
+
+  // The listening mark is also a stop button.
+  live.title = "Stop recording (Enter)";
+  live.addEventListener("mousedown", (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+  });
+  live.addEventListener("click", (event) => {
+    event.stopPropagation();
+    if (recordingHere()) {
+      stop();
+    }
+  });
+
+  // Enter ends dictation instead of starting a new line.
+  window.addEventListener(
+    "keydown",
+    (event) => {
+      if (
+        event.key !== "Enter" ||
+        event.isComposing ||
+        event.shiftKey ||
+        event.altKey ||
+        event.metaKey ||
+        event.ctrlKey ||
+        !recordingHere() ||
+        live.dataset.state === "finishing"
+      ) {
+        return;
+      }
+      // Only while the keys go to this memo, not to an AI prompt box or a settings field.
+      const focus = document.activeElement;
+      if (focus && focus !== document.body && !target.host.contains(focus)) {
+        return;
+      }
+      if (focus instanceof Element && focus.closest(".ai-bubble")) {
+        return;
+      }
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      stop();
+    },
+    true,
+  );
 
   watchSpeech(paint);
 }

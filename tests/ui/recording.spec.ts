@@ -303,3 +303,74 @@ test("audio that was not recorded in the app gets no tools", async ({ page }) =>
   await expect.poll(async () => invokedCmds(page)).toContain("recordings_info");
   await expect(page.locator("#blocks .rec-tools")).toHaveCount(0);
 });
+
+function marked(page: Page, kind: string): Promise<string[]> {
+  return page.evaluate((name) => {
+    const highlight = (CSS as unknown as { highlights?: Map<string, Set<Range>> }).highlights?.get(name);
+    return highlight ? [...highlight].map((range) => range.toString()) : [];
+  }, kind);
+}
+
+test("dictation far down a long memo keeps it scrolled there and marks the words", async ({ page }) => {
+  const lines = Array.from({ length: 60 }, (_, i) => `line ${i}`);
+  await openComposer(page, { draft: { content: lines.join("\n") }, speech: ready });
+  const row = page.locator("#blocks .md-row", { hasText: /^line 50$/ });
+  await row.scrollIntoViewIfNeeded();
+  await row.click();
+  await page.keyboard.press("End");
+  const scroller = page.locator("#blocks");
+  const before = await scroller.evaluate((el) => el.scrollTop);
+  expect(before).toBeGreaterThan(200);
+  await page.locator("#rec-anchor .rec-toggle").click();
+  for (const [seq, text] of ["first words", "second words", "third words"].entries()) {
+    await chunk(page, "speech-1", seq, text);
+    await expect(page.locator("#blocks")).toContainText(text);
+    const top = await scroller.evaluate((el) => el.scrollTop);
+    expect(Math.abs(top - before)).toBeLessThan(120);
+  }
+  await expect(
+    page.locator("#blocks .md-row", { hasText: "line 50 first words second words third words" }),
+  ).toBeInViewport();
+  await expect.poll(async () => marked(page, "dictation")).toEqual(["first words second words third words"]);
+  await page.locator("#rec-anchor .rec-toggle").click();
+  await expect.poll(async () => marked(page, "dictation")).toEqual([]);
+});
+
+test("clicking the listening mark stops the recording", async ({ page }) => {
+  await openComposer(page, { draft: { content: "Notes" }, speech: ready });
+  await page.locator("#blocks .md-lines").first().click();
+  await page.keyboard.press("End");
+  const record = page.locator("#rec-anchor .rec-toggle");
+  await record.click();
+  await page.locator("#card .rec-live").click();
+  await expect(record).not.toHaveClass(/rec-on/);
+  await expect(page.locator("#card .rec-live")).toBeHidden();
+  expect(await invokedCmds(page)).toContain("speech_stop");
+});
+
+test("Enter stops the recording instead of starting a new line", async ({ page }) => {
+  await openComposer(page, { draft: { content: "Notes" }, speech: ready });
+  await page.locator("#blocks .md-lines").first().click();
+  await page.keyboard.press("End");
+  const record = page.locator("#rec-anchor .rec-toggle");
+  await record.click();
+  await chunk(page, "speech-1", 0, "said words");
+  await expect(page.locator("#blocks")).toContainText("Notes said words");
+  await page.keyboard.press("Enter");
+  await expect(record).not.toHaveClass(/rec-on/);
+  await expect.poll(async () => lastDraft(page)).toBe("Notes said words");
+  await page.keyboard.press("Enter");
+  await expect.poll(async () => lastDraft(page)).toBe("Notes said words\n");
+});
+
+test("the words a re-analysis would replace are marked until it is accepted", async ({ page }) => {
+  await openComposer(page, {
+    draft: { content: `Notes\nwe ship friday\n${recLine}` },
+    speech: { ...ready, recordings: { [rec]: { text: "we ship friday" } }, transcribe: "We ship on Thursday." },
+  });
+  const tools = page.locator("#blocks .rec-tools");
+  await tools.locator("button", { hasText: /^Re-analyze$/ }).click();
+  await expect.poll(async () => marked(page, "rewording")).toEqual(["we ship friday"]);
+  await tools.locator("button", { hasText: "Accept" }).click();
+  await expect.poll(async () => marked(page, "rewording")).toEqual([]);
+});

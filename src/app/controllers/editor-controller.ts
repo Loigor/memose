@@ -24,6 +24,7 @@ import {
   writeLineMarks,
   type EditorPrefs,
 } from "../../editor/editor-field";
+import { keepScroll } from "../../editor/view-keep";
 import { cloneBlocks, readPlace, remapBlockLines, restoreCaret, restorePlace } from "../../editor/history";
 import { lineOffsetAtPoint, mountLineEditor } from "../../editor/line-editor";
 import {
@@ -299,12 +300,9 @@ export function createEditorController(
       return;
     }
     state.caret = { index: found.index, start: found.at, end: found.at };
-    restoreCaret(blocksEl, state.caret);
-    const area = fieldAt(blocksEl, found.index);
-    if (area) {
-      followEnd(area);
-      area.scrollIntoView?.({ block: "nearest" });
-    }
+    const caret = state.caret;
+    // Focusing the field would scroll it into view as a whole. The caller shows the exact line.
+    keepScroll([blocksEl], () => restoreCaret(blocksEl, caret));
   }
 
   function focus() {

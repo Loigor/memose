@@ -785,7 +785,11 @@ header.compact-meta #edited-sep {
   letter-spacing: 0;
   text-transform: none;
   white-space: nowrap;
-  pointer-events: none;
+  cursor: pointer;
+}
+
+.rec-live:hover {
+  border-color: #d8392b;
 }
 
 .rec-live[hidden] {
@@ -849,4 +853,13 @@ header.compact-meta #edited-sep {
   .rec-live .rec-bars i {
     animation-duration: 3s;
   }
+}
+
+/* Words being dictated, and words a re-analysis would replace. */
+::highlight(dictation) {
+  background-color: color-mix(in srgb, #d8392b 16%, transparent);
+}
+
+::highlight(rewording) {
+  background-color: color-mix(in srgb, #7a5cf0 18%, transparent);
 }

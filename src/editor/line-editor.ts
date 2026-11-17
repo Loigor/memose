@@ -155,6 +155,23 @@ export function mountLineEditor(options: LineEditorOptions): { shell: HTMLElemen
     sel?.setBaseAndExtent(anchorPoint.node, anchorPoint.offset, focusPoint.node, focusPoint.offset);
   };
 
+  const focusedNow = () => {
+    const active = root.ownerDocument.activeElement;
+    return active === root || (active instanceof Node && root.contains(active));
+  };
+
+  const putCaretBack = (caret: { start: number; end: number; focus?: number }) => {
+    if (!focusedNow()) {
+      return;
+    }
+    const focusAt = caret.focus ?? caret.end;
+    const live = liveCaret();
+    if (live && live.start === caret.start && live.end === caret.end && live.focus === focusAt) {
+      return;
+    }
+    setRange(caret.start, caret.end, focusAt);
+  };
+
   let painting = false;
   const reveal = (caret: { start: number; end: number; focus?: number }, focused?: boolean) => {
     if (painting) {
@@ -169,7 +186,6 @@ export function mountLineEditor(options: LineEditorOptions): { shell: HTMLElemen
       if (hasFocus) {
         live.add(lineIndex(value, caret.focus ?? caret.end));
       }
-      let caretRowRebuilt = false;
       const rows = [...root.querySelectorAll<HTMLElement>(":scope > .md-row")];
       rows.forEach((row, index) => {
         const text = row.textContent ?? "";
@@ -180,17 +196,15 @@ export function mountLineEditor(options: LineEditorOptions): { shell: HTMLElemen
         }
         if (source) {
           row.style.removeProperty("--lead");
-          if (paintSource(row, text)) {
-            caretRowRebuilt = true;
-          }
+          paintSource(row, text);
         } else {
           paintMarks(row, text);
         }
       });
-      // Replacing some other row must not write the selection. The caret's own
-      // row was just emptied, so put it back where it was before that paint.
-      if (caretRowRebuilt && hasFocus) {
-        setRange(caret.start, caret.end, caret.focus ?? caret.end);
+      // A class change on the caret row (a line becoming a heading) drops the
+      // caret at the start. Put it back only when the paint actually moved it.
+      if (hasFocus) {
+        putCaretBack(caret);
       }
     } finally {
       painting = false;
@@ -315,6 +329,7 @@ export function mountLineEditor(options: LineEditorOptions): { shell: HTMLElemen
     }
     const value = readValue();
     paintEmpty(value);
+    putCaretBack(caret);
     publish(value, caret);
   };
 

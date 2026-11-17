@@ -1,6 +1,6 @@
 import { denseLines, detectedMemoLanguage, memoUsesCoder, refreshEditorFields } from "../editor/editor-field";
-import { fieldAt } from "../editor/editable";
 import { BlockHistory, restoreCaret } from "../editor/history";
+import { keepScroll } from "../editor/view-keep";
 import {
   applyCode,
   applyJsonFormat,
@@ -709,9 +709,9 @@ export function mountSections(ctx: StackCtx) {
           if (!held || !container || !found) {
             return;
           }
-          held.caret = { index: found.index, start: found.at, end: found.at };
-          restoreCaret(container, held.caret);
-          fieldAt(container, found.index)?.scrollIntoView?.({ block: "nearest" });
+          const caret = { index: found.index, start: found.at, end: found.at };
+          held.caret = caret;
+          keepScroll([container], () => restoreCaret(container, caret));
         },
         fieldRoots: () =>
           [".stack-blocks", ".stack-preview"].flatMap((selector) => {
