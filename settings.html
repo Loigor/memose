@@ -451,10 +451,6 @@
             <div id="speech-local" class="source-panel">
               <p id="speech-engine-status" class="hint"></p>
               <div id="speech-models" class="model-list" role="radiogroup" aria-label="Speech model"></div>
-              <label id="speech-local-language-row" hidden>
-                Language
-                <select id="speech-local-language"></select>
-              </label>
               <p class="hint">
                 Sound never leaves this computer. A model is loaded when you record or re-analyze, and its memory is
                 given back about a minute and a half later. Memory and speed were measured on an Apple M1 Pro. The
@@ -491,15 +487,6 @@
                 Model
                 <input id="speech-model" type="text" placeholder="whisper-1" autocomplete="off" />
               </label>
-              <label>
-                Language
-                <input
-                  id="speech-language"
-                  type="text"
-                  placeholder="Detect (or a code such as fi)"
-                  autocomplete="off"
-                />
-              </label>
               <p class="hint">
                 Any server with the OpenAI <code>/audio/transcriptions</code> interface. Include the version part of the
                 address, such as <code>https://api.openai.com/v1</code>.
@@ -507,6 +494,14 @@
               <div class="actions">
                 <button id="speech-save" class="primary" type="button">Save</button>
               </div>
+            </div>
+
+            <div id="speech-language-row" class="language-row">
+              <label>
+                Spoken language
+                <select id="speech-language"></select>
+              </label>
+              <p id="speech-language-hint" class="hint"></p>
             </div>
 
             <label class="toggle-row" for="speech-polish">

@@ -68,6 +68,58 @@ const POLISH_PROOF: &str = "You fix and proof-read text that a speech recognizer
 /// Level 4: level 3, using the note around the words.
 const POLISH_CONTEXT: &str = "You fix and proof-read text that a user dictated into a note. You also get the note text before and after it. First add punctuation and capital letters and fix words that are clearly recognition errors. Then proof-read it: correct spelling and grammar, so it reads as correct standard written language. Use the note to pick the right names, terms, and form, and apply spoken corrections such as \"no, I mean\" or \"scratch that\". Keep the meaning, the tone, and everything that was said.";
 
+/// Names of the languages the built-in models know, for telling the chat model which one
+/// the text is in. Matches the list in the settings window.
+const LANGUAGE_NAMES: [(&str, &str); 25] = [
+    ("bg", "Bulgarian"),
+    ("cs", "Czech"),
+    ("da", "Danish"),
+    ("de", "German"),
+    ("el", "Greek"),
+    ("en", "English"),
+    ("es", "Spanish"),
+    ("et", "Estonian"),
+    ("fi", "Finnish"),
+    ("fr", "French"),
+    ("hr", "Croatian"),
+    ("hu", "Hungarian"),
+    ("it", "Italian"),
+    ("lt", "Lithuanian"),
+    ("lv", "Latvian"),
+    ("mt", "Maltese"),
+    ("nl", "Dutch"),
+    ("pl", "Polish"),
+    ("pt", "Portuguese"),
+    ("ro", "Romanian"),
+    ("ru", "Russian"),
+    ("sk", "Slovak"),
+    ("sl", "Slovenian"),
+    ("sv", "Swedish"),
+    ("uk", "Ukrainian"),
+];
+
+/// The system prompt for one improvement level. A chosen spoken language is named, so a
+/// small model does not guess it or drift into English.
+fn polish_rules(level: Level, language: &str) -> String {
+    let rules = match level {
+        Level::Context => POLISH_CONTEXT,
+        Level::Proofread => POLISH_PROOF,
+        _ => POLISH_IMPROVED,
+    };
+    let code = language.trim();
+    if code.is_empty() {
+        return format!("{rules} {POLISH_COMMON}");
+    }
+    let name = LANGUAGE_NAMES
+        .iter()
+        .find(|(known, _)| *known == code)
+        .map_or_else(
+            || format!("the language with code \"{code}\""),
+            |(_, name)| (*name).to_string(),
+        );
+    format!("{rules} The text is in {name}; use correct {name} words and spelling. {POLISH_COMMON}")
+}
+
 /// How much the chat model may change dictated text.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Level {
@@ -345,22 +397,19 @@ pub async fn polish(
         .filter(|model| !model.is_empty())
         .ok_or_else(|| AppError::Message("model is not set".into()))?;
     let key = db.get_meta(llm::LLM_API_KEY)?;
-    let (rules, user) = match level {
-        Level::Context => (
-            POLISH_CONTEXT,
-            format!(
-                "<before>\n{before}\n</before>\n\n<after>\n{after}\n</after>\n\n<dictated>\n{dictated}\n</dictated>"
-            ),
+    let user = match level {
+        Level::Context => format!(
+            "<before>\n{before}\n</before>\n\n<after>\n{after}\n</after>\n\n<dictated>\n{dictated}\n</dictated>"
         ),
-        Level::Proofread => (POLISH_PROOF, format!("<dictated>\n{dictated}\n</dictated>")),
-        _ => (POLISH_IMPROVED, format!("<dictated>\n{dictated}\n</dictated>")),
+        _ => format!("<dictated>\n{dictated}\n</dictated>"),
     };
+    let rules = polish_rules(level, &db.get_meta(SPEECH_LANGUAGE)?.unwrap_or_default());
     let raw = llm::complete(
         http,
         &base,
         key.as_deref(),
         &model,
-        &format!("{rules} {POLISH_COMMON}"),
+        &rules,
         &user,
         POLISH_TIMEOUT,
     )
@@ -1083,6 +1132,17 @@ mod tests {
         let rewrite = "Sovimme, että julkaisua siirretään.";
         assert!(kept_share(heard, rewrite) < Level::Improved.min_kept());
         assert!(kept_share("", "anything") >= 1.0);
+    }
+
+    #[test]
+    fn a_chosen_language_is_named_to_the_chat_model() {
+        let detect = polish_rules(Level::Improved, "");
+        assert!(detect.starts_with(POLISH_IMPROVED) && detect.ends_with(POLISH_COMMON));
+        assert!(!detect.contains("The text is in"));
+        let finnish = polish_rules(Level::Proofread, "fi");
+        assert!(finnish.starts_with(POLISH_PROOF));
+        assert!(finnish.contains("The text is in Finnish; use correct Finnish words"));
+        assert!(polish_rules(Level::Context, "ja").contains("the language with code \"ja\""));
     }
 
     #[test]

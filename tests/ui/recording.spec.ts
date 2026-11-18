@@ -110,14 +110,23 @@ test("recording settings list the models, download one, and pick the microphone"
   await expect(page.locator("#settings-status")).toHaveText("Parakeet v3 is ready.");
   await expect(parakeet.locator(".model-badge")).toHaveText("In use");
   await expect(parakeet.locator("button", { hasText: "Remove" })).toBeVisible();
-  await expect(page.locator("#speech-local-language-row")).toBeHidden();
+  const language = page.locator("#speech-language");
+  await expect(language).toHaveValue("");
+  await expect(page.locator("#speech-language-hint")).toContainText("finds the language by itself");
   await canary.locator("button", { hasText: "Use" }).click();
   await expect(canary).toHaveAttribute("data-chosen", "true");
   await expect(canary.locator(".model-badge")).toHaveText("Chosen, not downloaded");
   await expect(parakeet.locator(".model-badge")).toHaveText("Downloaded");
-  await expect(page.locator("#speech-local-language-row")).toBeVisible();
-  await page.locator("#speech-local-language").selectOption("fi");
+  // Canary cannot detect, so it starts from this computer's language and Detect is off.
+  await expect(language).toHaveValue("en");
+  await expect(language.locator("option[value='']")).toHaveJSProperty("disabled", true);
+  await language.selectOption("fi");
   await expect(page.locator("#settings-status")).toContainText("Language saved");
+  await expect(page.locator("#speech-language-hint")).toContainText("as Finnish");
+  await parakeet.locator("button", { hasText: "Use" }).click();
+  await expect(language.locator("option[value='']")).toHaveJSProperty("disabled", false);
+  await language.selectOption("");
+  await expect(page.locator("#settings-status")).toContainText("found from the speech");
   await page.locator("#speech-device").selectOption("Headset");
   await expect(page.locator("#settings-status")).toContainText("Microphone saved");
   await page.locator("#speech-enabled").check();

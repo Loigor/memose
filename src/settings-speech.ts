@@ -37,15 +37,15 @@ export function initSpeechSettings(status: HTMLElement) {
   const serverPanel = required<HTMLElement>("#speech-server");
   const engineStatus = required<HTMLElement>("#speech-engine-status");
   const modelList = required<HTMLElement>("#speech-models");
-  const localLanguageRow = required<HTMLElement>("#speech-local-language-row");
-  const localLanguage = required<HTMLSelectElement>("#speech-local-language");
   const baseUrl = required<HTMLInputElement>("#speech-base-url");
   const where = required<HTMLElement>("#speech-where");
   const key = required<HTMLInputElement>("#speech-key");
   const keyHint = required<HTMLElement>("#speech-key-hint");
   const keyRemove = required<HTMLButtonElement>("#speech-key-remove");
   const model = required<HTMLInputElement>("#speech-model");
-  const language = required<HTMLInputElement>("#speech-language");
+  const languageRow = required<HTMLElement>("#speech-language-row");
+  const language = required<HTMLSelectElement>("#speech-language");
+  const languageHint = required<HTMLElement>("#speech-language-hint");
   const polish = required<HTMLSelectElement>("#speech-polish");
   const polishHint = required<HTMLElement>("#speech-polish-hint");
   const permissionRow = required<HTMLElement>("#speech-permission");
@@ -58,12 +58,54 @@ export function initSpeechSettings(status: HTMLElement) {
   let progressShare: number | null = null;
   let last: SpeechSettings | null = null;
 
-  for (const [code, name] of speechLanguages) {
+  const languageOption = (code: string, name: string) => {
     const option = document.createElement("option");
     option.value = code;
     option.textContent = name;
-    localLanguage.append(option);
-  }
+    return option;
+  };
+  /** The language this computer is set to, when the built-in models know it. */
+  const homeLanguage = () => {
+    const code = navigator.language.slice(0, 2).toLowerCase();
+    return speechLanguages.some(([known]) => known === code) ? code : "en";
+  };
+  const languageName = (code: string) => speechLanguages.find(([known]) => known === code)?.[1] ?? code;
+
+  const paintLanguage = (settings: SpeechSettings) => {
+    const chosen = settings.engine.models.find((item) => item.id === settings.engine.model);
+    const needsOne = settings.source === "local" && Boolean(chosen?.needsLanguage);
+    const saved = settings.language;
+    const options = [
+      languageOption("", "Detect"),
+      ...speechLanguages.map(([code, name]) => languageOption(code, name)),
+    ];
+    // A code typed for a speech server before this list existed stays choosable.
+    if (saved && !speechLanguages.some(([code]) => code === saved)) {
+      options.push(languageOption(saved, saved));
+    }
+    options[0].disabled = needsOne;
+    language.replaceChildren(...options);
+    language.value = saved;
+    languageRow.hidden = settings.source === "off";
+    const improves = settings.polishReady
+      ? saved
+        ? ` Text improvement is told the words are ${languageName(saved)}.`
+        : ""
+      : "";
+    if (settings.source === "server") {
+      languageHint.textContent = saved
+        ? `Sent to the speech server with each piece of sound.${improves}`
+        : "The speech server finds the language by itself.";
+    } else if (needsOne) {
+      languageHint.textContent = saved
+        ? `${chosen?.name ?? "This model"} writes what it hears as ${languageName(saved)}.${improves}`
+        : `${chosen?.name ?? "This model"} cannot find the language by itself, so it uses English until you pick one.`;
+    } else {
+      languageHint.textContent = saved
+        ? `${chosen?.name ?? "The model"} finds the language by itself.${improves || " Choose Detect if you switch languages."}`
+        : `${chosen?.name ?? "The model"} finds the language by itself.`;
+    }
+  };
 
   const paintPermission = (microphone: MicrophonePermission) => {
     const { access, borrowed } = microphone;
@@ -146,7 +188,9 @@ export function initSpeechSettings(status: HTMLElement) {
       use.type = "button";
       use.textContent = "Use";
       use.addEventListener("click", () => {
-        save({ localModel: item.id }, `${item.name} will be used from the next recording.`);
+        // A model that cannot find the language starts from this computer's language.
+        const language = item.needsLanguage && !settings.language ? { language: homeLanguage() } : {};
+        save({ localModel: item.id, ...language }, `${item.name} will be used from the next recording.`);
       });
       actions.append(use);
     }
@@ -198,10 +242,6 @@ export function initSpeechSettings(status: HTMLElement) {
     modelList.replaceChildren(...engine.models.map((item) => modelCard(settings, item)));
     modelList.hidden = !engine.supported;
     const chosen = engine.models.find((item) => item.id === engine.model);
-    localLanguageRow.hidden = !chosen?.needsLanguage;
-    // The models that need a language start from this computer's language.
-    const preferred = settings.language || navigator.language.slice(0, 2).toLowerCase();
-    localLanguage.value = speechLanguages.some(([code]) => code === preferred) ? preferred : "en";
     if (!engine.supported) {
       engineStatus.textContent =
         "The built-in recognizers are not available for this computer. Use a speech server instead.";
@@ -248,7 +288,6 @@ export function initSpeechSettings(status: HTMLElement) {
     keyHint.textContent = settings.hasKey ? "A key is saved on this computer." : "No key saved.";
     keyRemove.hidden = !settings.hasKey;
     model.value = settings.model;
-    language.value = settings.language;
     if (!settings.serverHost) {
       where.textContent = "No server is set yet.";
     } else if (settings.serverLocal) {
@@ -257,6 +296,7 @@ export function initSpeechSettings(status: HTMLElement) {
       where.textContent = `Sound is sent to ${settings.serverHost} while you record.`;
     }
     paintEngine(settings);
+    paintLanguage(settings);
     paintPermission(settings.microphone);
   };
 
@@ -335,7 +375,6 @@ export function initSpeechSettings(status: HTMLElement) {
         baseUrl: baseUrl.value.trim(),
         key: typed === "" ? null : typed,
         model: model.value.trim(),
-        language: language.value.trim(),
       },
       "Saved.",
     );
@@ -362,8 +401,13 @@ export function initSpeechSettings(status: HTMLElement) {
     save({ key: "" }, "Key removed.");
   });
 
-  localLanguage.addEventListener("change", () => {
-    save({ language: localLanguage.value }, "Language saved. It is used from the next recording.");
+  language.addEventListener("change", () => {
+    save(
+      { language: language.value },
+      language.value === ""
+        ? "The language is found from the speech."
+        : "Language saved. It is used from the next recording.",
+    );
   });
 
   void listen<Progress>("speech-download", (event) => {
