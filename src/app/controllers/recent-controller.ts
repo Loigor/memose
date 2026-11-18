@@ -193,9 +193,10 @@ export function createRecentController(
       pin.setAttribute("aria-pressed", String(item.pinned));
       pin.addEventListener("click", (event) => {
         event.stopPropagation();
+        const pinning = !item.pinned;
         void context.backend
-          .setPinned(item.id, !item.pinned, false)
-          .then(() => refresh())
+          .setPinned(item.id, pinning, false)
+          .then(() => (pinning ? dismiss() : refresh()))
           .catch((error: unknown) => {
             console.error(error);
           });
@@ -303,6 +304,7 @@ export function createRecentController(
   function resetForComposer() {
     state.hidden = false;
     state.expanded = false;
+    showSearch(false);
   }
 
   function reveal() {
@@ -312,6 +314,7 @@ export function createRecentController(
   function collapseForFlush() {
     state.expanded = false;
     state.hidden = false;
+    showSearch(false);
   }
 
   recentSearch.addEventListener("input", () => {

@@ -935,3 +935,91 @@ mod tests {
         assert_eq!(monitor_key(None, 1920, 0), "display:1920,0");
     }
 }
+
+/// Area two rectangles `(x, y, w, h)` share.
+fn shared_area(a: (i32, i32, i32, i32), b: (i32, i32, i32, i32)) -> i64 {
+    let w = overlap_span(a.0, a.2, b.0, b.0.saturating_add(b.2)).max(0);
+    let h = overlap_span(a.1, a.3, b.1, b.1.saturating_add(b.3)).max(0);
+    i64::from(w) * i64::from(h)
+}
+
+/// Moves `card` so it covers as little of the `taken` cards as it can while staying in
+/// `area`: beside, above, or below one of them, whichever is nearest among the least
+/// covering. All rectangles are `(x, y, w, h)` of the visible card. A card that covers
+/// nothing stays where it is.
+pub(super) fn clear_of_cards(
+    card: (i32, i32, i32, i32),
+    area: (i32, i32, i32, i32),
+    taken: &[(i32, i32, i32, i32)],
+    gap: i32,
+) -> (i32, i32) {
+    let (x, y, w, h) = card;
+    let covered = |cx: i32, cy: i32| -> i64 {
+        taken
+            .iter()
+            .map(|other| shared_area((cx, cy, w, h), *other))
+            .sum()
+    };
+    if covered(x, y) == 0 {
+        return (x, y);
+    }
+    let (ax, ay, aw, ah) = area;
+    let inside = |cx: i32, cy: i32| -> (i32, i32) {
+        let max_x = (ax + aw - w).max(ax);
+        let max_y = (ay + ah - h).max(ay);
+        (cx.clamp(ax, max_x), cy.clamp(ay, max_y))
+    };
+    let mut candidates = vec![(x, y)];
+    for &(tx, ty, tw, th) in taken {
+        candidates.push(inside(tx + tw + gap, y));
+        candidates.push(inside(tx - w - gap, y));
+        candidates.push(inside(x, ty + th + gap));
+        candidates.push(inside(x, ty - h - gap));
+    }
+    candidates
+        .into_iter()
+        .min_by_key(|&(cx, cy)| {
+            let distance = i64::from(cx - x).pow(2) + i64::from(cy - y).pow(2);
+            (covered(cx, cy), distance)
+        })
+        .unwrap_or((x, y))
+}
+
+#[cfg(test)]
+mod clear_of_cards_tests {
+    use super::clear_of_cards;
+
+    const AREA: (i32, i32, i32, i32) = (0, 0, 3000, 2000);
+
+    #[test]
+    fn a_card_that_covers_nothing_stays() {
+        let taken = [(0, 0, 500, 500)];
+        assert_eq!(
+            clear_of_cards((600, 0, 400, 400), AREA, &taken, 8),
+            (600, 0)
+        );
+    }
+
+    #[test]
+    fn a_card_on_top_of_a_pinned_one_moves_beside_it() {
+        // The pinned card sits where the new memo would open; there is room on its left.
+        let taken = [(1500, 300, 1200, 1600)];
+        let (x, y) = clear_of_cards((1500, 300, 1200, 1600), AREA, &taken, 8);
+        assert_eq!((x, y), (1500 - 1200 - 8, 300));
+    }
+
+    #[test]
+    fn with_no_free_room_it_takes_the_least_covering_spot() {
+        let taken = [(0, 0, 3000, 1000)];
+        // Only the lower half of the screen is free; the card fits there.
+        assert_eq!(
+            clear_of_cards((100, 100, 800, 900), AREA, &taken, 8),
+            (100, 1008)
+        );
+        // A card taller than the free part still ends as low as the screen allows.
+        assert_eq!(
+            clear_of_cards((100, 100, 800, 1500), AREA, &taken, 8),
+            (100, 500)
+        );
+    }
+}

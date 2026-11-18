@@ -538,6 +538,7 @@ export function createSessionController(
       }
       await look.saveImmediately(note.id);
       await context.backend.setPinned(note.id, true, !pinnedNoteId);
+      recent.dismiss();
       if (!pinnedNoteId) {
         state.editingId = null;
         state.draftId = null;
