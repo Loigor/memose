@@ -293,3 +293,53 @@ html[data-edge="right"] #tab-menu {
   left: auto;
   right: 32px;
 }
+
+/* A memo held over a tab: the tab grows to twice its size over the hold time, then the
+   memo moves to it. Top and bottom strips grow it in height, side strips in width. */
+html.is-aiming #row {
+  height: 48px;
+}
+
+html.is-aiming #tabs {
+  align-items: flex-start;
+}
+
+html.is-aiming[data-edge="bottom"] #tabs {
+  align-items: flex-end;
+}
+
+html.is-aiming .pin-tab {
+  height: 20px;
+  transition:
+    height 750ms linear,
+    width 750ms linear,
+    line-height 750ms linear,
+    box-shadow 140ms ease;
+}
+
+html.is-aiming .pin-tab.pin-tab-aim {
+  height: 40px;
+  line-height: 40px;
+}
+
+html.is-aiming[data-edge="left"] #row,
+html.is-aiming[data-edge="right"] #row {
+  width: 52px;
+  height: 100%;
+}
+
+html.is-aiming[data-edge="right"] #tabs {
+  align-items: flex-end;
+}
+
+html.is-aiming[data-edge="left"] .pin-tab,
+html.is-aiming[data-edge="right"] .pin-tab {
+  width: 24px;
+  height: auto;
+  line-height: 1;
+}
+
+html.is-aiming[data-edge="left"] .pin-tab.pin-tab-aim,
+html.is-aiming[data-edge="right"] .pin-tab.pin-tab-aim {
+  width: 48px;
+}

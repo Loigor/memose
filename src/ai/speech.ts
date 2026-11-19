@@ -210,16 +210,34 @@ export function stopSpeech() {
   void invoke("speech_stop");
 }
 
-/** Lets the chat model tidy dictated text. `before` and `after` are the note around it. */
-export function polishSpeech(before: string, after: string, dictated: string, level: number): Promise<string> {
-  return invoke<string>("speech_polish", { before, after, dictated, level });
+/** The lowest effort that also removes a first try the speaker said again. */
+export const CORRECTIONS_LEVEL = 3;
+
+/**
+ * Lets the chat model tidy dictated text. `before` and `after` are the note around it.
+ * With `corrections`, a first try said again is removed; `later` is what was said right after,
+ * and an empty reply means all of `dictated` was said again there.
+ */
+export function polishSpeech(
+  before: string,
+  after: string,
+  dictated: string,
+  level: number,
+  corrections = false,
+  later = "",
+): Promise<string> {
+  return invoke<string>("speech_polish", { before, after, dictated, level, corrections, later });
 }
 
 /** Effort levels for dictated text, from as heard to proof-read with the memo as context. */
 export const effortLevels = [
   { level: 1, name: "Low", hint: "As heard. No chat model." },
   { level: 2, name: "Medium", hint: "Punctuation, capitals, and clear mistakes. Dialect stays." },
-  { level: 3, name: "High", hint: "Medium, then spelling and grammar into standard written language." },
+  {
+    level: 3,
+    name: "High",
+    hint: "Medium, then spelling and grammar into standard written language. A sentence you say again replaces the first try.",
+  },
   { level: 4, name: "Max", hint: "High, using the memo around the words for names and terms." },
 ] as const;
 
@@ -243,14 +261,20 @@ export function saveEffort(level: number): Promise<void> {
   return invoke("save_speech_settings", { polishLevel: level });
 }
 
-/** Places the tip above `anchor`, or below it when there is no room above. */
+/** Places the tip right of `anchor`, centred on it; under it when there is no room on the right. */
 function placeTip(tip: HTMLElement, anchor: HTMLElement) {
   const rect = anchor.getBoundingClientRect();
   const width = tip.offsetWidth;
-  const left = Math.min(Math.max(8, rect.left + rect.width / 2 - width / 2), window.innerWidth - width - 8);
-  const above = rect.top - tip.offsetHeight - 6;
-  tip.style.left = `${Math.max(8, left)}px`;
-  tip.style.top = `${above >= 4 ? above : rect.bottom + 6}px`;
+  const height = tip.offsetHeight;
+  if (rect.right + 8 + width <= window.innerWidth - 8) {
+    const top = rect.top + rect.height / 2 - height / 2;
+    tip.style.left = `${rect.right + 8}px`;
+    tip.style.top = `${Math.max(4, Math.min(top, window.innerHeight - height - 4))}px`;
+    return;
+  }
+  const below = rect.bottom + 6;
+  tip.style.left = `${Math.max(8, Math.min(rect.left, window.innerWidth - width - 8))}px`;
+  tip.style.top = `${below + height <= window.innerHeight - 4 ? below : Math.max(4, rect.top - height - 6)}px`;
 }
 
 /**
@@ -304,7 +328,7 @@ export function effortSlider(value: number, onChange: (level: number) => void): 
       document.body.append(tip);
     }
     tip.hidden = false;
-    placeTip(tip, track);
+    placeTip(tip, box);
   };
   const paint = () => {
     const found = effortLevels.find((item) => item.level === current) ?? effortLevels[1];
@@ -317,7 +341,7 @@ export function effortSlider(value: number, onChange: (level: number) => void): 
     track.setAttribute("aria-valuetext", `${found.name}: ${found.hint}`);
     box.style.setProperty("--effort-at", String(top > 1 ? (current - 1) / (top - 1) : 0));
     if (!tip.hidden) {
-      placeTip(tip, track);
+      placeTip(tip, box);
     }
   };
   const set = (next: number) => {

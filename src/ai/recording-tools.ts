@@ -4,9 +4,10 @@
  * A new text is shown as a word diff to accept or decline.
  */
 
-import { acceptWords, locateWords, wordDiff } from "../editor/recording-words";
+import { acceptWords, findWords, locateWords, wordDiff } from "../editor/recording-words";
 import { findTextRanges, keepScroll, setHighlight } from "../editor/view-keep";
 import {
+  CORRECTIONS_LEVEL,
   DEFAULT_LEVEL,
   effortName,
   effortSlider,
@@ -54,6 +55,8 @@ type ToolState = {
 const known = new Map<string, ToolState | null>();
 /** Text saved for a recording before its player was looked up. */
 const fresh = new Map<string, string>();
+/** Recordings being looked up, so a redraw meanwhile does not look them up again. */
+const looking = new Set<string>();
 
 /** Remembers the words a new recording put into the memo, so its snippet is right at once. */
 export function rememberRecordingText(name: string, text: string) {
@@ -137,6 +140,9 @@ export function mountRecordingTools(target: RecordingToolsTarget) {
         }
       }
       tools.append(el("p", "rec-note", `Re-analyzed (${effort} effort):`), diff);
+      if (old === "") {
+        tools.append(el("p", "rec-note", "Its words were not found in the memo. Accept adds this text above it."));
+      }
       const actions = el("div", "rec-actions");
       actions.append(
         button("rec-accept", old === next ? "Keep" : "Accept", () => {
@@ -201,7 +207,9 @@ export function mountRecordingTools(target: RecordingToolsTarget) {
     paintAll();
     try {
       const memo = target.text();
-      const old = locateWords(memo, state.info.text, name) ? state.info.text : "";
+      // The words as they are in the memo now, also after they were edited.
+      const found = findWords(memo, state.info.text || state.info.heard, name);
+      const old = found ? memo.slice(found.start, found.end) : "";
       let next = (await transcribeRecording(name)).trim();
       if (level > 1 && next !== "") {
         const place = old ? locateWords(memo, old, name) : null;
@@ -211,7 +219,8 @@ export function mountRecordingTools(target: RecordingToolsTarget) {
         const end = place ? place.end : lineStart;
         const before = memo.slice(Math.max(0, start - CONTEXT_BEFORE), start);
         const after = memo.slice(end, end + CONTEXT_AFTER);
-        next = (await polishSpeech(before, after, next, level)).trim();
+        // At High and Max a sentence said again keeps only its last version.
+        next = (await polishSpeech(before, after, next, level, level >= CORRECTIONS_LEVEL)).trim();
       }
       state.proposal = next === "" ? null : { old, next, level };
       if (next === "") {
@@ -280,12 +289,18 @@ export function mountRecordingTools(target: RecordingToolsTarget) {
     scheduled = false;
     const found = figures();
     const unknown = [...new Set(found.map((figure) => figure.dataset.media ?? ""))].filter(
-      (name) => name !== "" && !known.has(name),
+      (name) => name !== "" && !known.has(name) && !looking.has(name),
     );
     if (unknown.length > 0) {
+      for (const name of unknown) {
+        looking.add(name);
+      }
       try {
         const infos = await recordingsInfo(unknown);
         for (const name of unknown) {
+          if (known.has(name)) {
+            continue;
+          }
           const info = infos.find((item) => item.name === name);
           const text = fresh.get(name);
           fresh.delete(name);
@@ -304,6 +319,10 @@ export function mountRecordingTools(target: RecordingToolsTarget) {
         }
       } catch {
         return;
+      } finally {
+        for (const name of unknown) {
+          looking.delete(name);
+        }
       }
     }
     for (const figure of found) {

@@ -15,6 +15,5 @@ pub use pin_tabs::{tab_at, PinTabHit, PinTabs};
 pub use sync::limits;
 pub use sync::{
     create_space, delete_remote_memo, list_spaces, probe, request_keep_local, request_materialize,
-    request_retry,
-    request_sync, space_uid, start_worker, ApiFlavor, Job,
+    request_retry, request_sync, space_uid, start_worker, ApiFlavor, Job,
 };

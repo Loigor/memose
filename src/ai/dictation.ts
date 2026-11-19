@@ -1,6 +1,7 @@
 /** The record button of a memo: speech goes into the memo at the cursor and is tidied while it arrives. */
 
 import {
+  afterMediaLine,
   applyPolish,
   insertLine,
   joinDictation,
@@ -21,6 +22,7 @@ import {
   stopSpeech,
   watchSpeech,
   type SpeechDone,
+  CORRECTIONS_LEVEL,
 } from "./speech";
 import { findTextRanges, keepScroll, revealRect, setHighlight } from "../editor/view-keep";
 import { rememberRecordingText } from "./recording-tools";
@@ -52,6 +54,8 @@ const PARAGRAPH_PAUSE_MS = 2500;
 const PARAGRAPH_BREAK = "\n\n";
 /** The quick pass on the paragraph still being spoken never goes past this level. */
 const LIVE_LEVEL = 2;
+/** How much of what was said after a paragraph its full pass sees, to catch a correction. */
+const LATER_CHARS = 400;
 
 /** One recording: its words in the memo and the passes that improve them. */
 type Take = {
@@ -107,7 +111,7 @@ export function mountDictation(anchor: HTMLElement, target: DictationTarget) {
   live.append(pill);
   target.host.append(live);
 
-  /** The effort slider beside the listening mark. Its level is saved for the next recording too. */
+  /** The effort slider under the listening mark. Its level is saved for the next recording too. */
   let slider: HTMLElement | null = null;
   const setSlider = (t: Take) => {
     slider?.remove();
@@ -222,7 +226,8 @@ export function mountDictation(anchor: HTMLElement, target: DictationTarget) {
       return;
     }
     let x = rect.right - host.left + 6;
-    let y = rect.top - host.top + (rect.height - live.offsetHeight) / 2;
+    // The pill sits on the line of the words; the slider hangs under it.
+    let y = rect.top - host.top + (rect.height - pill.offsetHeight) / 2;
     if (x + live.offsetWidth > host.width - 6) {
       // No room after the words: the mark goes under them, so it never covers text.
       x = rect.right - host.left - live.offsetWidth;
@@ -368,6 +373,11 @@ export function mountDictation(anchor: HTMLElement, target: DictationTarget) {
         const base = current.replace(/\s+$/, "");
         const next = base === "" ? text : `${base}\n${text}`;
         write(t, next, next.length - text.length, next.length);
+      } else if (t.span.start > 0 && afterMediaLine(after, t.span.start)) {
+        // Words after a recording's line go on a line of their own, so the line stays a recording.
+        const head = `${after.slice(0, t.span.start).replace(/[ \t]+$/, "")}\n`;
+        const words = after.slice(t.span.start, t.span.end).trimStart();
+        write(t, `${head}${words}${after.slice(t.span.end)}`, head.length, head.length + words.length);
       } else if (t.span.start > 0 && !/[\s([{"'“‘-]/.test(after[t.span.start - 1])) {
         write(t, `${after.slice(0, t.span.start)} ${after.slice(t.span.start)}`, t.span.start + 1, t.span.end + 1);
       } else if (take === t) {
@@ -426,14 +436,27 @@ export function mountDictation(anchor: HTMLElement, target: DictationTarget) {
           ? `${current.slice(Math.max(0, place.start - CONTEXT_BEFORE), place.start)}${lead}${lead ? PARAGRAPH_BREAK : ""}${head}`
           : "";
         const after = place ? `${trail}${current.slice(place.end, place.end + CONTEXT_AFTER)}` : "";
-        const reply = await polishSpeech(before, after, tail, passLevel);
-        // A reply far longer than what was said is the model writing on its own. It is dropped.
-        if (reply.trim() === "" || reply.length > tail.length * 2 + 60) {
-          continue;
-        }
+        // At High and Max a sentence said again replaces its first try. The full pass also
+        // sees the start of what was said after the paragraph, which may say its end again.
+        const corrections = t.level >= CORRECTIONS_LEVEL;
+        const later = isFinal && corrections ? trail.slice(0, LATER_CHARS) : "";
+        const reply = await polishSpeech(before, after, tail, passLevel, corrections, later);
         const now = paragraphs(t);
         const latest = now[index];
         if (latest === undefined) {
+          continue;
+        }
+        if (reply.trim() === "" && isFinal && later !== "" && latest === paragraph && now.length > 1) {
+          // The whole paragraph was said again in the next one.
+          now.splice(index, 1);
+          if (!writeParagraphs(t, now)) {
+            break;
+          }
+          dropParagraph(t, index);
+          continue;
+        }
+        // A reply far longer than what was said is the model writing on its own. It is dropped.
+        if (reply.trim() === "" || reply.length > tail.length * 2 + 60) {
           continue;
         }
         const next = isFinal ? (latest === paragraph ? reply.trim() : null) : applyPolish(latest, head, tail, reply);
@@ -460,6 +483,18 @@ export function mountDictation(anchor: HTMLElement, target: DictationTarget) {
         finishIfEnded(t);
       }
     }
+  }
+
+  /** Renumbers the waiting passes after paragraph `index` was removed. */
+  function dropParagraph(t: Take, index: number) {
+    t.finalQueue = t.finalQueue.filter((item) => item !== index).map((item) => (item > index ? item - 1 : item));
+    const passed = new Map<number, string>();
+    for (const [at, text] of t.passed) {
+      if (at !== index) {
+        passed.set(at > index ? at - 1 : at, text);
+      }
+    }
+    t.passed = passed;
   }
 
   function finishIfEnded(t: Take) {

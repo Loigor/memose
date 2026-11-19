@@ -57,6 +57,14 @@ pub fn show_composer(app: &tauri::AppHandle) {
 }
 
 pub fn show_fresh_memo(app: &tauri::AppHandle) {
+    // A new memo would replace the one being dictated into: bring that one forward instead.
+    if composer_open(app) && super::recording_in(app, WINDOW) {
+        if let Some(window) = app.get_webview_window(WINDOW) {
+            let _ = window.show();
+            let _ = window.set_focus();
+        }
+        return;
+    }
     if composer_open(app) {
         cycle_composer(app);
         return;
@@ -92,6 +100,10 @@ pub fn hide_memos(app: &tauri::AppHandle) {
 }
 
 pub(super) fn hide_and_save(app: &tauri::AppHandle, from_blur: bool) {
+    // The memo being dictated into stays open until the recording ends.
+    if super::recording_in(app, WINDOW) {
+        return;
+    }
     let state = app.state::<AppState>();
     if state.hiding.swap(true, Ordering::SeqCst) {
         return;

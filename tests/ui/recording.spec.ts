@@ -289,6 +289,54 @@ test("a recording shows its words and can be re-analyzed into a diff to accept",
   await expect(page.locator("#blocks .rec-snippet")).toHaveText("“We ship on Thursday.”");
 });
 
+test("accepting a re-analysis replaces words that were edited after recording", async ({ page }) => {
+  await openComposer(page, {
+    draft: { content: `Notes\nwe ship this friday!\n${recLine}\nEnd` },
+    speech: { ...ready, recordings: { [rec]: { text: "we ship friday" } }, transcribe: "We ship on Thursday." },
+  });
+  const tools = page.locator("#blocks .rec-tools");
+  await tools.locator("button", { hasText: /^Re-analyze$/ }).click();
+  await expect(tools.locator(".rec-diff del").first()).toBeVisible();
+  await expect(tools.locator(".rec-note")).toHaveCount(1);
+  await tools.locator("button", { hasText: "Accept" }).click();
+  await expect.poll(async () => lastDraft(page)).toBe(`Notes\nWe ship on Thursday.\n${recLine}\nEnd`);
+});
+
+test("a recording made right after another starts on its own line, and each re-analysis replaces its own words", async ({
+  page,
+}) => {
+  await openComposer(page, {
+    draft: { content: "Notes" },
+    speech: {
+      ...ready,
+      keepAudio: true,
+      polishReady: true,
+      polishReplies: { "first dictation": "First dictation.", "second dictation": "Second dictation." },
+      transcribe: "Brand new text.",
+      audio: "![voice-{n}.wav](memose-media/1234567{n}-voice-{n}.wav)",
+    },
+  });
+  await page.locator("#blocks .md-lines").first().click();
+  await page.keyboard.press("End");
+  await page.keyboard.press("Enter");
+  const record = page.locator("#rec-anchor .rec-toggle");
+  const one = "![voice-1.wav](memose-media/12345671-voice-1.wav)";
+  const two = "![voice-2.wav](memose-media/12345672-voice-2.wav)";
+  await record.click();
+  await chunk(page, "speech-1", 0, "first dictation");
+  await record.click();
+  await expect(page.locator("#blocks .rec-tools")).toHaveCount(1);
+  // The caret is after the first recording. The next words go under it, not on its line.
+  await record.click();
+  await chunk(page, "speech-2", 0, "second dictation");
+  await record.click();
+  await expect.poll(async () => lastDraft(page)).toBe(`Notes\nFirst dictation.\n${one}\nSecond dictation.\n${two}`);
+  const tools = page.locator("#blocks .rec-tools").first();
+  await tools.locator("button", { hasText: /^Re-analyze$/ }).click();
+  await tools.locator("button", { hasText: "Accept" }).click();
+  await expect.poll(async () => lastDraft(page)).toBe(`Notes\nBrand new text.\n${one}\nSecond dictation.\n${two}`);
+});
+
 test("declining a re-analysis leaves the memo as it was", async ({ page }) => {
   await openComposer(page, {
     draft: { content: `we ship friday\n${recLine}` },
@@ -466,6 +514,47 @@ test("a long pause starts a new paragraph, and each ended paragraph gets the ful
   expect(levels).toContain(2);
   expect(levels).toContain(3);
 });
+
+for (const level of [2, 3] as const) {
+  test(`a sentence said again after a pause ${level >= 3 ? "replaces" : "does not replace"} its first try at level ${level}`, async ({
+    page,
+  }) => {
+    await openComposer(page, {
+      draft: { content: "" },
+      speech: {
+        ...ready,
+        polishReady: true,
+        polishLevel: level,
+        polishReplies: {
+          "what is the worst time": "What is the worst? Time.",
+          "when is the worst time": "When is the worst time?",
+          // The full pass of the first paragraph sees the second one say it again.
+          "What is the worst? Time.|when is the worst time": "",
+        },
+      },
+    });
+    await page.locator("#blocks .md-lines").first().click();
+    const record = page.locator("#rec-anchor .rec-toggle");
+    await record.click();
+    await chunk(page, "speech-1", 0, "what is the worst time");
+    await expect(page.locator("#blocks")).toContainText("What is the worst? Time.");
+    await chunk(page, "speech-1", 1, "when is the worst time", 3200);
+    await record.click();
+    if (level >= 3) {
+      await expect.poll(async () => lastDraft(page)).toBe("When is the worst time?");
+    } else {
+      await expect.poll(async () => lastDraft(page)).toBe("What is the worst? Time.\n\nWhen is the worst time?");
+    }
+    const sent = await page.evaluate(() =>
+      window.__memoseHarness
+        ?.getInvocations()
+        .filter((item) => item.cmd === "speech_polish")
+        .map((item) => item.args as { corrections: boolean; later: string }),
+    );
+    expect(sent?.every((args) => args.corrections === level >= 3)).toBe(true);
+    expect(sent?.some((args) => args.later === "when is the worst time")).toBe(level >= 3);
+  });
+}
 
 test("the slider under the listening mark changes the level and keeps it for the next recording", async ({ page }) => {
   await openComposer(page, {

@@ -1145,7 +1145,9 @@ pub async fn llm_ask(
     }
     // An empty memo is fine: the prompt then asks for new text. An empty selection is not.
     if context.is_some() && text.trim().is_empty() {
-        return Err(AppError::Message("the selected lines have no text to send".into()));
+        return Err(AppError::Message(
+            "the selected lines have no text to send".into(),
+        ));
     }
     let (base, key) = llm_server(&state)?;
     let model = state
@@ -1557,6 +1559,7 @@ pub fn speech_remove_model(
 #[tauri::command]
 pub async fn speech_start(
     app: AppHandle,
+    window: tauri::WebviewWindow,
     state: State<'_, AppState>,
     purpose: speech::Purpose,
     note_id: Option<String>,
@@ -1635,6 +1638,7 @@ pub async fn speech_start(
     let options = speech::StartOptions {
         purpose,
         note_id,
+        window: window.label().to_string(),
         keep_audio,
         device: state
             .db
@@ -1730,6 +1734,8 @@ pub async fn speech_polish(
     after: String,
     dictated: String,
     level: u8,
+    corrections: Option<bool>,
+    later: Option<String>,
 ) -> Result<String, AppError> {
     if dictated.trim().is_empty() {
         return Ok(String::new());
@@ -1738,9 +1744,13 @@ pub async fn speech_polish(
         &state.http,
         &state.db,
         speech::Level::from_number(level),
-        &before,
-        &after,
         &dictated,
+        speech::PolishContext {
+            before: &before,
+            after: &after,
+            corrections: corrections.unwrap_or(false),
+            later: later.as_deref().unwrap_or(""),
+        },
     )
     .await
 }

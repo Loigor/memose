@@ -92,6 +92,7 @@ export type SpeechSeed = {
   /** What the mocked chat model makes of dictated text. Missing leaves it as heard. */
   polishReply?: string;
   /** Replies by the exact text sent, for tests with several passes. */
+  /** Reply per dictated text; a "dictated|later" key answers a pass that saw the words said after it. */
   polishReplies?: Record<string, string>;
   /** How long the mocked chat model takes per pass, in ms. */
   polishDelayMs?: number;
@@ -797,7 +798,10 @@ function installBrowserHarness(seed: BrowserSeed) {
         }
         const replies = seed.speech?.polishReplies;
         if (replies) {
-          return replies[String(a.dictated ?? "")] ?? String(a.dictated ?? "");
+          // "dictated|later" answers a pass that also saw what was said after the text.
+          const later = String(a.later ?? "");
+          const withLater = later ? replies[`${String(a.dictated ?? "")}|${later}`] : undefined;
+          return withLater ?? replies[String(a.dictated ?? "")] ?? String(a.dictated ?? "");
         }
         return seed.speech?.polishReply ?? String(a.dictated ?? "");
       }

@@ -63,7 +63,23 @@ pub(super) fn open_pinned_windows(app: &tauri::AppHandle) {
             return;
         }
     };
-    let active = active_pin_note_ids(app);
+    let mut active = active_pin_note_ids(app);
+    // The memo being dictated into goes along to the tab now shown, so it stays on screen.
+    if let Some(id) = super::recording_pin(app) {
+        if !active.contains(&id) && notes.iter().any(|note| note.id == id) {
+            let state = app.state::<AppState>();
+            if let Ok(tabs) = state.db.pin_tabs() {
+                if state
+                    .db
+                    .move_pinned_note_to_tab(&id, &tabs.active_id)
+                    .is_ok()
+                {
+                    active.insert(id);
+                    let _ = app.emit("pin-tabs-changed", ());
+                }
+            }
+        }
+    }
     let mut keep = HashSet::new();
     super::apply_switcher_policy(app);
     for note in notes {
@@ -270,10 +286,15 @@ pub fn close_pinned(app: &tauri::AppHandle, id: &str) {
 }
 
 pub(super) fn hide_pinned(app: &tauri::AppHandle) {
+    let recording = super::recording_pin(app);
     for (label, window) in app.webview_windows() {
         let Some(id) = label.strip_prefix("pin-") else {
             continue;
         };
+        // The memo being dictated into stays on screen, even with pinned memos turned off.
+        if recording.as_deref() == Some(id) {
+            continue;
+        }
         if window.is_visible().unwrap_or(false) {
             save_pin_frame(app, id, &window);
         }

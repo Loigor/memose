@@ -338,9 +338,15 @@ async fn wants_edit(
     empty: bool,
 ) -> bool {
     let (rules, question) = if empty {
-        (EMPTY_CLASSIFY_RULES, "Does it ask for text to put in the note? YES or NO.")
+        (
+            EMPTY_CLASSIFY_RULES,
+            "Does it ask for text to put in the note? YES or NO.",
+        )
     } else {
-        (CLASSIFY_RULES, "Does it ask to change the note's text? YES or NO.")
+        (
+            CLASSIFY_RULES,
+            "Does it ask to change the note's text? YES or NO.",
+        )
     };
     let body = json!({
         "model": model,
@@ -453,7 +459,15 @@ pub async fn ask(
 ) -> Result<Reply, AppError> {
     let mode = match mode {
         Mode::Auto
-            if wants_edit(http, base, key, model, instruction, is_empty_note(text, context)).await =>
+            if wants_edit(
+                http,
+                base,
+                key,
+                model,
+                instruction,
+                is_empty_note(text, context),
+            )
+            .await =>
         {
             Mode::Edit
         }
@@ -768,7 +782,9 @@ mod tests {
         assert!(part.contains("<selected>\n- b\n</selected>"));
         assert!(part.ends_with("Request: Fix it"));
         assert!(system_prompt(Mode::Edit, true, false).contains("revised selected part"));
-        assert!(system_prompt(Mode::Ask, false, false).contains("Do not repeat or rewrite the note"));
+        assert!(
+            system_prompt(Mode::Ask, false, false).contains("Do not repeat or rewrite the note")
+        );
     }
 
     #[test]
@@ -777,9 +793,14 @@ mod tests {
         assert_eq!(prompt, "The note is empty.\n\nRequest: Write me a poem");
         assert!(is_empty_note("", None));
         assert!(!is_empty_note("", Some("whole note")));
-        assert!(system_prompt(Mode::Edit, false, true).contains("Write the text the request asks for"));
+        assert!(
+            system_prompt(Mode::Edit, false, true).contains("Write the text the request asks for")
+        );
         let sent = messages(Mode::Edit, "Write me a poem", "", None, &[]);
-        assert!(sent[0]["content"].as_str().unwrap().contains("The note is empty"));
+        assert!(sent[0]["content"]
+            .as_str()
+            .unwrap()
+            .contains("The note is empty"));
     }
 
     #[test]

@@ -143,6 +143,12 @@ export function recordingPlace(content: string, start: number, end: number): num
   return at;
 }
 
+/** True when the text before `at` on its line is a recording or other attachment. */
+export function afterMediaLine(content: string, at: number): boolean {
+  const lineStart = content.lastIndexOf("\n", at - 1) + 1;
+  return mediaLine.test(content.slice(lineStart, at).trim());
+}
+
 /** The memo with `line` put on a line of its own at `at`. Returns the text and where the line ends. */
 export function insertLine(content: string, at: number, line: string): { text: string; end: number } {
   const lead = at > 0 && content[at - 1] !== "\n" ? "\n" : "";

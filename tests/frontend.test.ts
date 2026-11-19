@@ -42,10 +42,11 @@ import {
   joinDictation,
   locateSpan,
   recordingPlace,
+  afterMediaLine,
   spanFromInsert,
   splitTail,
 } from "../src/editor/dictation-span.ts";
-import { acceptWords, locateWords, wordDiff } from "../src/editor/recording-words.ts";
+import { acceptWords, findWords, locateWords, wordDiff } from "../src/editor/recording-words.ts";
 import { highlightMarkdown } from "../src/editor/md-highlight.ts";
 import { tagAtOffset } from "../src/editor/md-tags.ts";
 import { uniqueFiles } from "../src/media/files.ts";
@@ -1312,6 +1313,35 @@ test("re-analysis replaces the recording's own words and shows a word diff", () 
     "Text\nNew words.\n![r.wav](memose-media/r.wav)",
     "words that are gone go right above the recording",
   );
+  const rec = "![r.wav](memose-media/r.wav)";
+  const edited = `Shopping list for the whole weekend.\n${rec}\nEnd`;
+  const found = findWords(edited, "for the weekend", "r.wav");
+  assert.equal(
+    found && edited.slice(found.start, found.end),
+    "for the whole weekend.",
+    "edited words are found by the words they still share",
+  );
+  assert.equal(
+    acceptWords(edited, "r.wav", "for the weekend", "for Saturday."),
+    `Shopping list for Saturday.\n${rec}\nEnd`,
+    "accepting replaces the edited words, not adds a copy",
+  );
+  const grouped = `Intro\n\nfirst words here\n![q.wav](memose-media/q.wav)\nsecond worde here\n${rec}`;
+  const second = findWords(grouped, "second words here", "r.wav");
+  assert.equal(second && grouped.slice(second.start, second.end), "second worde here");
+  assert.equal(
+    findWords(`Something else entirely\n${rec}`, "we ship friday", "r.wav"),
+    null,
+    "other text is left alone",
+  );
+  assert.equal(
+    findWords(`we ship friday\n\nTitle\n${rec}`, "we ship friday", "r.wav")?.start,
+    0,
+    "exact words come first",
+  );
+  assert.equal(afterMediaLine(`Notes\n${rec}`, 6 + rec.length), true);
+  assert.equal(afterMediaLine(`Notes\n${rec}\n`, 7 + rec.length), false);
+  assert.equal(afterMediaLine("Notes", 5), false);
   const parts = wordDiff("we ship friday", "we ship on Thursday");
   const changed = parts.filter((part) => part.kind === "hunk");
   assert.equal(changed.length, 1);

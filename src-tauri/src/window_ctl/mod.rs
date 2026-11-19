@@ -360,6 +360,17 @@ fn schedule_resign(app: &AppHandle) {
     });
 }
 
+/// True while a recording writes into the window `label`. That window is never hidden.
+pub(super) fn recording_in(app: &AppHandle, label: &str) -> bool {
+    crate::speech::recording_window(&app.state::<AppState>()).as_deref() == Some(label)
+}
+
+/// The pinned memo a running recording writes into, when it is one.
+pub(super) fn recording_pin(app: &AppHandle) -> Option<String> {
+    crate::speech::recording_window(&app.state::<AppState>())
+        .and_then(|label| label.strip_prefix("pin-").map(str::to_string))
+}
+
 fn any_window_focused(app: &AppHandle) -> bool {
     app.webview_windows()
         .values()

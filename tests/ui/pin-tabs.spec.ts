@@ -122,9 +122,18 @@ test("pin-tab-aim marks the target tab", async ({ page }) => {
   await openPinTabs(page, { pinTabs: tabs });
   await waitForListener(page, "pin-tab-aim");
   await emitEvent(page, "pin-tab-aim", ["tab-home", "hold"]);
-  await expect(page.locator(".pin-tab", { hasText: "Home" })).toHaveClass(/pin-tab-aim/);
+  const home = page.locator(".pin-tab", { hasText: "Home" });
+  await expect(home).toHaveClass(/pin-tab-aim/);
+  // The held-over tab grows to twice the others' height before the memo moves.
+  await expect(page.locator("html")).toHaveClass(/is-aiming/);
+  await expect.poll(async () => (await home.boundingBox())?.height).toBe(40);
+  const other = page.locator(".pin-tab:not(.pin-tab-aim)").first();
+  if ((await other.count()) > 0) {
+    await expect.poll(async () => (await other.boundingBox())?.height).toBe(20);
+  }
   await emitEvent(page, "pin-tab-aim", ["tab-home", "ready"]);
   await expect(page.locator(".pin-tab", { hasText: "Home" })).toHaveClass(/pin-tab-ready/);
   await emitEvent(page, "pin-tab-aim", ["tab-home", "off"]);
   await expect(page.locator(".pin-tab", { hasText: "Home" })).not.toHaveClass(/pin-tab-aim/);
+  await expect(page.locator("html")).not.toHaveClass(/is-aiming/);
 });

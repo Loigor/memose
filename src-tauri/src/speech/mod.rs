@@ -68,6 +68,11 @@ const POLISH_PROOF: &str = "You fix and proof-read text that a speech recognizer
 /// Level 4: level 3, using the note around the words.
 const POLISH_CONTEXT: &str = "You fix and proof-read text that a user dictated into a note. You also get the note text before and after it. First add punctuation and capital letters and fix words that are clearly recognition errors. Then proof-read it: correct spelling and grammar, so it reads as correct standard written language. Use the note to pick the right names, terms, and form, and apply spoken corrections such as \"no, I mean\" or \"scratch that\". Keep the meaning, the tone, and everything that was said.";
 
+/// Added at High and Max: the speaker restarting a sentence or saying it again reworded.
+const POLISH_CORRECTIONS: &str = "The speaker may correct themselves: they stop and say a phrase or sentence again, reworded. When a later part of the dictated text says an earlier part again, keep only the later version and remove the earlier one. Text in <later> was said right after the dictated text and is not yours to change; when it says the end of the dictated text again, remove that end from your reply. If <later> says all of the dictated text again, reply with [restated] only. Remove nothing that is not said again.";
+/// The reply that means every word was said again later.
+const RESTATED: &str = "[restated]";
+
 /// Names of the languages the built-in models know, for telling the chat model which one
 /// the text is in. Matches the list in the settings window.
 const LANGUAGE_NAMES: [(&str, &str); 25] = [
@@ -377,15 +382,62 @@ pub async fn transcribe_remote(
     Ok(text.trim().to_string())
 }
 
-/// Lets the chat model tidy dictated text, using the note around the cursor.
+/// Share of the words a reply drops that are said again in the reply or in `later`. A
+/// correction drops the words of the first try, which mostly come back reworded.
+fn restated_share(heard: &str, reply: &str, later: &str) -> f32 {
+    let mut left: Vec<String> = plain_words(reply);
+    let mut dropped = Vec::new();
+    for word in plain_words(heard) {
+        match left.iter().position(|other| *other == word) {
+            Some(at) => {
+                left.remove(at);
+            }
+            None => dropped.push(word),
+        }
+    }
+    if dropped.is_empty() {
+        return 1.0;
+    }
+    let again: std::collections::HashSet<String> = plain_words(reply)
+        .into_iter()
+        .chain(plain_words(later))
+        .collect();
+    dropped.iter().filter(|word| again.contains(*word)).count() as f32 / dropped.len() as f32
+}
+
+/// Whether a reply that removed a correction's first try may replace what was heard.
+fn correction_allowed(level: Level, heard: &str, reply: &str, later: &str) -> bool {
+    kept_share(heard, reply) >= level.min_kept()
+        || (kept_share(heard, reply) >= 0.25 && restated_share(heard, reply, later) >= 0.6)
+}
+
+/// What one improvement pass gets besides the dictated words.
+#[derive(Debug, Default, Clone, Copy)]
+pub struct PolishContext<'a> {
+    /// Note text before and after the dictation, for the Max level.
+    pub before: &'a str,
+    pub after: &'a str,
+    /// Remove a first try that the speaker said again (High and Max).
+    pub corrections: bool,
+    /// Words said right after the dictated text, which may say its end again.
+    pub later: &'a str,
+}
+
+/// Lets the chat model tidy dictated text, using the note around the cursor. With
+/// corrections, an empty reply means every word was said again in `later`.
 pub async fn polish(
     http: &reqwest::Client,
     db: &Db,
     level: Level,
-    before: &str,
-    after: &str,
     dictated: &str,
+    context: PolishContext<'_>,
 ) -> Result<String, AppError> {
+    let PolishContext {
+        before,
+        after,
+        corrections,
+        later,
+    } = context;
     if level == Level::Basic || dictated.trim().is_empty() {
         return Ok(dictated.to_string());
     }
@@ -398,13 +450,20 @@ pub async fn polish(
         .filter(|model| !model.is_empty())
         .ok_or_else(|| AppError::Message("model is not set".into()))?;
     let key = db.get_meta(llm::LLM_API_KEY)?;
-    let user = match level {
+    let mut user = match level {
         Level::Context => format!(
             "<before>\n{before}\n</before>\n\n<after>\n{after}\n</after>\n\n<dictated>\n{dictated}\n</dictated>"
         ),
         _ => format!("<dictated>\n{dictated}\n</dictated>"),
     };
-    let rules = polish_rules(level, &db.get_meta(SPEECH_LANGUAGE)?.unwrap_or_default());
+    let later = if corrections { later.trim() } else { "" };
+    if !later.is_empty() {
+        user.push_str(&format!("\n\n<later>\n{later}\n</later>"));
+    }
+    let mut rules = polish_rules(level, &db.get_meta(SPEECH_LANGUAGE)?.unwrap_or_default());
+    if corrections {
+        rules = format!("{POLISH_CORRECTIONS} {rules}");
+    }
     let raw = llm::complete(
         http,
         &base,
@@ -423,13 +482,39 @@ pub async fn polish(
         .split_whitespace()
         .collect::<Vec<_>>()
         .join(" ");
-    if cleaned.is_empty() {
+    judge_reply(level, dictated, &cleaned, corrections, later)
+}
+
+/// Decides what a pass's reply turns the heard words into.
+fn judge_reply(
+    level: Level,
+    dictated: &str,
+    reply: &str,
+    corrections: bool,
+    later: &str,
+) -> Result<String, AppError> {
+    let reply = reply.trim();
+    if corrections && !later.is_empty() && (reply == RESTATED || reply.is_empty()) {
+        // Everything was said again later: only allowed when most words do come back.
+        return Ok(if restated_share(dictated, "", later) >= 0.6 {
+            String::new()
+        } else {
+            dictated.to_string()
+        });
+    }
+    if reply.is_empty() || reply == RESTATED {
         return Err(AppError::Message("the model returned no text".into()));
     }
-    if kept_share(dictated, &cleaned) < level.min_kept() {
-        return Ok(dictated.to_string());
-    }
-    Ok(cleaned)
+    let allowed = if corrections {
+        correction_allowed(level, dictated, reply, later)
+    } else {
+        kept_share(dictated, reply) >= level.min_kept()
+    };
+    Ok(if allowed {
+        reply.to_string()
+    } else {
+        dictated.to_string()
+    })
 }
 
 /// The recording that is running now.
@@ -437,6 +522,8 @@ pub struct Active {
     pub id: String,
     pub note_id: Option<String>,
     pub purpose: Purpose,
+    /// Label of the window the words go into. It stays on screen until the recording ends.
+    pub window: String,
     stop: Arc<AtomicBool>,
 }
 
@@ -498,9 +585,22 @@ enum Work {
 pub struct StartOptions {
     pub purpose: Purpose,
     pub note_id: Option<String>,
+    /// Label of the window that started the recording.
+    pub window: String,
     pub keep_audio: bool,
     pub device: String,
     pub recognizer: Recognizer,
+}
+
+/// Label of the window a running recording writes into.
+pub fn recording_window(state: &AppState) -> Option<String> {
+    state
+        .speech
+        .active
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .as_ref()
+        .map(|active| active.window.clone())
 }
 
 pub fn current(state: &AppState) -> Option<StateEvent> {
@@ -584,6 +684,7 @@ pub fn start(app: &AppHandle, options: StartOptions) -> Result<String, AppError>
         id: id.clone(),
         note_id: options.note_id.clone(),
         purpose: options.purpose,
+        window: options.window.clone(),
         stop: stop_flag,
     });
     drop(active);
@@ -1133,6 +1234,64 @@ mod tests {
         let rewrite = "Sovimme, että julkaisua siirretään.";
         assert!(kept_share(heard, rewrite) < Level::Improved.min_kept());
         assert!(kept_share("", "anything") >= 1.0);
+    }
+
+    #[test]
+    fn a_restarted_sentence_may_drop_its_first_try() {
+        let heard = "What is the worst? Time. When is the worst time?";
+        let fixed = "When is the worst time?";
+        // Without corrections the guard keeps the words as heard at the quick level.
+        assert_eq!(
+            judge_reply(Level::Improved, heard, fixed, false, "").unwrap(),
+            heard
+        );
+        assert_eq!(
+            judge_reply(Level::Improved, heard, fixed, true, "").unwrap(),
+            fixed
+        );
+        // Dropping words that are never said again is still refused.
+        let invented = "When?";
+        assert_eq!(
+            judge_reply(Level::Proofread, heard, invented, true, "").unwrap(),
+            heard
+        );
+    }
+
+    #[test]
+    fn a_paragraph_said_again_after_it_is_removed() {
+        let heard = "What is the worst? Time.";
+        let later = "When is the worst time?";
+        assert_eq!(
+            judge_reply(Level::Proofread, heard, "[restated]", true, later).unwrap(),
+            ""
+        );
+        // The end said again is removed; the rest stays.
+        let paragraph = "We ship on Friday. What is the worst? Time.";
+        assert_eq!(
+            judge_reply(
+                Level::Proofread,
+                paragraph,
+                "We ship on Friday.",
+                true,
+                later
+            )
+            .unwrap(),
+            "We ship on Friday."
+        );
+        // Something else said later is no reason to remove the paragraph.
+        assert_eq!(
+            judge_reply(
+                Level::Proofread,
+                heard,
+                "[restated]",
+                true,
+                "Buy milk tomorrow."
+            )
+            .unwrap(),
+            heard
+        );
+        // Without corrections an empty reply is an error, as before.
+        assert!(judge_reply(Level::Proofread, heard, "", false, later).is_err());
     }
 
     #[test]
