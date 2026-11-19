@@ -12,10 +12,12 @@ export interface StackApi {
   applyOpenHeight(): void;
   applySectionEdit(section: HTMLElement, state: SectionState, area: Editable, edit: Edit): void;
   applyStackEditorChrome(): void;
+  armPressDrag(event: PointerEvent, start: (event: PointerEvent) => void): void;
   cancelHeightTween(): void;
   dismissAutoOpenNewSection(): void;
   dragBlocked(target: EventTarget | null): boolean;
   hasStack(): boolean;
+  headerControl(target: EventTarget | null): HTMLElement | null;
   holdCollapsed(id: string): boolean;
   hostBarOnly(): boolean;
   insertSectionMedia(section: HTMLElement, name: string, label?: string): void;

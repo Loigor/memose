@@ -144,7 +144,8 @@ pub fn save_edit(
         request_sync(&app);
     }
     if changed {
-        let _ = app.emit("notes-changed", ());
+        // Name the memo so pinned windows that do not show it can skip a reload.
+        let _ = app.emit("notes-changed", &id);
     }
     Ok(())
 }

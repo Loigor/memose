@@ -1,6 +1,7 @@
 mod composer;
 mod drag;
 mod geom;
+mod mac_frame;
 mod pin;
 
 pub use composer::{
@@ -550,6 +551,7 @@ fn apply_app_icon(app: &AppHandle, window: &WebviewWindow) {
 pub(super) fn style_desktop_window(app: &AppHandle, window: &WebviewWindow, pin_like: bool) {
     let skip = !show_in_switcher(app);
     let _ = window.set_skip_taskbar(skip);
+    mac_frame::allow_above_menu_bar(window);
     if pin_like {
         let _ = window.set_always_on_top(pinned_always_on_top(app));
     }

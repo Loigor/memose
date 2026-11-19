@@ -25,6 +25,7 @@ pub fn attach(app: &tauri::AppHandle) {
     // The window is created at a parked spot. Keep it hidden until present()
     // has moved it to the cursor, so the first frame is not the screen center.
     let _ = window.hide();
+    super::mac_frame::allow_above_menu_bar(&window);
     let handle = app.clone();
     window.on_window_event(move |event| match event {
         WindowEvent::CloseRequested { api, .. } => {

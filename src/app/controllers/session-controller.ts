@@ -284,11 +284,25 @@ export function createSessionController(
     }
   }
 
+  // The composer keeps its last frame while hidden. Hiding the card on the way
+  // out means the next open does not flash the previous memo or its theme.
+  function concealCard() {
+    document.documentElement.classList.add("memo-swap");
+  }
+
+  function revealCard() {
+    document.documentElement.classList.remove("memo-swap");
+  }
+
   async function focusComposer(generation: number) {
     state.openGeneration = generation;
     setConflict(null);
     recent.reveal();
-    await loadDraft();
+    try {
+      await loadDraft();
+    } finally {
+      revealCard();
+    }
     setPinPressed(false);
     await recent.refresh();
     editor.resumePlace();
@@ -341,6 +355,14 @@ export function createSessionController(
   }
 
   async function startFresh(generation: number) {
+    try {
+      await swapToFresh(generation);
+    } finally {
+      revealCard();
+    }
+  }
+
+  async function swapToFresh(generation: number) {
     editor.rememberPlace();
     await rememberMemoSize();
     state.openGeneration = generation;
@@ -373,6 +395,7 @@ export function createSessionController(
     setPinPressed(false);
     setEditedAt(null);
     audience.paint(null);
+    revealCard();
     editor.focusEditing();
     await recent.refresh();
     await applyMemoSize();
@@ -380,6 +403,7 @@ export function createSessionController(
   }
 
   async function cycleComposer(generation: number) {
+    revealCard();
     state.openGeneration = generation;
     editor.rememberPlace();
     if (state.editingId === null) {
@@ -390,6 +414,9 @@ export function createSessionController(
   }
 
   async function flushComposer(generation: number) {
+    if (generation === state.openGeneration) {
+      concealCard();
+    }
     editor.rememberPlace();
     const content = editor.content();
     const noteId = state.editingId;
@@ -414,6 +441,7 @@ export function createSessionController(
   }
 
   function applyPinned(note: Note) {
+    document.documentElement.classList.remove("memo-loading");
     const dirty = state.loadedContent.length > 0 && editor.content() !== state.loadedContent;
     let reloaded = false;
     if (!dirty && (state.editingId !== note.id || state.loadedContent !== note.content)) {

@@ -24,6 +24,8 @@ export type StackController = {
   setHostCollapsedFlag(collapsed: boolean): void;
   load(): Promise<void>;
   focusNote(id: string): boolean;
+  /** Whether this window shows the memo, as host or stacked guest. */
+  showsNote(id: string): boolean;
   repaintAudiences(): void;
   applyEditorChrome(): void;
   rerenderEditors(): void;
@@ -84,6 +86,7 @@ export function createStackController(deps: StackDeps): StackController {
     paintChrome: () => layout.paintChrome(),
     setHostCollapsedFlag: (collapsed) => layout.setHostCollapsedFlag(collapsed),
     load: () => sections.loadStack(),
+    showsNote: (id) => id === ctx.deps.pinnedNoteId || ctx.notes.has(id),
     focusNote(id) {
       const section = ctx.dom.stack?.querySelector<HTMLElement>(`.stack-note[data-id="${CSS.escape(id)}"]`);
       const state = ctx.notes.get(id);

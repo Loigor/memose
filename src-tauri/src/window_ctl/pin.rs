@@ -333,22 +333,35 @@ fn open_pin_window(app: &tauri::AppHandle, id: &str) {
         return;
     }
     let id_js = serde_json::to_string(id).unwrap_or_else(|_| "\"\"".into());
-    let theme_js = match app
-        .state::<AppState>()
-        .db
-        .get(id)
-        .ok()
-        .flatten()
-        .and_then(|note| note.theme)
-        .as_deref()
-    {
+    // The page paints its first frame from these, before it can ask for the
+    // note, so a dark memo does not open as a light card.
+    let db = app.state::<AppState>().db.clone();
+    let note = db.get(id).ok().flatten();
+    let theme_js = match note.as_ref().and_then(|note| note.theme.as_deref()) {
         Some("dark") => "\"dark\"",
         Some("light") => "\"light\"",
         _ => "null",
     };
+    let app_theme_js = match db.get_meta(crate::notes::THEME).ok().flatten().as_deref() {
+        Some("dark") => "\"dark\"",
+        _ => "\"light\"",
+    };
+    let look_js = note
+        .as_ref()
+        .map(|note| {
+            serde_json::json!({
+                "hueLight": note.hue_light,
+                "hueDark": note.hue_dark,
+                "opacity": note.opacity,
+            })
+            .to_string()
+        })
+        .unwrap_or_else(|| "null".into());
     let script = format!(
         "globalThis.__memosePin={id_js};\
          globalThis.__memoseTheme={theme_js};\
+         globalThis.__memoseAppTheme={app_theme_js};\
+         globalThis.__memoseLook={look_js};\
          if(document.documentElement){{\
            document.documentElement.dataset.noteId={id_js};\
            document.documentElement.classList.add('pin-window');\
@@ -367,6 +380,9 @@ fn open_pin_window(app: &tauri::AppHandle, id: &str) {
             .resizable(true)
             .shadow(false)
             .visible(false)
+            // A press on a memo that is not the active window reaches the page,
+            // so it can be dragged or clicked without selecting it first.
+            .accept_first_mouse(true)
             .initialization_script(&script);
     #[cfg(target_os = "windows")]
     // A second DwmEnableBlurBehindWindow call aborts the process. This flag

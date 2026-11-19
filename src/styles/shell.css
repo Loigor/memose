@@ -76,6 +76,58 @@ html.fitting .stack-note {
   transition: none;
 }
 
+/* The paper behind a memo: its own opacity, less 30 points for a pinned memo that
+   is not the one being edited. */
+#card,
+.stack-note {
+  --paper-fill: var(--paper-alpha);
+}
+
+html.pin-window #card:not(.is-editing),
+html.pin-window .stack-note:not(.is-editing) {
+  --paper-fill: max(0%, calc(var(--paper-alpha) - 30%));
+}
+
+/* No frame before the first paint sets the theme: the window is clear, not a
+   light card that turns dark. */
+html:not([data-theme]) #notes {
+  visibility: hidden;
+}
+
+/* The composer hides its card on the way out and shows it again once the next
+   memo is in place, so an open does not flash the last memo or its theme. */
+#notes {
+  transition: opacity 120ms ease-out;
+}
+
+html.memo-swap #notes {
+  opacity: 0;
+  transition: none;
+}
+
+/* A pinned memo is painted in its theme at once; its text follows. */
+html.memo-loading #card::after {
+  content: "Loading…";
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  color: var(--muted);
+  font:
+    12px system-ui,
+    sans-serif;
+  letter-spacing: 0.04em;
+  pointer-events: none;
+  opacity: 0;
+  animation: memo-loading-in 200ms ease-out 150ms forwards;
+}
+
+@keyframes memo-loading-in {
+  to {
+    opacity: 1;
+  }
+}
+
 #card {
   position: relative;
   box-sizing: border-box;
@@ -84,7 +136,7 @@ html.fitting .stack-note {
   flex-direction: column;
   height: var(--open-h, 100%);
   min-height: 0;
-  background: color-mix(in srgb, var(--paper) var(--paper-alpha), transparent);
+  background: color-mix(in srgb, var(--paper) var(--paper-fill), transparent);
   border: 1px solid var(--rule);
   border-radius: 10px;
   overflow: hidden;
@@ -171,71 +223,74 @@ html.collapsed:not(.hover-open) #frame:not(.has-stack) #notes {
   z-index: 30;
 }
 
+/* Resize bands hug the card edge (10px outside, 3px in) so they stay off the top
+   bar and off memos snapped beside this one. Keep in step with resizeZoneAt in
+   stack/chrome.ts. The card sits 24px from the top and sides, 32px from the bottom. */
 #resize-n {
-  top: 0;
-  right: 44px;
-  left: 44px;
-  height: 24px;
+  top: 14px;
+  right: 30px;
+  left: 30px;
+  height: 11px;
   cursor: ns-resize;
 }
 
 #resize-nw {
-  top: 0;
-  left: 0;
+  top: 14px;
+  left: 14px;
   z-index: 31;
-  width: 44px;
-  height: 24px;
+  width: 16px;
+  height: 16px;
   cursor: nwse-resize;
 }
 
 #resize-ne {
-  top: 0;
-  right: 0;
+  top: 14px;
+  right: 14px;
   z-index: 31;
-  width: 44px;
-  height: 24px;
+  width: 16px;
+  height: 16px;
   cursor: nesw-resize;
 }
 
 #resize-w {
-  top: 24px;
-  bottom: 48px;
-  left: 0;
-  width: 30px;
+  top: 30px;
+  bottom: 38px;
+  left: 14px;
+  width: 13px;
   cursor: ew-resize;
 }
 
 #resize-e {
-  top: 24px;
-  right: 0;
-  bottom: 48px;
-  width: 30px;
+  top: 30px;
+  right: 14px;
+  bottom: 38px;
+  width: 13px;
   cursor: ew-resize;
 }
 
 #resize-s {
-  right: 44px;
-  bottom: 0;
-  left: 44px;
-  height: 40px;
+  right: 30px;
+  bottom: 22px;
+  left: 30px;
+  height: 13px;
   cursor: ns-resize;
 }
 
 #resize-sw {
-  bottom: 0;
-  left: 0;
+  bottom: 22px;
+  left: 14px;
   z-index: 31;
-  width: 44px;
-  height: 48px;
+  width: 16px;
+  height: 16px;
   cursor: nesw-resize;
 }
 
 #resize-grip {
-  right: 0;
-  bottom: 0;
+  right: 14px;
+  bottom: 22px;
   z-index: 31;
-  width: 44px;
-  height: 48px;
+  width: 16px;
+  height: 16px;
   cursor: nwse-resize;
 }
 
@@ -268,7 +323,7 @@ html.collapsed:not(.hover-open) #frame:not(.has-stack) #notes {
   border-right: 1px solid var(--rule);
   border-bottom: 0;
   border-left: 1px solid var(--rule);
-  background: color-mix(in srgb, var(--paper) var(--paper-alpha), transparent);
+  background: color-mix(in srgb, var(--paper) var(--paper-fill), transparent);
   color: var(--ink);
   transition: height 180ms ease;
 }

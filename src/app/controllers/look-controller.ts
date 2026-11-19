@@ -251,11 +251,20 @@ export function createLookController(
     applyTheme(theme === "dark" ? "dark" : "light");
   }
 
+  /** Paint the first frame from what the window was opened with, so it starts in the right theme. */
   function applyPinnedThemeHint() {
-    if (!context.mode.pinnedThemeHint) {
-      return;
+    const { pinnedThemeHint, appThemeHint, lookHint } = context.mode;
+    if (appThemeHint) {
+      state.appTheme = appThemeHint;
     }
-    state.value.theme = context.mode.pinnedThemeHint;
+    if (pinnedThemeHint) {
+      state.value.theme = pinnedThemeHint;
+    }
+    if (lookHint) {
+      state.value.hueLight = lookHint.hueLight;
+      state.value.hueDark = lookHint.hueDark;
+      state.value.opacity = lookHint.opacity;
+    }
     paint();
   }
 

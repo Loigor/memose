@@ -226,21 +226,32 @@ export function mountSections(ctx: StackCtx) {
     if (!header) {
       return section;
     }
-    header.addEventListener("pointerdown", (event) => {
-      if (event.button !== 0) {
-        return;
-      }
-      const target = event.target;
-      if (ctx.api.dragBlocked(target)) {
-        return;
-      }
-      event.stopPropagation();
-      event.preventDefault();
+    const liftFrom = (event: PointerEvent) => {
       header.dataset.moved = "0";
       void flushSectionSaves().catch((error: unknown) => {
         console.error(error);
       });
       beginSectionLift(section, header, event);
+    };
+    header.addEventListener("pointerdown", (event) => {
+      if (event.button !== 0) {
+        return;
+      }
+      const target = event.target;
+      // A top-bar button clicks when pressed, and lifts the memo out when dragged.
+      if (ctx.api.headerControl(target)) {
+        ctx.api.armPressDrag(event, (move) => {
+          liftFrom(event);
+          moveSectionLift(section, header, move);
+        });
+        return;
+      }
+      if (ctx.api.dragBlocked(target)) {
+        return;
+      }
+      event.stopPropagation();
+      event.preventDefault();
+      liftFrom(event);
     });
     header.addEventListener("pointermove", (event) => {
       moveSectionLift(section, header, event);

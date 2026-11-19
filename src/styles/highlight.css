@@ -306,7 +306,11 @@ html[data-theme="dark"][data-mdhl-scheme="mono"] {
 .md-field[data-coder] {
   border: 1px solid color-mix(in srgb, var(--ink) 22%, transparent);
   border-radius: 2px;
-  background: color-mix(in srgb, color-mix(in srgb, black 14%, var(--paper)) var(--paper-alpha), transparent);
+  background: color-mix(
+    in srgb,
+    color-mix(in srgb, black 14%, var(--paper)) var(--paper-fill, var(--paper-alpha)),
+    transparent
+  );
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   /* Set from settings and per-memo zoom (font-size.ts). The line height is always whole pixels:
      a fractional pitch (13px × 1.45 = 18.85) rounds differently in the textarea, the highlight
@@ -568,7 +572,8 @@ html[data-theme="dark"][data-mdhl-scheme="mono"] {
   border-radius: 50%;
   background: color-mix(in srgb, var(--muted) 70%, var(--paper));
   transform: translateY(-50%);
-  box-shadow: 0 0 0 2px color-mix(in srgb, color-mix(in srgb, black 14%, var(--paper)) var(--paper-alpha), transparent);
+  box-shadow: 0 0 0 2px
+    color-mix(in srgb, color-mix(in srgb, black 14%, var(--paper)) var(--paper-fill, var(--paper-alpha)), transparent);
 }
 
 #blocks .md-field[data-coder][data-wrap] .md-hl,

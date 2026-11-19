@@ -115,3 +115,140 @@ test("cmd/ctrl plus resizes only the stacked memo being edited", async ({ page }
   await expect(page.locator(".stack-note[data-id='guest-2'] .md-lines").first()).toHaveCSS("font-size", "16px");
   await expect.poll(async () => (await getNotes(page)).find((note) => note.id === "guest-1")?.fontStep).toBe(2);
 });
+
+function pinnedMemo(): NoteSeed {
+  return { id: "solo-1", content: "# Solo memo\nSome body text here", pinned: true, updatedAt: Date.now() };
+}
+
+async function invocationsOf(page: import("@playwright/test").Page, cmd: string) {
+  return page.evaluate(
+    (name) => (window.__memoseHarness?.getInvocations() ?? []).filter((item) => item.cmd === name).map((i) => i.args),
+    cmd,
+  );
+}
+
+/** The window is not the active one, as for a pinned memo the user has not picked yet. */
+async function unselect(page: import("@playwright/test").Page) {
+  await page.evaluate(() => {
+    document.hasFocus = () => false;
+    window.dispatchEvent(new Event("blur"));
+  });
+}
+
+test("dragging a top-bar button moves the memo and does not click it", async ({ page }) => {
+  await openPinned(page, "solo-1", { notes: [pinnedMemo()] });
+  const fold = page.locator("#fold-toggle");
+  await expect(fold).toHaveAttribute("aria-pressed", "false");
+  const box = (await fold.boundingBox())!;
+  await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(box.x + box.width / 2 + 12, box.y + box.height / 2 + 6, { steps: 3 });
+  await page.mouse.up();
+  await expect.poll(async () => invokedCmds(page)).toContain("begin_memo_drag");
+  expect(await invokedCmds(page)).not.toContain("set_collapsed");
+  await expect(fold).toHaveAttribute("aria-pressed", "false");
+});
+
+test("a top-bar button pressed in place still clicks", async ({ page }) => {
+  await openPinned(page, "solo-1", { notes: [pinnedMemo()] });
+  await page.locator("#fold-toggle").click();
+  await expect.poll(async () => invokedCmds(page)).toContain("set_collapsed");
+  expect(await invokedCmds(page)).not.toContain("begin_memo_drag");
+});
+
+test("an unselected pinned memo moves when dragged by its text", async ({ page }) => {
+  await openPinned(page, "solo-1", { notes: [pinnedMemo()] });
+  const text = page.locator("#blocks .md-lines").first();
+  await expect.poll(() => editorText(text)).toMatch(/Some body text/);
+  await unselect(page);
+  const box = (await text.boundingBox())!;
+  await page.mouse.move(box.x + 40, box.y + box.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(box.x + 90, box.y + box.height / 2 + 4, { steps: 4 });
+  await page.mouse.up();
+  await expect.poll(async () => invokedCmds(page)).toContain("begin_memo_drag");
+  expect(await page.evaluate(() => window.getSelection()?.toString() ?? "")).toBe("");
+});
+
+test("a click on an unselected pinned memo puts the caret in its text", async ({ page }) => {
+  await openPinned(page, "solo-1", { notes: [pinnedMemo()] });
+  const text = page.locator("#blocks .md-lines").first();
+  await expect.poll(() => editorText(text)).toMatch(/Some body text/);
+  await unselect(page);
+  const box = (await text.boundingBox())!;
+  await page.mouse.click(box.x + 40, box.y + box.height - 6);
+  expect(await invokedCmds(page)).not.toContain("begin_memo_drag");
+  await expect.poll(() => page.evaluate(() => document.activeElement?.classList.contains("md-lines"))).toBe(true);
+});
+
+test("a pinned memo that is not being edited is 30 points more transparent", async ({ page }) => {
+  await openPinned(page, "solo-1", { notes: [{ ...pinnedMemo(), opacity: 90 }] });
+  const alpha = () =>
+    page.locator("#card").evaluate((card) => {
+      const probe = document.createElement("div");
+      probe.style.color = getComputedStyle(card).backgroundColor;
+      document.body.append(probe);
+      const canvas = document.createElement("canvas").getContext("2d")!;
+      canvas.fillStyle = getComputedStyle(probe).color;
+      canvas.fillRect(0, 0, 1, 1);
+      probe.remove();
+      return Math.round((canvas.getImageData(0, 0, 1, 1).data[3] / 255) * 100);
+    });
+  await page.locator("#blocks .md-lines").first().click();
+  await expect(page.locator("#card")).toHaveClass(/is-editing/);
+  await expect.poll(alpha).toBe(90);
+  await unselect(page);
+  await expect(page.locator("#card")).not.toHaveClass(/is-editing/);
+  await expect.poll(alpha).toBe(60);
+});
+
+test("resize bands hug the card edge and leave the outer gutter alone", async ({ page }) => {
+  await openPinned(page, "solo-1", { notes: [pinnedMemo()] });
+  const width = page.viewportSize()!.width;
+  // Outer gutter, well above the card: no resize.
+  await page.mouse.click(width / 2, 4);
+  expect(await invocationsOf(page, "begin_corner_resize")).toEqual([]);
+  // Just above the card's top edge: resize from the top.
+  await page.mouse.move(width / 2, 20);
+  await page.mouse.down();
+  await page.mouse.up();
+  await expect
+    .poll(() => invocationsOf(page, "begin_corner_resize"))
+    .toContainEqual(expect.objectContaining({ edge: "n" }));
+  // The header just inside the card drags instead.
+  await page.mouse.move(width / 2, 34);
+  await page.mouse.down();
+  await page.mouse.up();
+  await expect.poll(async () => invokedCmds(page)).toContain("begin_memo_drag");
+});
+
+test("a save in another memo does not reload this pinned window", async ({ page }) => {
+  await openPinned(page, "solo-1", {
+    notes: [pinnedMemo(), { id: "other-1", content: "# Other", pinned: true, updatedAt: Date.now() }],
+  });
+  await expect.poll(() => editorText(page.locator("#blocks .md-lines").first())).toMatch(/Some body text/);
+  const before = (await invocationsOf(page, "get_note")).length;
+  await emitEvent(page, "notes-changed", "other-1");
+  await page.waitForTimeout(150);
+  expect((await invocationsOf(page, "get_note")).length).toBe(before);
+  await emitEvent(page, "notes-changed", "solo-1");
+  await expect.poll(async () => (await invocationsOf(page, "get_note")).length).toBeGreaterThan(before);
+});
+
+test("a pinned window in a dark app never paints a light frame", async ({ page }) => {
+  await page.addInitScript(() => {
+    const seen: string[] = [];
+    (globalThis as { __memoseAppTheme?: string; __themesSeen?: string[] }).__memoseAppTheme = "dark";
+    (globalThis as { __themesSeen?: string[] }).__themesSeen = seen;
+    new MutationObserver(() => {
+      const theme = document.documentElement.dataset.theme;
+      if (theme && seen.at(-1) !== theme) {
+        seen.push(theme);
+      }
+    }).observe(document, { attributes: true, subtree: true, attributeFilter: ["data-theme"] });
+  });
+  await openPinned(page, "solo-1", { notes: [pinnedMemo()], theme: "dark" });
+  await expect(page.locator("html")).not.toHaveClass(/memo-loading/);
+  await expect(page.locator("html")).toHaveAttribute("data-theme", "dark");
+  expect(await page.evaluate(() => (globalThis as { __themesSeen?: string[] }).__themesSeen)).toEqual(["dark"]);
+});
