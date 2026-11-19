@@ -301,6 +301,10 @@ pub async fn speech_start(
         note_id,
         window: window.label().to_string(),
         keep_audio,
+        // Each saved file of a long recording stays under the server's upload limit.
+        part_samples: speech::audio::part_samples(
+            crate::notes::limits::stored(&state.db)?.upload_bytes,
+        ),
         device: state
             .db
             .get_meta(speech::SPEECH_DEVICE)?

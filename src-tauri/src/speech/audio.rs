@@ -256,6 +256,30 @@ impl Chunker {
     }
 }
 
+/// Largest saved recording file. A longer recording goes on in a new file.
+///
+/// It stays under the local attachment limit (`MAX_MEDIA_BYTES`, 32 MB) and leaves room for
+/// the base64 upload to useMemos, whose default request limit is also 32 MiB. 16 kHz mono
+/// 16-bit sound is 32 KB a second, so one file holds about 11 minutes.
+const PART_BYTES: usize = 20 * 1024 * 1024;
+/// A server limit smaller than this many seconds of sound is not followed, so a recording
+/// does not turn into hundreds of tiny files. Such files would not upload anyway.
+const MIN_PART_SECONDS: usize = 60;
+
+/// Samples in one saved file of a recording: under `PART_BYTES` and 90 % of the server's
+/// upload limit. `upload_bytes` of 0 means the server has no limit.
+pub fn part_samples(upload_bytes: u64) -> usize {
+    let mut bytes = PART_BYTES;
+    if upload_bytes > 0 {
+        let server = usize::try_from(upload_bytes / 10 * 9).unwrap_or(usize::MAX);
+        bytes = bytes.min(server);
+    }
+    let floor = RATE as usize * MIN_PART_SECONDS;
+    (bytes.saturating_sub(WAV_HEADER) / 2).max(floor)
+}
+
+const WAV_HEADER: usize = 44;
+
 pub fn to_pcm(samples: &[f32]) -> Vec<i16> {
     samples
         .iter()
@@ -266,7 +290,7 @@ pub fn to_pcm(samples: &[f32]) -> Vec<i16> {
 /// A 16 kHz mono 16-bit WAV file.
 pub fn wav_bytes(samples: &[i16]) -> Vec<u8> {
     let data_len = (samples.len() * 2) as u32;
-    let mut out = Vec::with_capacity(44 + samples.len() * 2);
+    let mut out = Vec::with_capacity(WAV_HEADER + samples.len() * 2);
     out.extend_from_slice(b"RIFF");
     out.extend_from_slice(&(36 + data_len).to_le_bytes());
     out.extend_from_slice(b"WAVEfmt ");
@@ -417,6 +441,27 @@ mod tests {
             pauses[2]
         );
         assert_eq!(chunker.take_pause(), 0);
+    }
+
+    #[test]
+    fn a_saved_part_fits_the_local_and_the_server_limit() {
+        let local = part_samples(0);
+        assert!(wav_bytes_len(local) <= PART_BYTES);
+        assert!(wav_bytes_len(local) < crate::media::MAX_MEDIA_BYTES);
+        let minutes = local / RATE as usize / 60;
+        assert!((10..=11).contains(&minutes), "one part holds {minutes} min");
+        // A server that takes 8 MB gets parts of at most 90 % of that.
+        let server = part_samples(8_000_000);
+        assert!(wav_bytes_len(server) <= 7_200_000);
+        assert!(server > RATE as usize * 60 * 3);
+        // A larger server limit does not lift the local one.
+        assert_eq!(part_samples(1 << 40), local);
+        // A tiny one is not followed below a minute.
+        assert_eq!(part_samples(1_000), RATE as usize * MIN_PART_SECONDS);
+    }
+
+    fn wav_bytes_len(samples: usize) -> usize {
+        WAV_HEADER + samples * 2
     }
 
     #[test]

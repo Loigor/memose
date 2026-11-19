@@ -58,6 +58,11 @@ fn silent_device_message() -> String {
 
 /// A recording stops by itself after this long.
 const MAX_SECONDS: u64 = 30 * 60;
+/// The user is told this long before the recording stops by itself.
+const END_WARNING_SECONDS: u64 = 60;
+/// Sound waiting for the recognizer is kept under this much, so a recognizer slower than
+/// speech does not fill memory. Past it, live text stops.
+const MAX_BACKLOG_SECONDS: usize = 120;
 /// The model is dropped this long after the last recording, to give its memory back.
 const ENGINE_IDLE: Duration = Duration::from_secs(90);
 const SERVER_TIMEOUT: Duration = Duration::from_secs(120);
@@ -268,22 +273,66 @@ struct LevelEvent {
     level: f32,
 }
 
+/// Something the user should know while the recording goes on.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct NoticeEvent {
+    session_id: String,
+    message: String,
+}
+
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct DoneEvent {
     session_id: String,
     note_id: Option<String>,
     purpose: Purpose,
-    /// Markdown line of the saved recording, when sound was kept.
-    audio: Option<String>,
+    /// Markdown lines of the saved recording, one per file, when sound was kept.
+    /// A long recording is saved in several files.
+    audio: Vec<String>,
+    /// Why the recording ended early or lost something, for the user to read.
     error: Option<String>,
 }
 
 enum Work {
     /// A piece of speech, its number, and the silence before it in ms.
     Slice(u32, Vec<f32>, u32),
-    /// Capture ended. Holds the whole recording when it is to be kept, and a capture error if any.
+    /// One full file of the kept sound. The recording goes on in the next file.
+    Part(Vec<i16>),
+    /// Capture ended. Holds the last file of the kept sound, and a capture error if any.
     End(Vec<i16>, Option<String>),
+}
+
+/// Sound handed to the recognizer and not yet turned into text, in samples.
+#[derive(Default)]
+struct Backlog(std::sync::atomic::AtomicUsize);
+
+impl Backlog {
+    /// Counts `len` samples in, unless the backlog would then pass `limit`.
+    fn admit(&self, len: usize, limit: usize) -> bool {
+        self.0
+            .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |queued| {
+                (queued + len <= limit).then_some(queued + len)
+            })
+            .is_ok()
+    }
+
+    /// Holds `len` samples in the backlog until the returned guard is dropped.
+    fn taken(&self, len: usize) -> Queued<'_> {
+        Queued { backlog: self, len }
+    }
+}
+
+/// A slice the recognizer works on. It leaves the backlog when dropped.
+struct Queued<'a> {
+    backlog: &'a Backlog,
+    len: usize,
+}
+
+impl Drop for Queued<'_> {
+    fn drop(&mut self) {
+        self.backlog.0.fetch_sub(self.len, Ordering::SeqCst);
+    }
 }
 
 /// What `start` needs to know.
@@ -293,8 +342,19 @@ pub struct StartOptions {
     /// Label of the window that started the recording.
     pub window: String,
     pub keep_audio: bool,
+    /// Samples in one saved file. A longer recording goes on in a new file.
+    pub part_samples: usize,
     pub device: String,
     pub recognizer: Recognizer,
+}
+
+/// What the microphone thread needs to know.
+struct Capture {
+    plan: ChunkPlan,
+    /// Samples per saved file, when the sound is kept.
+    keep: Option<usize>,
+    /// Slices go to a recognizer.
+    slices: bool,
 }
 
 fn lock_active(state: &AppState) -> std::sync::MutexGuard<'_, Option<Active>> {
@@ -311,6 +371,17 @@ fn to_recorder<S: Serialize + Clone>(app: &AppHandle, name: &str, payload: S) {
     if let Some(window) = recording_window(&app.state::<AppState>()) {
         let _ = app.emit_to(window.as_str(), name, payload);
     }
+}
+
+fn notice(app: &AppHandle, id: &str, message: String) {
+    to_recorder(
+        app,
+        "speech-notice",
+        NoticeEvent {
+            session_id: id.to_string(),
+            message,
+        },
+    );
 }
 
 /// Label of the window a running recording writes into.
@@ -367,22 +438,27 @@ pub fn start(app: &AppHandle, options: StartOptions) -> Result<String, AppError>
     let (work_tx, work_rx) = tokio::sync::mpsc::unbounded_channel::<Work>();
     let (ready_tx, ready_rx) = std::sync::mpsc::channel::<Result<(), String>>();
 
-    let plan = match options.purpose {
-        Purpose::Memo => ChunkPlan::DICTATION,
-        Purpose::Prompt => ChunkPlan::PROMPT,
+    let setup = Capture {
+        plan: match options.purpose {
+            Purpose::Memo => ChunkPlan::DICTATION,
+            Purpose::Prompt => ChunkPlan::PROMPT,
+        },
+        keep: (options.keep_audio && options.purpose == Purpose::Memo)
+            .then_some(options.part_samples.max(1)),
+        slices: options.recognizer.source != Source::Off,
     };
-    let keep = options.keep_audio && options.purpose == Purpose::Memo;
-    let slices = options.recognizer.source != Source::Off;
+    let backlog = Arc::new(Backlog::default());
     {
         let app = app.clone();
         let id = id.clone();
         let stop_flag = stop_flag.clone();
         let device = options.device.clone();
+        let backlog = backlog.clone();
         std::thread::Builder::new()
             .name("memose-mic".into())
             .spawn(move || {
                 capture(
-                    &app, &id, &device, plan, keep, slices, &stop_flag, &work_tx, &ready_tx,
+                    &app, &id, &device, &setup, &backlog, &stop_flag, &work_tx, &ready_tx,
                 );
             })
             .map_err(|err| give_up(format!("could not start recording: {err}")))?;
@@ -404,9 +480,50 @@ pub fn start(app: &AppHandle, options: StartOptions) -> Result<String, AppError>
 
     let app = app.clone();
     tauri::async_runtime::spawn(async move {
-        work(app, event, options.recognizer, work_rx).await;
+        work(app, event, options.recognizer, backlog, work_rx).await;
     });
     Ok(id)
+}
+
+/// Collects the kept sound and hands it out in files of at most `limit` samples.
+struct Parts {
+    limit: usize,
+    current: Vec<i16>,
+}
+
+impl Parts {
+    fn new(limit: usize) -> Self {
+        Self {
+            limit,
+            current: Vec::new(),
+        }
+    }
+
+    /// Adds sound. Returns the files that became full.
+    fn push(&mut self, pcm: &[i16]) -> Vec<Vec<i16>> {
+        self.current.extend_from_slice(pcm);
+        let mut full = Vec::new();
+        while self.current.len() >= self.limit {
+            let rest = self.current.split_off(self.limit);
+            full.push(std::mem::replace(&mut self.current, rest));
+        }
+        full
+    }
+}
+
+fn behind_message(kept: bool) -> String {
+    let minutes = MAX_BACKLOG_SECONDS / 60;
+    if kept {
+        format!(
+            "Speech recognition is more than {minutes} minutes behind, so live text stops here. \
+             The recording goes on. Re-analyze it afterwards to get the rest as text."
+        )
+    } else {
+        format!(
+            "Speech recognition fell more than {minutes} minutes behind, so the recording stopped. \
+             The text heard so far is kept."
+        )
+    }
 }
 
 /// Runs on its own thread: owns the microphone until the stop flag is set.
@@ -415,9 +532,8 @@ fn capture(
     app: &AppHandle,
     id: &str,
     device: &str,
-    plan: ChunkPlan,
-    keep: bool,
-    slices: bool,
+    setup: &Capture,
+    backlog: &Backlog,
     stop: &AtomicBool,
     work: &tokio::sync::mpsc::UnboundedSender<Work>,
     ready: &std::sync::mpsc::Sender<Result<(), String>>,
@@ -494,24 +610,46 @@ fn capture(
     };
 
     let mut resampler = Resampler::new(rate, channels);
-    let mut chunker = Chunker::new(plan);
+    let mut chunker = Chunker::new(setup.plan);
     let mut mono = Vec::new();
-    let mut all: Vec<i16> = Vec::new();
-    let keep_cap = crate::media::MAX_MEDIA_BYTES / 2 - 64;
+    let mut parts = setup.keep.map(Parts::new);
+    let backlog_limit = audio::RATE as usize * MAX_BACKLOG_SECONDS;
+    // Live text stopped because the recognizer fell behind. Kept sound still goes on.
+    let mut behind = false;
+    let mut warned_end = false;
     let mut seq = 0_u32;
     let started = Instant::now();
     let mut last_level = Instant::now();
     let mut error = None;
     // A microphone the system will not share delivers exact zeros instead of failing.
     let mut any_sound = false;
-    loop {
-        if stop.load(Ordering::SeqCst) || started.elapsed().as_secs() >= MAX_SECONDS {
+    'capture: loop {
+        if stop.load(Ordering::SeqCst) {
             break;
+        }
+        let elapsed = started.elapsed().as_secs();
+        if elapsed >= MAX_SECONDS {
+            error = Some(format!(
+                "The recording stopped by itself after {} minutes. Start a new one to go on.",
+                MAX_SECONDS / 60
+            ));
+            break;
+        }
+        if !warned_end && elapsed + END_WARNING_SECONDS >= MAX_SECONDS {
+            warned_end = true;
+            notice(
+                app,
+                id,
+                format!(
+                    "The recording stops by itself in a minute, at {} minutes.",
+                    MAX_SECONDS / 60
+                ),
+            );
         }
         if !any_sound && started.elapsed() >= SILENT_DEVICE {
             error = Some(silent_device_message());
             // Silence is not worth keeping as a recording.
-            all.clear();
+            parts = None;
             break;
         }
         if let Some(message) = failed
@@ -528,17 +666,30 @@ fn capture(
         any_sound = any_sound || data.iter().any(|sample| *sample != 0.0);
         mono.clear();
         resampler.push(&data, &mut mono);
-        // Only what fits under the attachment limit is kept, so the file is never refused whole.
-        let room = keep_cap.saturating_sub(all.len());
-        if keep && room > 0 {
-            all.extend(audio::to_pcm(&mono[..mono.len().min(room)]));
+        // A full file is saved now and the recording goes on in the next one, so each file
+        // stays under the attachment and upload limits.
+        if let Some(parts) = parts.as_mut() {
+            for part in parts.push(&audio::to_pcm(&mono)) {
+                let _ = work.send(Work::Part(part));
+            }
         }
         for slice in chunker.push(&mono) {
             let pause = chunker.take_pause();
-            if slices {
-                let _ = work.send(Work::Slice(seq, slice, pause));
-                seq += 1;
+            if !setup.slices || behind {
+                continue;
             }
+            if !backlog.admit(slice.len(), backlog_limit) {
+                behind = true;
+                if parts.is_none() {
+                    // Nothing else of the recording would be kept, so it ends here.
+                    error = Some(behind_message(false));
+                    break 'capture;
+                }
+                notice(app, id, behind_message(true));
+                continue;
+            }
+            let _ = work.send(Work::Slice(seq, slice, pause));
+            seq += 1;
         }
         if last_level.elapsed() >= Duration::from_millis(120) {
             last_level = Instant::now();
@@ -553,20 +704,56 @@ fn capture(
         }
     }
     drop(stream);
-    if slices {
+    if setup.slices && !behind {
         if let Some(slice) = chunker.finish() {
             let pause = chunker.take_pause();
+            // The last slice is short and nothing follows it, so it is always taken.
+            backlog.admit(slice.len(), usize::MAX);
             let _ = work.send(Work::Slice(seq, slice, pause));
         }
     }
-    let _ = work.send(Work::End(all, error));
+    if behind && error.is_none() {
+        error = Some(
+            "Live text stopped early because speech recognition fell behind. \
+             Re-analyze the recording to get the rest as text."
+                .into(),
+        );
+    }
+    let last = parts.map(|parts| parts.current).unwrap_or_default();
+    let _ = work.send(Work::End(last, error));
 }
 
-/// Turns slices into text in order, then closes the recording.
+/// Name of file `number` (from 1) of a recording.
+fn part_name(session_id: &str, number: usize) -> String {
+    let short = &session_id[..8.min(session_id.len())];
+    if number <= 1 {
+        format!("voice-{short}.wav")
+    } else {
+        format!("voice-{short}-{number}.wav")
+    }
+}
+
+/// Saves one file of a recording with the words heard while it was recorded.
+/// Returns its Markdown line.
+fn save_part(state: &AppState, name: &str, pcm: &[i16], heard: &str) -> Result<String, AppError> {
+    let line = crate::media::save_named(
+        &state.media_dir,
+        &audio::wav_bytes(pcm),
+        Some(name),
+        Some("audio/wav"),
+    )?;
+    if let Some(media) = crate::media::parse_media_token(&line) {
+        let _ = state.db.save_recording(&media.name, heard);
+    }
+    Ok(line)
+}
+
+/// Turns slices into text in order, saves the kept sound file by file, then closes the recording.
 async fn work(
     app: AppHandle,
     event: StateEvent,
     recognizer: Recognizer,
+    backlog: Arc<Backlog>,
     mut rx: tokio::sync::mpsc::UnboundedReceiver<Work>,
 ) {
     let state = app.state::<AppState>();
@@ -574,7 +761,30 @@ async fn work(
     let http = state.http.clone();
     let mut heard = String::new();
     let mut failure: Option<String> = None;
-    let mut audio_line = None;
+    let mut audio_lines = Vec::new();
+    let mut parts_saved = 0_usize;
+    // Where the words of the file being recorded start in `heard`.
+    let mut part_from = 0_usize;
+    let mut save = |pcm: &[i16], heard: &str, failure: &mut Option<String>| {
+        parts_saved += 1;
+        let words = heard[part_from..].trim();
+        part_from = heard.len();
+        match save_part(
+            &state,
+            &part_name(&event.session_id, parts_saved),
+            pcm,
+            words,
+        ) {
+            Ok(line) => {
+                audio_lines.push(line);
+                true
+            }
+            Err(err) => {
+                failure.get_or_insert(format!("the recording was not saved: {err}"));
+                false
+            }
+        }
+    };
 
     if recognizer.source == Source::Local {
         let dir = engine_dir(&app);
@@ -601,6 +811,7 @@ async fn work(
     while let Some(item) = rx.recv().await {
         match item {
             Work::Slice(seq, samples, pause_ms) => {
+                let _queued = backlog.taken(samples.len());
                 if failure.is_some() {
                     continue;
                 }
@@ -655,28 +866,18 @@ async fn work(
                     }
                 }
             }
+            Work::Part(pcm) => {
+                if !save(&pcm, &heard, &mut failure) {
+                    // The next file would fail the same way, so the recording ends here.
+                    stop(&state);
+                }
+            }
             Work::End(pcm, capture_error) => {
                 if failure.is_none() {
                     failure = capture_error;
                 }
                 if !pcm.is_empty() {
-                    let name = format!("voice-{}.wav", &event.session_id[..8]);
-                    match crate::media::save_named(
-                        &state.media_dir,
-                        &audio::wav_bytes(&pcm),
-                        Some(&name),
-                        Some("audio/wav"),
-                    ) {
-                        Ok(line) => {
-                            if let Some(media) = crate::media::parse_media_token(&line) {
-                                let _ = state.db.save_recording(&media.name, &heard);
-                            }
-                            audio_line = Some(line);
-                        }
-                        Err(err) => {
-                            failure.get_or_insert(format!("the recording was not saved: {err}"));
-                        }
-                    }
+                    save(&pcm, &heard, &mut failure);
                 }
                 break;
             }
@@ -697,7 +898,7 @@ async fn work(
             session_id: event.session_id.clone(),
             note_id: event.note_id.clone(),
             purpose: event.purpose,
-            audio: audio_line,
+            audio: audio_lines,
             error: failure,
         },
     );
@@ -898,6 +1099,41 @@ mod tests {
         let own = audio::wav_bytes(&[0, 16384, -16384]);
         assert_eq!(wav_samples(&own).unwrap(), vec![0.0, 0.5, -0.5]);
         assert!(wav_samples(b"not a wav file").is_err());
+    }
+
+    #[test]
+    fn kept_sound_rolls_over_into_files_of_the_part_size() {
+        let mut parts = Parts::new(10);
+        assert!(parts.push(&[1; 6]).is_empty());
+        let full = parts.push(&[2; 17]);
+        assert_eq!(full.len(), 2);
+        assert_eq!(full[0], [1, 1, 1, 1, 1, 1, 2, 2, 2, 2]);
+        assert_eq!(full[1], [2; 10]);
+        assert_eq!(parts.current, [2; 3], "the rest starts the next file");
+        let total: usize = full.iter().map(Vec::len).sum::<usize>() + parts.current.len();
+        assert_eq!(total, 23, "no sound is lost at a boundary");
+    }
+
+    #[test]
+    fn the_backlog_refuses_sound_past_its_limit_until_slices_are_done() {
+        let backlog = Backlog::default();
+        assert!(backlog.admit(60, 100));
+        assert!(!backlog.admit(50, 100));
+        {
+            let _working = backlog.taken(60);
+            assert!(!backlog.admit(50, 100));
+        }
+        assert!(backlog.admit(50, 100), "a finished slice makes room");
+        assert!(backlog.admit(50, 100));
+        assert!(!backlog.admit(1, 100));
+    }
+
+    #[test]
+    fn files_of_one_recording_share_its_name() {
+        let id = "0123abcd-ffff-4444-8888-000000000000";
+        assert_eq!(part_name(id, 1), "voice-0123abcd.wav");
+        assert_eq!(part_name(id, 2), "voice-0123abcd-2.wav");
+        assert_eq!(part_name(id, 3), "voice-0123abcd-3.wav");
     }
 
     #[test]
