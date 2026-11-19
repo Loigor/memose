@@ -61,7 +61,7 @@ These are helpers, not a component framework:
 | `editor/` (`markdown-edit.ts`, `editor-blocks.ts`, `editor-field.ts`, `code-view.ts`, `textarea.ts`, `history.ts`, `md-highlight.ts`) | Block editor, read-only code views in preview, markdown transforms, undo |
 | `media/` (`media-dnd.ts`, `media-elements.ts`, `files.ts`) | Paste/drop, resize, lightbox, attachments |
 | `look/` (`look.ts`, `memo-chrome.ts`, `hue-pop.ts`, `audience-ui.ts`, `visibility.ts`, `sync-status.ts`) | Hue, theme, audience, sync icon |
-| `ai/` (`gate.ts`, `mount.ts`, `llm-edit.ts`, `llm-diff-view.ts`, `dictation.ts`, `recording-tools.ts`, `speech.ts`, `effort-slider.ts`) | Optional AI prompts and recording. `gate.ts` is the only part in the main bundle: it loads the rest as a separate chunk once model prompts or recording are turned on, and every mount returns a teardown |
+| `ai/` (`gate.ts`, `mount.ts`, `llm-edit.ts` with `llm-settings.ts`, `llm-composer.ts`, `llm-entry.ts` and `llm-float.ts`, `llm-diff-view.ts`, `dictation.ts`, `recording-tools.ts`, `speech.ts`, `effort-slider.ts`) | Optional AI prompts and recording. `gate.ts` is the only part in the main bundle: it loads the rest as a separate chunk once model prompts or recording are turned on, and every mount returns a teardown |
 | `shortcuts.ts` | Shortcut matching (shared with settings) |
 | `types.ts` | `Note` / `MemoSpace` shapes matching Rust `#[serde(rename_all = "camelCase")]` |
 

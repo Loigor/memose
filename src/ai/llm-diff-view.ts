@@ -2,7 +2,7 @@
 
 import { el } from "../dom";
 import { diffLines, hunksOf, locateBlock, splitLines, type DiffPart, type Hunk } from "../editor/line-diff";
-import type { ChatEntry } from "./llm-edit";
+import type { ChatEntry } from "./llm-settings";
 
 /** A folded section in the chat. */
 function fold(label: string, content: HTMLElement, open = false): HTMLElement {

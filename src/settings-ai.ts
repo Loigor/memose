@@ -2,7 +2,7 @@
 
 import { invoke } from "@tauri-apps/api/core";
 
-import type { AiMode, AiPreset, AiSettings } from "./ai/llm-edit";
+import type { AiMode, AiPreset, AiSettings } from "./ai/llm-settings";
 import { required } from "./dom";
 import { statusRunner } from "./settings-status";
 
