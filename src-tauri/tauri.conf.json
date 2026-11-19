@@ -47,6 +47,14 @@
       "entitlements": "Entitlements.plist",
       "signingIdentity": "-"
     },
+    "linux": {
+      "deb": {
+        "depends": ["libasound2"]
+      },
+      "rpm": {
+        "depends": ["alsa-lib"]
+      }
+    },
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",
