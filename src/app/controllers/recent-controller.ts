@@ -33,6 +33,48 @@ export interface RecentController {
   collapseForFlush(): void;
 }
 
+/** One tooltip for the sync icons, shown at once on hover. It lives on the body so the list does not clip it. */
+function createSyncTip() {
+  const tip = document.createElement("div");
+  tip.className = "sync-tip";
+  tip.setAttribute("role", "tooltip");
+  tip.hidden = true;
+  document.body.append(tip);
+  let owner: HTMLElement | null = null;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+
+  function show(anchor: HTMLElement, text: string, failed = true, ms = 0) {
+    clearTimeout(timer);
+    owner = anchor;
+    tip.textContent = text;
+    tip.classList.toggle("failed", failed);
+    tip.hidden = false;
+    const box = anchor.getBoundingClientRect();
+    const width = tip.offsetWidth;
+    const height = tip.offsetHeight;
+    const left = Math.min(Math.max(4, box.right - width), window.innerWidth - width - 4);
+    const below = box.bottom + 6;
+    const top = below + height > window.innerHeight - 4 ? box.top - height - 6 : below;
+    tip.style.left = `${left}px`;
+    tip.style.top = `${Math.max(4, top)}px`;
+    if (ms > 0) {
+      timer = setTimeout(() => hide(anchor), ms);
+    }
+  }
+
+  /** Hides the tip if `anchor` shows it, or always without an anchor. */
+  function hide(anchor?: HTMLElement) {
+    if (anchor && anchor !== owner) {
+      return;
+    }
+    clearTimeout(timer);
+    owner = null;
+    tip.hidden = true;
+  }
+
+  return { show, hide };
+}
+
 export function createRecentController(
   context: AppContext,
   state: RecentState,
@@ -41,6 +83,68 @@ export function createRecentController(
 ): RecentController {
   const { memoList, recent, recentSearch, recentMore, pinToggle } = context.dom;
   const pinned = context.mode.kind === "pinned";
+  const syncTip = createSyncTip();
+  /** Memos whose manual retry is running, so a refresh in between keeps the busy look. */
+  const retrying = new Set<string>();
+
+  function syncFailed(item: Note) {
+    return item.syncState === "error" && item.visibility !== "OFFLINE_PRIVATE";
+  }
+
+  function failureText(reason: string | null) {
+    return `Sync failed: ${reason?.trim() || "unknown reason"}. Click to retry.`;
+  }
+
+  function syncButton(item: Note) {
+    const sync = document.createElement("button");
+    sync.type = "button";
+    sync.className = "sync sync-failed";
+    sync.innerHTML = syncIcon(item.syncState, item.visibility).svg;
+    sync.setAttribute("aria-label", failureText(item.lastError));
+    let reason = item.lastError;
+    if (retrying.has(item.id)) {
+      sync.classList.add("busy");
+      sync.disabled = true;
+    }
+    sync.addEventListener("pointerenter", () => {
+      syncTip.show(sync, sync.disabled ? "Retrying sync…" : failureText(reason));
+    });
+    sync.addEventListener("focus", () => {
+      syncTip.show(sync, sync.disabled ? "Retrying sync…" : failureText(reason));
+    });
+    sync.addEventListener("pointerleave", () => syncTip.hide(sync));
+    sync.addEventListener("blur", () => syncTip.hide(sync));
+    sync.addEventListener("click", (event) => {
+      event.stopPropagation();
+      if (retrying.has(item.id)) {
+        return;
+      }
+      retrying.add(item.id);
+      sync.classList.add("busy");
+      sync.disabled = true;
+      syncTip.show(sync, "Retrying sync…", false);
+      void context.backend
+        .retrySync(item.id)
+        .then((note) => (syncFailed(note) ? note.lastError ?? null : undefined))
+        .catch((error: unknown) => String(error instanceof Error ? error.message : error))
+        .then(async (failure) => {
+          retrying.delete(item.id);
+          await refresh().catch((error: unknown) => {
+            console.error(error);
+          });
+          // The list was drawn again, so the reason is shown on the new icon of this memo.
+          const fresh = recent.querySelector<HTMLElement>(`li[data-id="${CSS.escape(item.id)}"] .sync`);
+          const anchor = fresh ?? sync;
+          if (failure === undefined) {
+            syncTip.show(anchor, "Synced.", false, 1500);
+            return;
+          }
+          reason = failure;
+          syncTip.show(anchor, `Retry failed: ${failure?.trim() || "unknown reason"}`, true, 6000);
+        });
+    });
+    return sync;
+  }
 
   function clearQuery() {
     state.query = "";
@@ -151,6 +255,7 @@ export function createRecentController(
         ? notes.filter((item) => item.content.toLowerCase().includes(state.query))
         : notes.slice(0, collapsedCount);
     recent.classList.toggle("expanded", state.expanded || forcePinSearch);
+    syncTip.hide();
     recent.replaceChildren();
     if (visible.length === 0) {
       const empty = document.createElement("li");
@@ -163,6 +268,9 @@ export function createRecentController(
       row.dataset.id = item.id;
       if (item.id === session.selectedId()) {
         row.classList.add("selected");
+      }
+      if (syncFailed(item)) {
+        row.classList.add("sync-error");
       }
       const title = document.createElement("button");
       title.type = "button";
@@ -180,11 +288,16 @@ export function createRecentController(
       when.className = "when";
       when.textContent = relativeTime(item.updatedAt);
       when.title = exactStamp(item.updatedAt);
-      const sync = document.createElement("span");
-      sync.className = "sync";
-      const icon = syncIcon(item.syncState, item.visibility);
-      sync.innerHTML = icon.svg;
-      sync.title = item.lastError ?? icon.label;
+      let sync: HTMLElement;
+      if (syncFailed(item)) {
+        sync = syncButton(item);
+      } else {
+        sync = document.createElement("span");
+        sync.className = "sync";
+        const icon = syncIcon(item.syncState, item.visibility);
+        sync.innerHTML = icon.svg;
+        sync.title = item.lastError ?? icon.label;
+      }
       const pin = document.createElement("button");
       pin.type = "button";
       pin.className = "pin icon-button";

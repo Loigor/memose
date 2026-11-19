@@ -900,6 +900,20 @@ pub async fn resolve_conflict(
     }
 }
 
+/// Pushes waiting and failed memos now, then returns this memo. A memo that still failed has its reason in `last_error`.
+#[tauri::command]
+pub async fn retry_sync(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    id: String,
+) -> Result<Note, AppError> {
+    notes::request_retry(&app).await?;
+    state
+        .db
+        .get(&id)?
+        .ok_or_else(|| AppError::Message("note not found".into()))
+}
+
 #[tauri::command]
 pub fn set_pinned(
     app: AppHandle,

@@ -92,6 +92,7 @@ pub fn run() {
             commands::open_media_preview,
             commands::close_media_preview,
             commands::list_recent,
+            commands::retry_sync,
             commands::get_settings,
             commands::save_settings,
             commands::list_memo_spaces,

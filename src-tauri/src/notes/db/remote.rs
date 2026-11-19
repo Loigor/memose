@@ -69,11 +69,12 @@ impl Db {
         })
     }
 
+    /// A sync state change is not an edit, so `updated_at` stays and the memo keeps its place in the list.
     pub fn mark_local(&self, id: &str) -> Result<(), AppError> {
         self.with(|conn| {
             conn.execute(
-                "UPDATE notes SET sync_state = ?1, last_error = NULL, updated_at = ?2 WHERE id = ?3",
-                params![LOCAL, now_ms(), id],
+                "UPDATE notes SET sync_state = ?1, last_error = NULL WHERE id = ?2",
+                params![LOCAL, id],
             )?;
             Ok(())
         })
@@ -83,8 +84,8 @@ impl Db {
         let message: String = message.chars().take(500).collect();
         self.with(|conn| {
             conn.execute(
-                "UPDATE notes SET sync_state = ?1, last_error = ?2, updated_at = ?3 WHERE id = ?4",
-                params![ERROR, message, now_ms(), id],
+                "UPDATE notes SET sync_state = ?1, last_error = ?2 WHERE id = ?3",
+                params![ERROR, message, id],
             )?;
             Ok(())
         })

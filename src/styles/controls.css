@@ -185,6 +185,71 @@ html.collapsed.hover-open #card > header .collapsed-chevron,
   width: 14px;
 }
 
+/* A memo whose sync failed: reddish text and a red icon that retries on click. */
+#recent li.sync-error {
+  --sync-red: #c0362c;
+}
+
+html[data-theme="dark"] #recent li.sync-error {
+  --sync-red: #f97066;
+}
+
+#recent li.sync-error .title,
+#recent li.sync-error .when {
+  color: color-mix(in srgb, var(--sync-red) 75%, var(--ink));
+}
+
+#recent .sync.sync-failed {
+  width: 18px;
+  height: 18px;
+  justify-content: center;
+  padding: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--sync-red);
+  cursor: pointer;
+}
+
+#recent .sync.sync-failed:hover,
+#recent .sync.sync-failed:focus-visible {
+  background: color-mix(in srgb, var(--sync-red) 16%, transparent);
+}
+
+#recent .sync.sync-failed.busy {
+  cursor: progress;
+  opacity: 0.55;
+  animation: sync-retry-pulse 0.9s ease-in-out infinite alternate;
+}
+
+@keyframes sync-retry-pulse {
+  to {
+    opacity: 1;
+  }
+}
+
+.sync-tip {
+  position: fixed;
+  z-index: 1000;
+  max-width: min(280px, calc(100vw - 8px));
+  padding: 5px 8px;
+  border-radius: 6px;
+  background: var(--ink);
+  color: var(--paper);
+  font: 11px/1.35 system-ui, sans-serif;
+  overflow-wrap: anywhere;
+  pointer-events: none;
+  box-shadow: 0 2px 8px var(--shadow);
+}
+
+.sync-tip.failed {
+  background: #b42318;
+  color: #fff;
+}
+
+.sync-tip[hidden] {
+  display: none;
+}
+
 #recent .pin {
   flex: none;
   width: 22px;

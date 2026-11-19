@@ -1286,6 +1286,24 @@ mod tests {
     }
 
     #[test]
+    fn a_failed_or_local_sync_keeps_the_list_order() {
+        let db = db();
+        db.finalize_content("older").unwrap();
+        let older = db.list_recent(10).unwrap().remove(0);
+        std::thread::sleep(std::time::Duration::from_millis(5));
+        db.finalize_content("newer").unwrap();
+        std::thread::sleep(std::time::Duration::from_millis(5));
+        db.mark_error(&older.id, "server said no").unwrap();
+        db.mark_local(&older.id).unwrap();
+        db.mark_error(&older.id, "server said no").unwrap();
+        let notes = db.list_recent(10).unwrap();
+        assert_eq!(notes[0].content, "newer");
+        assert_eq!(notes[1].id, older.id);
+        assert_eq!(notes[1].updated_at, older.updated_at);
+        assert_eq!(notes[1].last_error.as_deref(), Some("server said no"));
+    }
+
+    #[test]
     fn list_recent_skips_the_open_draft() {
         let db = db();
         db.finalize_content("saved").unwrap();
