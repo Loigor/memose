@@ -1,33 +1,4 @@
 {
-  "permissions": {
-    "allow": [
-      "Bash(npm run test:ts)",
-      "Bash(npm run -s test:ts)",
-      "Bash(npm run test:ui)",
-      "Bash(npm run -s test:ui)",
-      "Bash(npm run lint)",
-      "Bash(npm run -s lint)",
-      "Bash(npm run check)",
-      "Bash(npm run -s check)",
-      "Bash(npm run test:rust)",
-      "Bash(npm run -s test:rust)",
-      "Bash(npm run lint:rust)",
-      "Bash(npm run -s lint:rust)",
-      "Bash(npm run format:check)",
-      "Bash(npm run -s format:check)",
-      "Bash(npm run fmt:rust:check)",
-      "Bash(npm run build)",
-      "Bash(npx tsc --noEmit)",
-      "Bash(npx tsc --noEmit -p .)",
-      "Bash(cargo clippy *)",
-      "Bash(cargo test)",
-      "Bash(cargo test *)",
-      "Bash(cargo fmt)",
-      "Bash(cargo fmt --check)",
-      "Bash(cargo fmt --manifest-path src-tauri/Cargo.toml)",
-      "Bash(cargo fmt --manifest-path src-tauri/Cargo.toml --check)"
-    ]
-  },
   "hooks": {
     "PreToolUse": [
       {
