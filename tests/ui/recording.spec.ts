@@ -22,8 +22,10 @@ async function setSlider(slider: import("@playwright/test").Locator, value: numb
 
 test("the record button stays hidden until recording is on", async ({ page }) => {
   await openComposer(page, { draft: { content: "plain memo" } });
-  await expect.poll(async () => invokedCmds(page)).toContain("get_speech_settings");
+  await expect.poll(async () => invokedCmds(page)).toContain("get_settings");
   await expect(page.locator("#rec-anchor")).toBeHidden();
+  // With recording and prompts off, the recording code is not even loaded.
+  expect(await invokedCmds(page)).not.toContain("get_speech_settings");
 });
 
 test("dictation lands at the cursor, grows, and is tidied by the model", async ({ page }) => {
@@ -63,6 +65,49 @@ test("without the chat model the text stays as it was heard, and the sound can b
     .poll(async () => lastDraft(page))
     .toBe("Notes first words\n![voice-1.wav](memose-media/12345678-voice-1.wav)");
   expect(await invokedCmds(page)).not.toContain("speech_polish");
+});
+
+test("a long recording saved in several files puts every file under its words, in order", async ({ page }) => {
+  await openComposer(page, {
+    draft: { content: "Notes" },
+    speech: {
+      ...ready,
+      keepAudio: true,
+      audio: [
+        "![voice-1.wav](memose-media/12345678-voice-1.wav)",
+        "![voice-1-2.wav](memose-media/12345678-voice-1-2.wav)",
+        "![voice-1-3.wav](memose-media/12345678-voice-1-3.wav)",
+      ],
+    },
+  });
+  const record = page.locator("#rec-anchor .rec-toggle");
+  await page.locator("#blocks .md-lines").first().click();
+  await page.keyboard.press("End");
+  await record.click();
+  await chunk(page, "speech-1", 0, "a long talk");
+  await expect(page.locator("#blocks")).toContainText("Notes a long talk");
+  await record.click();
+  await expect
+    .poll(async () => lastDraft(page))
+    .toBe(
+      "Notes a long talk\n" +
+        "![voice-1.wav](memose-media/12345678-voice-1.wav)\n" +
+        "![voice-1-2.wav](memose-media/12345678-voice-1-2.wav)\n" +
+        "![voice-1-3.wav](memose-media/12345678-voice-1-3.wav)",
+    );
+});
+
+test("a notice from a running recording is shown in the memo", async ({ page }) => {
+  await openComposer(page, { draft: { content: "Notes" }, speech: ready });
+  const record = page.locator("#rec-anchor .rec-toggle");
+  await record.click();
+  await expect(record).toHaveClass(/rec-on/);
+  await emitEvent(page, "speech-notice", {
+    sessionId: "speech-1",
+    message: "Speech recognition is more than 2 minutes behind, so live text stops here.",
+  });
+  await expect(page.locator("#card .rec-message")).toContainText("more than 2 minutes behind");
+  await expect(record).toHaveClass(/rec-on/);
 });
 
 test("a prompt can be spoken and is sent when recording stops", async ({ page }) => {
@@ -193,7 +238,7 @@ test("a microphone that gives no sound is reported", async ({ page }) => {
     sessionId: "speech-1",
     noteId: null,
     purpose: "memo",
-    audio: null,
+    audio: [],
     error: "macOS is not letting Memose hear the microphone.",
   });
   await expect(page.locator("#card .rec-message")).toContainText("macOS is not letting Memose hear the microphone");

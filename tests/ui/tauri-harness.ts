@@ -96,8 +96,8 @@ export type SpeechSeed = {
   polishReplies?: Record<string, string>;
   /** How long the mocked chat model takes per pass, in ms. */
   polishDelayMs?: number;
-  /** Markdown line a kept recording ends with. */
-  audio?: string;
+  /** Markdown line a kept recording ends with, or one line per file of a long recording. */
+  audio?: string | string[];
   microphone?: "unknown" | "granted" | "denied" | "notNeeded";
   localModel?: "parakeet" | "canary";
   /** Recordings made in the app, by media name: what was heard and the text in the memo. */
@@ -755,13 +755,17 @@ function installBrowserHarness(seed: BrowserSeed) {
         if (ending) {
           speech.session = null;
           emit("speech-state", { recording: false, ...ending });
+          const seeded = seed.speech?.audio ?? [];
+          const n = ending.sessionId.replace("speech-", "");
           const audio =
             ending.purpose === "memo" && speech.keepAudio
-              ? ((seed.speech?.audio ?? null)?.replaceAll("{n}", ending.sessionId.replace("speech-", "")) ?? null)
-              : null;
-          const name = audio ? /\(memose-media\/([^)#]+)/.exec(audio)?.[1] : undefined;
-          if (name) {
-            speech.recordings.set(name, { heard: "heard words", text: "heard words" });
+              ? (Array.isArray(seeded) ? seeded : [seeded]).map((line) => line.replaceAll("{n}", n))
+              : [];
+          for (const line of audio) {
+            const name = /\(memose-media\/([^)#]+)/.exec(line)?.[1];
+            if (name) {
+              speech.recordings.set(name, { heard: "heard words", text: "heard words" });
+            }
           }
           emit("speech-done", { ...ending, audio, error: null });
         }

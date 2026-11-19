@@ -253,6 +253,9 @@ export function createComposer(ctx: ComposerContext): Composer {
       onLevel(level) {
         micEl?.style.setProperty("--rec-level", level.toFixed(2));
       },
+      onNotice(message) {
+        ctx.say(message);
+      },
       onDone(done) {
         voiceSession = null;
         const sendMode = voiceSendAfter;

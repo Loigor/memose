@@ -102,8 +102,9 @@ export type SpeechDone = {
   sessionId: string;
   noteId: string | null;
   purpose: SpeechPurpose;
-  /** Markdown line of the saved recording, when sound was kept. */
-  audio: string | null;
+  /** Markdown lines of the saved recording, one per file, when sound was kept. A long recording is saved in several files. */
+  audio: string[];
+  /** Why the recording ended early or lost something, for the user to read. */
   error: string | null;
 };
 
@@ -111,6 +112,8 @@ export type SpeechHandlers = {
   /** A piece of heard text, its number, and the silence before it in ms. */
   onChunk?(text: string, seq: number, pauseMs: number): void;
   onLevel?(level: number): void;
+  /** Something the user should know while the recording goes on, such as text falling behind. */
+  onNotice?(message: string): void;
   onDone?(done: SpeechDone): void;
 };
 
@@ -155,6 +158,9 @@ function ensureListening() {
   });
   void listen<{ sessionId: string; level: number }>("speech-level", (event) => {
     sessions.get(event.payload.sessionId)?.onLevel?.(event.payload.level);
+  });
+  void listen<{ sessionId: string; message: string }>("speech-notice", (event) => {
+    sessions.get(event.payload.sessionId)?.onNotice?.(event.payload.message);
   });
   void listen<SpeechDone>("speech-done", (event) => {
     const handlers = sessions.get(event.payload.sessionId);

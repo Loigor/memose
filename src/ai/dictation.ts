@@ -505,15 +505,18 @@ export function mountDictation(anchor: HTMLElement, target: DictationTarget): ()
     }
     t.ended = null;
     const current = take === t;
-    if (done.audio) {
+    if (done.audio.length > 0) {
       const memo = target.text();
       const place = t.span ? locateSpan(t.span, memo) : null;
       const at = place ? recordingPlace(memo, place.start, place.end) : memo.replace(/\s+$/, "").length;
-      const placed = insertLine(memo, at, done.audio);
+      // A long recording comes in several files. Their players go together, in order.
+      const placed = insertLine(memo, at, done.audio.join("\n"));
       keepScroll(target.fieldRoots(), () => target.replace(placed.text, t.span !== null));
-      const name = /\(memose-media\/([^)#]+)/.exec(done.audio)?.[1];
-      if (name) {
-        // The recording remembers the words it put into the memo, for its snippet and for re-analysis.
+      const name = /\(memose-media\/([^)#]+)/.exec(done.audio[0])?.[1];
+      // The recording remembers the words it put into the memo, for its snippet and for re-analysis.
+      // The memo's words are not split by file, so a recording in several files keeps the words
+      // each file heard.
+      if (name && done.audio.length === 1) {
         const words = place ? memo.slice(place.start, place.end).trim() : "";
         rememberRecordingText(name, words);
       }
@@ -573,6 +576,11 @@ export function mountDictation(anchor: HTMLElement, target: DictationTarget): ()
             showLive("hearing");
           } else if (Date.now() - quietSince > 900) {
             showLive("waiting");
+          }
+        },
+        onNotice(text) {
+          if (take === t) {
+            say(text);
           }
         },
         onDone(done) {

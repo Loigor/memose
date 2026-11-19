@@ -7,8 +7,10 @@ const localModel = { llmEnabled: true, llmBaseUrl: "http://localhost:11434/v1", 
 test("the AI button stays hidden until model prompts are on", async ({ page }) => {
   await openComposer(page, { draft: { content: "plain memo" } });
   await expect(page.locator("#mode-toggle")).toBeVisible();
-  await expect.poll(async () => invokedCmds(page)).toContain("get_ai_settings");
+  await expect.poll(async () => invokedCmds(page)).toContain("get_settings");
   await expect(page.locator("#ai-anchor")).toBeHidden();
+  // With prompts and recording off, the AI code is not even loaded.
+  expect(await invokedCmds(page)).not.toContain("get_ai_settings");
 });
 
 test("an edit prompt shows a diff in the bubble and accept all applies it", async ({ page }) => {
