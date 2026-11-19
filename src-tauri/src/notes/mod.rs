@@ -10,7 +10,7 @@ pub use db::{
     MEMO_VISIBILITY, PINNED_ALWAYS_ON_TOP, PIN_TAB_BAR_ENABLED, PIN_TAB_EDGE, PIN_TAB_SCREEN,
     SHOW_IN_SWITCHER, SNAP_MEMOS, THEME,
 };
-pub use model::{is_offline_private, Note, SpaceView, REMOTE};
+pub use model::{is_offline_private, Note, SpaceView, MAX_HUE, REMOTE};
 pub use pin_tabs::{tab_at, PinTabHit, PinTabs};
 pub use sync::limits;
 pub use sync::{

@@ -587,7 +587,29 @@ header.compact-meta #edited-sep {
   height: 14px;
   margin: 0;
   border-radius: 999px;
-  background: linear-gradient(90deg, #f00 0%, #ff0 17%, #0f0 33%, #0ff 50%, #00f 67%, #f0f 83%, #f00 100%);
+  /* The track shows the colour each position applies (paintHueTrack in look/memo-chrome.ts);
+     the even OKLCH wheel below is only a fallback. The ring keeps a track of dark papers
+     visible on a dark popover. */
+  background: var(
+    --track,
+    linear-gradient(
+      90deg,
+      oklch(0.74 0.14 29.2),
+      oklch(0.74 0.14 59.2),
+      oklch(0.74 0.14 89.2),
+      oklch(0.74 0.14 119.2),
+      oklch(0.74 0.14 149.2),
+      oklch(0.74 0.14 179.2),
+      oklch(0.74 0.14 209.2),
+      oklch(0.74 0.14 239.2),
+      oklch(0.74 0.14 269.2),
+      oklch(0.74 0.14 299.2),
+      oklch(0.74 0.14 329.2),
+      oklch(0.74 0.14 359.2),
+      oklch(0.74 0.14 29.2)
+    )
+  );
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--ink, #3d3420) 28%, transparent);
 }
 
 #hue-slider::-webkit-slider-thumb,

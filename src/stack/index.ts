@@ -3,6 +3,7 @@ import type { ZoomKey } from "../editor/font-size";
 import { restoreCaret } from "../editor/history";
 import { resizeAllBlockTextareas } from "../editor/textarea";
 import { darkHue, lightHue } from "../look/look";
+import { writeHueSlider } from "../look/memo-chrome";
 import type { MediaNoteMutator } from "../media/media-dnd";
 import { mountAudience } from "./audience";
 import { mountChrome } from "./chrome";
@@ -75,7 +76,7 @@ export function createStackController(deps: StackDeps): StackController {
         apply(hue: number) {
           const slider = target.section.querySelector<HTMLInputElement>(".hue-slider");
           if (slider) {
-            slider.value = String(hue);
+            writeHueSlider(slider, hue);
           }
           look.setSectionHue(target.section, target.state, hue);
         },

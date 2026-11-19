@@ -54,7 +54,7 @@ export interface StackApi {
   setHostCollapsed(collapsed: boolean): Promise<void>;
   setHostCollapsedFlag(collapsed: boolean): void;
   setLogicalHeight(height: number): Promise<void>;
-  setSectionHue(section: HTMLElement, state: SectionState, hue: number): void;
+  setSectionHue(section: HTMLElement, state: SectionState, hue: number | null): void;
   stackCounts(): {
     opens: number;
     bars: number;

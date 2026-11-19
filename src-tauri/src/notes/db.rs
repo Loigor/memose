@@ -406,8 +406,8 @@ impl Db {
         coder: Option<bool>,
     ) -> Result<(), AppError> {
         let opacity = opacity.min(100);
-        let hue_light = hue_light.filter(|hue| *hue <= 359);
-        let hue_dark = hue_dark.filter(|hue| *hue <= 359);
+        let hue_light = hue_light.filter(|hue| *hue <= crate::notes::MAX_HUE);
+        let hue_dark = hue_dark.filter(|hue| *hue <= crate::notes::MAX_HUE);
         let stored = encode_swatches(swatches);
         let theme = match theme {
             Some("dark") => Some("dark"),
@@ -817,7 +817,7 @@ fn encode_swatches(swatches: &[u16]) -> Option<String> {
     let hues: Vec<u16> = swatches
         .iter()
         .copied()
-        .filter(|hue| *hue <= 359)
+        .filter(|hue| *hue <= crate::notes::MAX_HUE)
         .take(6)
         .collect();
     if hues.is_empty() {
@@ -838,7 +838,7 @@ fn parse_swatches(raw: Option<String>) -> Vec<u16> {
     };
     raw.split(',')
         .filter_map(|part| part.trim().parse::<u16>().ok())
-        .filter(|hue| *hue <= 359)
+        .filter(|hue| *hue <= crate::notes::MAX_HUE)
         .take(6)
         .collect()
 }
@@ -846,7 +846,7 @@ fn parse_swatches(raw: Option<String>) -> Vec<u16> {
 fn hue_column(value: Option<i64>) -> Option<u16> {
     value
         .and_then(|hue| u16::try_from(hue).ok())
-        .filter(|hue| *hue <= 359)
+        .filter(|hue| *hue <= crate::notes::MAX_HUE)
 }
 
 fn map_note(row: &rusqlite::Row<'_>) -> rusqlite::Result<Note> {

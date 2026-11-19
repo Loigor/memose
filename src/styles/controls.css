@@ -235,7 +235,9 @@ html[data-theme="dark"] #recent li.sync-error {
   border-radius: 6px;
   background: var(--ink);
   color: var(--paper);
-  font: 11px/1.35 system-ui, sans-serif;
+  font:
+    11px/1.35 system-ui,
+    sans-serif;
   overflow-wrap: anywhere;
   pointer-events: none;
   box-shadow: 0 2px 8px var(--shadow);

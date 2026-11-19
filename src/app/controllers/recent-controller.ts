@@ -125,7 +125,7 @@ export function createRecentController(
       syncTip.show(sync, "Retrying sync…", false);
       void context.backend
         .retrySync(item.id)
-        .then((note) => (syncFailed(note) ? note.lastError ?? null : undefined))
+        .then((note) => (syncFailed(note) ? (note.lastError ?? null) : undefined))
         .catch((error: unknown) => String(error instanceof Error ? error.message : error))
         .then(async (failure) => {
           retrying.delete(item.id);

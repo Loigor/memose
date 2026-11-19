@@ -90,10 +90,21 @@ import {
   baseColors,
   huePopHtml,
   palette,
+  GREY_BASE,
+  GREYS,
+  HUE_SLIDER_MAX,
+  hueAtPosition,
+  huePosition,
+  MAX_HUE,
+  nextRandomHue,
+  okHue,
   paperAt,
+  readHueSlider,
   stackHeaderHtml,
+  TAB_HUE_SLIDER_MAX,
   tabFill,
   themeGlyph,
+  writeHueSlider,
 } from "../src/look/memo-chrome.ts";
 import { clampHueSwatches } from "../src/look/swatches.ts";
 import { pointIn, pointOnScrollGutter, requireEl } from "../src/dom.ts";
@@ -1029,19 +1040,45 @@ test("formatDocument indents javascript when json parse fails", () => {
 
 test("memo-chrome computes palettes and renders stack header template", () => {
   assert.match(paperAt("light", 48), /^hsl\(48 /);
-  assert.match(paperAt("dark", 200), /^hsl\(200 /);
-  assert.equal(tabFill("light", 48), "hsl(48 100% 64%)");
-  assert.equal(tabFill("dark", 210), "hsl(210 82% 46%)");
+  assert.match(paperAt("dark", 200), /^oklch\(0\.31 0\.06 /);
+  // Tabs: deep in dark under white text, soft in light under dark text.
+  assert.match(tabFill("dark", 210), /^oklch\(0\.46 /);
+  assert.match(tabFill("light", 48), /^oklch\(0\.84 /);
   assert.equal(baseColors("light")["--paper"], "#fff4b8");
   assert.equal(baseColors("dark")["--paper"], "#25282c");
   const tinted = palette("dark", 180);
-  assert.ok(tinted["--paper"].includes("180"));
+  assert.equal(tinted["--paper"], paperAt("dark", 180));
+  assert.ok(tinted["--ink"].includes("180"));
   assert.ok(themeGlyph(true).includes("circle"));
   assert.ok(themeGlyph(false).includes("path"));
   assert.ok(stackHeaderHtml().includes('class="brand-name"'));
   assert.ok(huePopHtml().includes("hue-slider"));
   assert.ok(huePopHtml().includes("hue-slot"));
   assert.deepEqual(clampHueSwatches([48, 400, 48, 210, 12]), [48, 210, 12]);
+});
+
+test("hues keep their colour name and move evenly to the eye", () => {
+  // A stored hue is an sRGB hue angle: red, green, and blue land on their OKLCH hues.
+  assert.ok(Math.abs(okHue(0) - 29.2) < 0.5);
+  assert.ok(Math.abs(okHue(120) - 142.5) < 0.5);
+  assert.ok(Math.abs(okHue(240) - 264.1) < 0.5);
+  // Slider positions cover the wheel and map back to the same look.
+  for (let hue = 0; hue < 360; hue += 1) {
+    const back = hueAtPosition(huePosition(hue));
+    assert.ok(Math.abs(okHue(back) - okHue(hue)) < 3, `hue ${hue} came back as ${back}`);
+  }
+  assert.equal(hueAtPosition(0), 0);
+  assert.equal(hueAtPosition(360), 0);
+  // The sRGB greens 90–150 are one colour to the eye; they take a small part of the slider.
+  assert.ok(huePosition(150) - huePosition(90) < 25);
+  // Alt+Enter always lands far from the hue it leaves.
+  let hue = 48;
+  for (let i = 0; i < 500; i += 1) {
+    const next = nextRandomHue(hue);
+    const step = Math.abs(huePosition(next) - huePosition(hue));
+    assert.ok(Math.min(step, 360 - step) > 100, `step ${hue} -> ${next}`);
+    hue = next;
+  }
 });
 
 test("release versions and Tauri IPC command contracts stay in sync without dangling handlers", () => {
@@ -1346,4 +1383,45 @@ test("re-analysis replaces the recording's own words and shows a word diff", () 
   const changed = parts.filter((part) => part.kind === "hunk");
   assert.equal(changed.length, 1);
   assert.equal(parts.map((part) => (part.kind === "same" ? part.lines.join("") : "")).join(""), "we ship ");
+});
+
+test("the hue slider ends in greys and then the default paper", () => {
+  const slider = { value: "0", max: String(HUE_SLIDER_MAX) } as HTMLInputElement;
+  const at = (position: number) => {
+    slider.value = String(position);
+    return readHueSlider(slider);
+  };
+  // The wheel, then one band per grey, then the default (no hue) at the far end.
+  assert.equal(at(0), 0);
+  assert.equal(at(GREY_BASE), GREY_BASE);
+  assert.equal(at(HUE_SLIDER_MAX), null);
+  const greys = new Set<number | null>();
+  for (let position = GREY_BASE; position <= HUE_SLIDER_MAX; position += 1) {
+    greys.add(at(position));
+  }
+  assert.deepEqual([...greys], [...Array.from({ length: GREYS }, (_, i) => GREY_BASE + i), null]);
+  assert.equal(MAX_HUE, GREY_BASE + GREYS - 1);
+  // Writing a value puts the thumb back where it reads the same: greys and the default
+  // exactly, colours to the same look (a few sRGB greens are one colour to the eye).
+  for (const value of [GREY_BASE, MAX_HUE, null]) {
+    writeHueSlider(slider, value);
+    assert.equal(readHueSlider(slider), value);
+  }
+  for (const value of [0, 120, 200, 359]) {
+    writeHueSlider(slider, value);
+    const back = readHueSlider(slider);
+    assert.ok(back != null && Math.abs(huePosition(back) - huePosition(value)) % 359 < 2, `${value} -> ${back}`);
+  }
+  // A tab always has a colour: its slider stops after the greys.
+  const tab = { value: "0", max: String(TAB_HUE_SLIDER_MAX) } as HTMLInputElement;
+  tab.value = String(TAB_HUE_SLIDER_MAX);
+  assert.equal(readHueSlider(tab), MAX_HUE);
+  // Greys and the default are neutral; the default is the theme's own paper.
+  assert.equal(paperAt("dark", null), "#25282c");
+  assert.match(paperAt("dark", GREY_BASE), /^oklch\([0-9.]+ 0\.006 /);
+  assert.equal(palette("dark", MAX_HUE)["--ink"], baseColors("dark")["--ink"]);
+  // The slider markup uses the same bounds.
+  const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+  assert.ok(fs.readFileSync(path.join(root, "index.html"), "utf8").includes(`max="${HUE_SLIDER_MAX}"`));
+  assert.ok(fs.readFileSync(path.join(root, "pin-tabs.html"), "utf8").includes(`max="${TAB_HUE_SLIDER_MAX}"`));
 });

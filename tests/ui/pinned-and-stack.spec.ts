@@ -252,3 +252,49 @@ test("a pinned window in a dark app never paints a light frame", async ({ page }
   await expect(page.locator("html")).toHaveAttribute("data-theme", "dark");
   expect(await page.evaluate(() => (globalThis as { __themesSeen?: string[] }).__themesSeen)).toEqual(["dark"]);
 });
+
+test("the hue slider shows the paper colours the memo takes, in its theme", async ({ page }) => {
+  await openPinned(page, "solo-1", { theme: "dark", notes: [{ ...pinnedMemo(), hueDark: 150 }] });
+  const slider = page.locator("#hue-slider");
+  const track = () => slider.evaluate((el) => el.style.getPropertyValue("--track"));
+  const rgb = (css: string) =>
+    page.evaluate((value) => {
+      const canvas = document.createElement("canvas").getContext("2d")!;
+      canvas.fillStyle = value;
+      canvas.fillRect(0, 0, 1, 1);
+      return [...canvas.getImageData(0, 0, 1, 1).data].slice(0, 3).join(",");
+    }, css);
+  await page.locator("#theme-toggle").click({ modifiers: ["Alt"] });
+  await expect(page.locator("#color-pop")).toBeVisible();
+  // Dark: the track is drawn from dark papers, and the thumb is this memo's paper.
+  expect(await track()).toContain("oklch(0.31 0.06");
+  const thumb = await slider.evaluate((el) => el.style.getPropertyValue("--thumb"));
+  const card = await page.locator("#card").evaluate((el) => getComputedStyle(el).getPropertyValue("--paper"));
+  expect(await rgb(thumb)).toBe(await rgb(card));
+  // Light: the track switches to the light papers.
+  await page.locator("#theme-toggle").click({ modifiers: ["Alt"] });
+  await page.locator("#theme-toggle").click();
+  await expect(page.locator("html")).toHaveAttribute("data-theme", "light");
+  await page.locator("#theme-toggle").click({ modifiers: ["Alt"] });
+  await expect.poll(track).toContain("100% 86%)");
+});
+
+test("the far end of the hue slider gives greys, then the default paper", async ({ page }) => {
+  await openPinned(page, "solo-1", { theme: "dark", notes: [{ ...pinnedMemo(), hueDark: 150 }] });
+  await page.locator("#theme-toggle").click({ modifiers: ["Alt"] });
+  const slider = page.locator("#hue-slider");
+  const max = Number(await slider.getAttribute("max"));
+  const saved = async () => (await getNotes(page)).find((note) => note.id === "solo-1")?.hueDark;
+  await slider.fill("367");
+  await expect.poll(saved).toBe(360);
+  await expect
+    .poll(() => page.locator("#card").evaluate((el) => getComputedStyle(el).getPropertyValue("--paper")))
+    .toMatch(/oklch\(0\.44 /);
+  await slider.fill(String(max));
+  await expect.poll(saved).toBeNull();
+  await expect
+    .poll(() => page.locator("#card").evaluate((el) => getComputedStyle(el).getPropertyValue("--paper").trim()))
+    .toBe("#25282c");
+  // Opened again, the thumb sits on the default at the far end.
+  await expect(slider).toHaveValue(/^4[12]\d$/);
+});

@@ -3,6 +3,7 @@ mod drag;
 mod geom;
 mod mac_frame;
 mod pin;
+mod stacking;
 
 pub use composer::{
     apply_composer_size, attach, dismiss_composer, hide_composer, hide_memos, show_composer,
@@ -554,6 +555,10 @@ pub(super) fn style_desktop_window(app: &AppHandle, window: &WebviewWindow, pin_
     mac_frame::allow_above_menu_bar(window);
     if pin_like {
         let _ = window.set_always_on_top(pinned_always_on_top(app));
+    }
+    if is_pin_strip(window.label()) {
+        // Setting always-on-top puts the strip back at the memos' level.
+        stacking::raise_strip(window, pinned_always_on_top(app));
     }
     apply_app_icon(app, window);
 }

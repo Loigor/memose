@@ -2,6 +2,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 
 import { inTauri } from "../platform.ts";
+import { MAX_HUE } from "./memo-chrome.ts";
 
 type Listener = () => void;
 
@@ -13,7 +14,7 @@ export function clampHueSwatches(swatches: number[]): number[] {
   const out: number[] = [];
   for (const raw of swatches) {
     const hue = Math.round(Number(raw));
-    if (!Number.isFinite(hue) || hue < 0 || hue > 359 || out.includes(hue)) {
+    if (!Number.isFinite(hue) || hue < 0 || hue > MAX_HUE || out.includes(hue)) {
       continue;
     }
     out.push(hue);

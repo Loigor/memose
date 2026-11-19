@@ -23,7 +23,7 @@ import { noteTitle } from "./editor/markdown-edit";
 import { resizeAllBlockTextareas } from "./editor/textarea";
 import { bindMediaEditor } from "./media/media-dnd";
 import { initLightbox } from "./media/media-elements";
-import type { ThemeName } from "./look/memo-chrome";
+import { isStoredHue, type ThemeName } from "./look/memo-chrome";
 import { inTauri, isPreviewWindow } from "./platform";
 import type { ShortcutBinds } from "./shortcuts";
 import { createStackController, type StackController } from "./stack/index";
@@ -45,7 +45,7 @@ function readLookHint(value: unknown): LookHint | null {
     return null;
   }
   const raw = value as { hueLight?: unknown; hueDark?: unknown; opacity?: unknown };
-  const hue = (hue: unknown) => (typeof hue === "number" && hue >= 0 && hue <= 359 ? hue : null);
+  const hue = (hue: unknown) => (isStoredHue(hue) ? hue : null);
   const opacity = typeof raw.opacity === "number" ? Math.min(100, Math.max(0, Math.round(raw.opacity))) : 100;
   return { hueLight: hue(raw.hueLight), hueDark: hue(raw.hueDark), opacity };
 }

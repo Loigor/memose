@@ -87,12 +87,23 @@ test("unnamed tabs show Tab #N", async ({ page }) => {
   await expect(page.locator(".pin-tab").nth(1)).toHaveText("Tab #2");
 });
 
-test("dark tabs use a bright fill and white text", async ({ page }) => {
+test("dark tabs use a deep fill under white text", async ({ page }) => {
   await openPinTabs(page, { pinTabs: tabs, theme: "dark" });
   const tab = page.locator(".pin-tab").first();
   await expect(page.locator("html")).toHaveAttribute("data-theme", "dark");
   await expect(tab).toHaveCSS("color", "rgb(255, 255, 255)");
-  await expect(tab).toHaveCSS("background-color", "rgb(21, 117, 213)");
+  // Dark enough that white text passes WCAG AA (4.5:1).
+  const contrast = await tab.evaluate((el) => {
+    const canvas = document.createElement("canvas").getContext("2d")!;
+    canvas.fillStyle = getComputedStyle(el).backgroundColor;
+    canvas.fillRect(0, 0, 1, 1);
+    const [r, g, b] = [...canvas.getImageData(0, 0, 1, 1).data].map((c) => {
+      const v = c / 255;
+      return v <= 0.04045 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4;
+    });
+    return 1.05 / (0.2126 * r + 0.7152 * g + 0.0722 * b + 0.05);
+  });
+  expect(contrast).toBeGreaterThan(4.5);
 });
 
 test("hovered strip makes tab buttons opaque", async ({ page }) => {

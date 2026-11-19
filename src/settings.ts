@@ -1,7 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 
-import { paperAt } from "./look/memo-chrome";
+import { HUE_SLIDER_MAX, paintHueTrack, paperAt, readHueSlider, writeHueSlider } from "./look/memo-chrome";
 import type { MemoSpace } from "./types";
 import {
   eventToBind,
@@ -427,18 +427,19 @@ function spaceRow(space: MemoSpace): HTMLDivElement {
     slider.type = "range";
     slider.className = "space-hue";
     slider.min = "0";
-    slider.max = "359";
-    slider.value = String(hue);
+    slider.max = String(HUE_SLIDER_MAX);
+    writeHueSlider(slider, space.hue ?? null);
     slider.setAttribute("aria-label", `Default color for ${space.title}`);
-    slider.style.setProperty("--thumb", paperAt("light", hue));
+    slider.style.setProperty("--thumb", paperAt("light", space.hue ?? null));
+    paintHueTrack(slider, (at) => paperAt("light", at), 12);
     slider.addEventListener("input", () => {
-      const next = Number(slider.value);
+      const next = readHueSlider(slider);
       space.hue = next;
       swatch.style.background = paperAt("light", next);
       slider.style.setProperty("--thumb", paperAt("light", next));
     });
     slider.addEventListener("change", () => {
-      const next = Number(slider.value);
+      const next = readHueSlider(slider);
       space.hue = next;
       void invoke("set_space_hue", { name: space.name, hue: next })
         .then(() => {

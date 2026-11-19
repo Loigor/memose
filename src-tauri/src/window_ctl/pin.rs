@@ -406,6 +406,7 @@ fn open_pin_window(app: &tauri::AppHandle, id: &str) {
     let handle = app.clone();
     let accept_moves_at = Instant::now() + Duration::from_millis(250);
     window.on_window_event(move |event| match event {
+        WindowEvent::Focused(true) => super::stacking::raise_strips(&handle),
         WindowEvent::Focused(false) => {
             slide_back(&handle, &pin_label(&note_id));
             schedule_resign(&handle);

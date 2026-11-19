@@ -32,6 +32,7 @@ pub fn attach(app: &tauri::AppHandle) {
             api.prevent_close();
             hide_and_save(&handle, true);
         }
+        WindowEvent::Focused(true) => super::stacking::raise_strips(&handle),
         WindowEvent::Focused(false) => {
             slide_back(&handle, WINDOW);
             schedule_resign(&handle);

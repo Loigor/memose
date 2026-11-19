@@ -23,7 +23,7 @@ import { namedTheme } from "../look/look";
 import { mountDictation } from "../ai/dictation";
 import { mountLlmBubble } from "../ai/llm-edit";
 import { mountRecordingTools } from "../ai/recording-tools";
-import { markdownToolbarHtml, stackHeaderHtml } from "../look/memo-chrome";
+import { markdownToolbarHtml, readHueSlider, stackHeaderHtml, writeHueSlider } from "../look/memo-chrome";
 import { hueSwatches, saveHueSwatches } from "../look/swatches";
 import { filesFromTransfer } from "../media/files";
 import { mediaPointer } from "../media/media-elements";
@@ -73,7 +73,7 @@ export function mountSections(ctx: StackCtx) {
     }
     const hue = section.querySelector<HTMLInputElement>(".hue-slider");
     if (hue && document.activeElement !== hue) {
-      hue.value = String(ctx.api.sectionHue(state) ?? 48);
+      writeHueSlider(hue, ctx.api.sectionHue(state));
     }
     ctx.api.paintSectionSlots(section, state);
     ctx.api.paintSectionColor(section, state);
@@ -338,7 +338,7 @@ export function mountSections(ctx: StackCtx) {
       if (!state || !hue) {
         return;
       }
-      ctx.api.setSectionHue(section, state, Number(hue.value));
+      ctx.api.setSectionHue(section, state, readHueSlider(hue));
     });
     section.querySelectorAll<HTMLButtonElement>(".hue-slot").forEach((slot) => {
       slot.addEventListener("click", () => {
@@ -355,9 +355,9 @@ export function mountSections(ctx: StackCtx) {
       if (!state || !hue) {
         return;
       }
-      const value = Number(hue.value);
+      const value = ctx.api.sectionHue(state) ?? readHueSlider(hue);
       const swatches = hueSwatches();
-      if (swatches.includes(value) || swatches.length >= 6) {
+      if (value == null || swatches.includes(value) || swatches.length >= 6) {
         return;
       }
       void saveHueSwatches([...swatches, value]).then(() => {

@@ -125,14 +125,14 @@ impl PinTabs {
 }
 
 fn clamp_hue(hue: u16) -> u16 {
-    hue.min(359)
+    hue.min(crate::notes::MAX_HUE)
 }
 
 fn clamp_swatches(swatches: &[u16]) -> Vec<u16> {
     swatches
         .iter()
         .copied()
-        .filter(|hue| *hue <= 359)
+        .filter(|hue| *hue <= crate::notes::MAX_HUE)
         .take(6)
         .collect()
 }
