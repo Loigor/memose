@@ -215,75 +215,109 @@ export function polishSpeech(before: string, after: string, dictated: string, le
   return invoke<string>("speech_polish", { before, after, dictated, level });
 }
 
-/** Improvement levels, from as heard to proof-read with the memo as context. */
-export const improvementLevels = [
-  { level: 1, name: "Basic", hint: "As the recognizer heard it" },
-  { level: 2, name: "Improved", hint: "Punctuation, capitals, and clear mistakes. Dialect stays." },
-  { level: 3, name: "Proof-read", hint: "Improved, then spelling and grammar into standard written language" },
-  {
-    level: 4,
-    name: "Proof-read with context",
-    hint: "Proof-read, using the memo around the words for names and terms",
-  },
+/** Effort levels for dictated text, from as heard to proof-read with the memo as context. */
+export const effortLevels = [
+  { level: 1, name: "Low", hint: "As heard. No chat model." },
+  { level: 2, name: "Medium", hint: "Punctuation, capitals, and clear mistakes. Dialect stays." },
+  { level: 3, name: "High", hint: "Medium, then spelling and grammar into standard written language." },
+  { level: 4, name: "Max", hint: "High, using the memo around the words for names and terms." },
 ] as const;
 
 export const DEFAULT_LEVEL = 2;
 
-/** The highest level that can run: without the chat model only Basic. */
+/** The name of an effort level, such as "High". */
+export function effortName(level: number): string {
+  return effortLevels.find((item) => item.level === level)?.name ?? "";
+}
+
+/** The highest level that can run: without the chat model only Low. */
 export function topLevel(): number {
   return speechSettings()?.polishReady ? 4 : 1;
 }
 
-/** Saves the level for live dictation. Recording that runs now uses it from the next piece. */
-export function saveImprovementLevel(level: number): Promise<void> {
+/** Saves the effort for live dictation. Recording that runs now uses it from the next piece. */
+export function saveEffort(level: number): Promise<void> {
   if (settings) {
     settings.polishLevel = level;
   }
   return invoke("save_speech_settings", { polishLevel: level });
 }
 
+/** Places the tip above `anchor`, or below it when there is no room above. */
+function placeTip(tip: HTMLElement, anchor: HTMLElement) {
+  const rect = anchor.getBoundingClientRect();
+  const width = tip.offsetWidth;
+  const left = Math.min(Math.max(8, rect.left + rect.width / 2 - width / 2), window.innerWidth - width - 8);
+  const above = rect.top - tip.offsetHeight - 6;
+  tip.style.left = `${Math.max(8, left)}px`;
+  tip.style.top = `${above >= 4 ? above : rect.bottom + 6}px`;
+}
+
 /**
- * A minimal four-step slider: a thin track with a dot per level and the level's name beside it.
- * Click a dot, drag along the track, or use the arrow keys. `onChange` gets the new level.
- * Clicks on it never reach the memo or the recording.
+ * The effort slider: "Effort (High)" and a pill with a dot per level and a knob on the current one.
+ * Click a dot, drag along the pill, or use the arrow keys. Hovering shows what the level does.
+ * `onChange` gets the new level. Clicks on it never reach the memo or the recording.
  */
-export function levelSlider(value: number, onChange: (level: number) => void): HTMLElement {
+export function effortSlider(value: number, onChange: (level: number) => void): HTMLElement {
   const top = topLevel();
   let current = Math.min(Math.max(1, value), top);
   const box = document.createElement("div");
-  box.className = "level-slider";
+  box.className = "effort-slider";
+  const label = document.createElement("span");
+  label.className = "effort-label";
+  const name = document.createElement("span");
+  name.className = "effort-name";
+  label.append("Effort ", name);
   const track = document.createElement("div");
-  track.className = "level-track";
+  track.className = "effort-track";
   track.setAttribute("role", "slider");
-  track.setAttribute("aria-label", "Text improvement");
+  track.setAttribute("aria-label", "Effort");
   track.setAttribute("aria-valuemin", "1");
   track.setAttribute("aria-valuemax", String(top));
   track.tabIndex = -1;
-  const fill = document.createElement("span");
-  fill.className = "level-fill";
-  track.append(fill);
   const steps: HTMLElement[] = [];
-  for (const item of improvementLevels.filter((entry) => entry.level <= top)) {
-    const step = document.createElement("span");
-    step.className = "level-step";
-    step.dataset.level = String(item.level);
-    step.title = `${item.name}: ${item.hint}`;
-    steps.push(step);
-    track.append(step);
+  for (const item of effortLevels.filter((entry) => entry.level <= top)) {
+    const dot = document.createElement("span");
+    dot.className = "effort-dot";
+    dot.dataset.level = String(item.level);
+    steps.push(dot);
+    track.append(dot);
   }
-  const label = document.createElement("span");
-  label.className = "level-name";
+  const knob = document.createElement("span");
+  knob.className = "effort-knob";
+  track.append(knob);
+  const tip = document.createElement("div");
+  tip.className = "effort-tip";
+  tip.setAttribute("role", "tooltip");
+  tip.hidden = true;
+  let hovering = false;
+  let dragging = false;
 
+  const showTip = () => {
+    const shown = (hovering || dragging || document.activeElement === track) && box.isConnected;
+    if (!shown) {
+      tip.hidden = true;
+      tip.remove();
+      return;
+    }
+    if (!tip.isConnected) {
+      document.body.append(tip);
+    }
+    tip.hidden = false;
+    placeTip(tip, track);
+  };
   const paint = () => {
-    const found = improvementLevels.find((item) => item.level === current) ?? improvementLevels[1];
-    label.textContent = found.name;
-    box.title = `${found.name}: ${found.hint}`;
+    const found = effortLevels.find((item) => item.level === current) ?? effortLevels[1];
+    name.textContent = `(${found.name})`;
+    tip.replaceChildren();
+    const strong = document.createElement("strong");
+    strong.textContent = found.name;
+    tip.append(strong, ` · ${found.hint}`);
     track.setAttribute("aria-valuenow", String(current));
-    track.setAttribute("aria-valuetext", found.name);
-    box.style.setProperty("--level-at", String(top > 1 ? (current - 1) / (top - 1) : 0));
-    for (const step of steps) {
-      step.classList.toggle("is-on", Number(step.dataset.level) <= current);
-      step.classList.toggle("is-current", Number(step.dataset.level) === current);
+    track.setAttribute("aria-valuetext", `${found.name}: ${found.hint}`);
+    box.style.setProperty("--effort-at", String(top > 1 ? (current - 1) / (top - 1) : 0));
+    if (!tip.hidden) {
+      placeTip(tip, track);
     }
   };
   const set = (next: number) => {
@@ -295,26 +329,52 @@ export function levelSlider(value: number, onChange: (level: number) => void): H
     paint();
     onChange(level);
   };
+  /** The level whose dot is nearest the pointer. The dots run between the track's side paddings. */
   const atPointer = (clientX: number) => {
     const rect = track.getBoundingClientRect();
-    const share = rect.width > 0 ? (clientX - rect.left) / rect.width : 0;
+    const style = getComputedStyle(track);
+    const dot = steps[0]?.offsetWidth ?? 0;
+    const first = rect.left + (parseFloat(style.paddingLeft) || 0) + dot / 2;
+    const last = rect.right - (parseFloat(style.paddingRight) || 0) - dot / 2;
+    const share = last > first ? (clientX - first) / (last - first) : 0;
     return 1 + Math.round(Math.min(Math.max(share, 0), 1) * (top - 1));
   };
 
   track.addEventListener("pointerdown", (event) => {
     event.preventDefault();
     track.setPointerCapture?.(event.pointerId);
+    dragging = true;
+    box.classList.add("is-dragging");
     set(atPointer(event.clientX));
+    showTip();
   });
   track.addEventListener("pointermove", (event) => {
     if (track.hasPointerCapture?.(event.pointerId)) {
       set(atPointer(event.clientX));
     }
   });
-  track.addEventListener("pointerup", (event) => {
+  const endDrag = (event: PointerEvent) => {
     track.releasePointerCapture?.(event.pointerId);
+    if (!dragging) {
+      return;
+    }
+    dragging = false;
+    box.classList.remove("is-dragging");
+    showTip();
     box.dispatchEvent(new Event("change", { bubbles: true }));
+  };
+  track.addEventListener("pointerup", endDrag);
+  track.addEventListener("pointercancel", endDrag);
+  box.addEventListener("pointerenter", () => {
+    hovering = true;
+    showTip();
   });
+  box.addEventListener("pointerleave", () => {
+    hovering = false;
+    showTip();
+  });
+  track.addEventListener("focus", showTip);
+  track.addEventListener("blur", showTip);
   track.addEventListener("keydown", (event) => {
     if (event.key === "ArrowLeft" || event.key === "ArrowDown") {
       event.preventDefault();
@@ -329,7 +389,16 @@ export function levelSlider(value: number, onChange: (level: number) => void): H
       event.stopPropagation();
     });
   }
-  box.append(track, label);
+  // The tip lives on <body> so scrolling boxes cannot clip it; it leaves with the slider.
+  let attached = false;
+  new MutationObserver((_, observer) => {
+    attached ||= box.isConnected;
+    if (attached && !box.isConnected) {
+      tip.remove();
+      observer.disconnect();
+    }
+  }).observe(document.body, { childList: true, subtree: true });
+  box.append(label, track);
   paint();
   box.hidden = top === 1;
   return box;

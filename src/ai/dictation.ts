@@ -11,9 +11,9 @@ import {
   type Span,
 } from "../editor/dictation-span";
 import {
-  levelSlider,
+  effortSlider,
   polishSpeech,
-  saveImprovementLevel,
+  saveEffort,
   speechAvailable,
   speechRunning,
   speechSettings,
@@ -59,7 +59,7 @@ type Take = {
   id: string | null;
   span: Span | null;
   polishing: boolean;
-  /** Improvement level. The slider beside the listening mark changes it while recording. */
+  /** Effort level. The slider beside the listening mark changes it while recording. */
   level: number;
   /** Paragraphs that ended and wait for the full pass, by their number in the dictation. */
   finalQueue: number[];
@@ -107,13 +107,13 @@ export function mountDictation(anchor: HTMLElement, target: DictationTarget) {
   live.append(pill);
   target.host.append(live);
 
-  /** The improvement slider beside the listening mark. Its level is saved for the next recording too. */
+  /** The effort slider beside the listening mark. Its level is saved for the next recording too. */
   let slider: HTMLElement | null = null;
   const setSlider = (t: Take) => {
     slider?.remove();
-    slider = levelSlider(t.level, (next) => {
+    slider = effortSlider(t.level, (next) => {
       t.level = next;
-      void saveImprovementLevel(next);
+      void saveEffort(next);
       if (t.level <= 1) {
         t.finalQueue = [];
         t.livePending = false;
@@ -597,7 +597,7 @@ export function mountDictation(anchor: HTMLElement, target: DictationTarget) {
   // The listening mark is also a stop button.
   pill.title = "Stop recording (Enter)";
   live.addEventListener("mousedown", (event) => {
-    if (!(event.target instanceof Element && event.target.closest(".level-slider"))) {
+    if (!(event.target instanceof Element && event.target.closest(".effort-slider"))) {
       event.preventDefault();
     }
     event.stopPropagation();

@@ -17,7 +17,7 @@ function chunk(page: Page, sessionId: string, seq: number, text: string, pauseMs
 }
 
 async function setSlider(slider: import("@playwright/test").Locator, value: number) {
-  await slider.locator(`.level-step[data-level="${value}"]`).click();
+  await slider.locator(`.effort-dot[data-level="${value}"]`).click();
 }
 
 test("the record button stays hidden until recording is on", async ({ page }) => {
@@ -281,7 +281,7 @@ test("a recording shows its words and can be re-analyzed into a diff to accept",
   const tools = page.locator("#blocks .rec-tools");
   await expect(tools.locator(".rec-snippet")).toHaveText("“we ship friday”");
   await tools.locator("button", { hasText: /^Re-analyze$/ }).click();
-  await expect(tools.locator(".rec-note")).toHaveText("Re-analyzed (Basic):");
+  await expect(tools.locator(".rec-note")).toHaveText("Re-analyzed (Low effort):");
   await expect(tools.locator(".rec-diff del").first()).toBeVisible();
   await expect(tools.locator(".rec-diff ins").first()).toBeVisible();
   await tools.locator("button", { hasText: "Accept" }).click();
@@ -314,20 +314,45 @@ test("re-analyzing at the context level refines the new text with the memo aroun
     },
   });
   const tools = page.locator("#blocks .rec-tools");
-  const slider = tools.locator(".level-slider [role='slider']");
+  const slider = tools.locator(".effort-slider [role='slider']");
   await expect(slider).toHaveAttribute("aria-valuenow", "2");
-  await expect(tools.locator(".level-name")).toHaveText("Improved");
+  await expect(tools.locator(".effort-name")).toHaveText("(Medium)");
   await setSlider(slider, 4);
-  await expect(tools.locator(".level-name")).toHaveText("Proof-read with context");
+  await expect(tools.locator(".effort-name")).toHaveText("(Max)");
   await tools.locator("button", { hasText: "Re-analyze" }).click();
-  await expect(tools.locator(".rec-note")).toHaveText("Re-analyzed (Proof-read with context):");
+  await expect(tools.locator(".rec-note")).toHaveText("Re-analyzed (Max effort):");
   const polished = await page.evaluate(
     () => window.__memoseHarness?.getInvocations().find((item) => item.cmd === "speech_polish")?.args,
   );
   expect(polished).toMatchObject({ dictated: "we ship on thursday", before: "Meeting notes\n", level: 4 });
   await tools.locator("button", { hasText: "Accept" }).click();
   await expect.poll(async () => lastDraft(page)).toBe(`Meeting notes\nWe ship on Thursday.\n${recLine}`);
-  await expect(page.locator("#blocks .rec-tools .level-slider [role='slider']")).toHaveAttribute("aria-valuenow", "2");
+  await expect(page.locator("#blocks .rec-tools .effort-slider [role='slider']")).toHaveAttribute("aria-valuenow", "2");
+});
+
+test("the effort slider explains its level on hover and follows the arrow keys", async ({ page }) => {
+  await openComposer(page, {
+    draft: { content: `Meeting notes\nwe ship friday\n${recLine}` },
+    speech: { ...ready, polishReady: true, recordings: { [rec]: { text: "we ship friday" } } },
+  });
+  const slider = page.locator("#blocks .rec-tools .effort-slider");
+  const tip = page.locator("body > .effort-tip");
+  await expect(slider).toBeVisible();
+  await expect(tip).toHaveCount(0);
+  await slider.hover();
+  await expect(tip).toBeVisible();
+  await expect(tip).toHaveText("Medium · Punctuation, capitals, and clear mistakes. Dialect stays.");
+  const track = slider.locator("[role='slider']");
+  await track.focus();
+  await page.keyboard.press("ArrowRight");
+  await expect(track).toHaveAttribute("aria-valuenow", "3");
+  await expect(slider.locator(".effort-name")).toHaveText("(High)");
+  await expect(tip).toContainText("High · Medium, then spelling and grammar");
+  await setSlider(track, 1);
+  await expect(tip).toContainText("Low · As heard. No chat model.");
+  await page.mouse.move(0, 0);
+  await track.blur();
+  await expect(tip).toHaveCount(0);
 });
 
 test("audio that was not recorded in the app gets no tools", async ({ page }) => {
@@ -451,10 +476,10 @@ test("the slider under the listening mark changes the level and keeps it for the
   await page.keyboard.press("End");
   const record = page.locator("#rec-anchor .rec-toggle");
   await record.click();
-  const slider = page.locator("#card .rec-live .level-slider [role='slider']");
+  const slider = page.locator("#card .rec-live .effort-slider [role='slider']");
   await expect(slider).toHaveAttribute("aria-valuenow", "2");
   await setSlider(slider, 1);
-  await expect(page.locator("#card .rec-live .level-name")).toHaveText("Basic");
+  await expect(page.locator("#card .rec-live .effort-name")).toHaveText("(Low)");
   await chunk(page, "speech-1", 0, "plain words");
   await expect(page.locator("#blocks")).toContainText("Notes plain words");
   await record.click();
@@ -468,7 +493,7 @@ test("the slider under the listening mark changes the level and keeps it for the
   );
   expect(saved).toMatchObject({ polishLevel: 1 });
   await record.click();
-  await expect(page.locator("#card .rec-live .level-slider [role='slider']")).toHaveAttribute("aria-valuenow", "1");
+  await expect(page.locator("#card .rec-live .effort-slider [role='slider']")).toHaveAttribute("aria-valuenow", "1");
   await record.click();
 });
 
@@ -477,7 +502,7 @@ test("without the chat model there is no slider and the words stay as heard", as
   await page.locator("#blocks .md-lines").first().click();
   await page.locator("#rec-anchor .rec-toggle").click();
   await expect(page.locator("#card .rec-live .rec-pill")).toBeVisible();
-  await expect(page.locator("#card .rec-live .level-slider")).toBeHidden();
+  await expect(page.locator("#card .rec-live .effort-slider")).toBeHidden();
 });
 
 test("a second recording started while the first is still finishing keeps both in order", async ({ page }) => {

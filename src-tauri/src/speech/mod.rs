@@ -120,16 +120,17 @@ fn polish_rules(level: Level, language: &str) -> String {
     format!("{rules} The text is in {name}; use correct {name} words and spelling. {POLISH_COMMON}")
 }
 
-/// How much the chat model may change dictated text.
+/// How much the chat model may change dictated text: the effort level shown as Low, Medium,
+/// High, and Max.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Level {
-    /// As the recognizer heard it. No model.
+    /// Low: as the recognizer heard it. No model.
     Basic = 1,
-    /// Punctuation, capitals, and clear recognition errors. Dialect stays.
+    /// Medium: punctuation, capitals, and clear recognition errors. Dialect stays.
     Improved = 2,
-    /// Spelling and grammar into standard written language.
+    /// High: spelling and grammar into standard written language.
     Proofread = 3,
-    /// Proof-read with the memo around the words as context.
+    /// Max: proof-read with the memo around the words as context.
     Context = 4,
 }
 

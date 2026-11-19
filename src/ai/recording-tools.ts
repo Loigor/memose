@@ -8,8 +8,8 @@ import { acceptWords, locateWords, wordDiff } from "../editor/recording-words";
 import { findTextRanges, keepScroll, setHighlight } from "../editor/view-keep";
 import {
   DEFAULT_LEVEL,
-  improvementLevels,
-  levelSlider,
+  effortName,
+  effortSlider,
   polishSpeech,
   recordingsInfo,
   topLevel,
@@ -122,7 +122,7 @@ export function mountRecordingTools(target: RecordingToolsTarget) {
 
     if (state.proposal) {
       const { old, next } = state.proposal;
-      const levelName = improvementLevels.find((item) => item.level === state.proposal?.level)?.name ?? "";
+      const effort = effortName(state.proposal.level);
       const diff = el("p", "rec-diff");
       for (const part of wordDiff(old, next)) {
         if (part.kind === "same") {
@@ -136,7 +136,7 @@ export function mountRecordingTools(target: RecordingToolsTarget) {
           diff.append(el("ins", "", part.hunk.added.join("")));
         }
       }
-      tools.append(el("p", "rec-note", `Re-analyzed (${levelName}):`), diff);
+      tools.append(el("p", "rec-note", `Re-analyzed (${effort} effort):`), diff);
       const actions = el("div", "rec-actions");
       actions.append(
         button("rec-accept", old === next ? "Keep" : "Accept", () => {
@@ -157,18 +157,20 @@ export function mountRecordingTools(target: RecordingToolsTarget) {
       tools.append(actions);
     } else if (state.busy) {
       const row = el("p", "rec-note rec-busy");
-      const name = improvementLevels.find((item) => item.level === state.busy)?.name ?? "";
-      row.append(el("span", "ai-spinner"), document.createTextNode(` Re-analyzing (${name})…`));
+      row.append(
+        el("span", "ai-spinner"),
+        document.createTextNode(` Re-analyzing (${effortName(state.busy)} effort)…`),
+      );
       tools.append(row);
     } else {
       const actions = el("div", "rec-actions rec-reanalyze");
       // Without the chat model a re-analysis is the recognizer's text only.
       const reanalyze = button("rec-link", "Re-analyze", () => void run(name, Math.min(state.level, topLevel())));
-      reanalyze.title = "Turn the whole recording into text again, improved to the level under it";
+      reanalyze.title = "Turn the whole recording into text again, with the effort under it";
       actions.append(reanalyze);
       tools.append(actions);
       tools.append(
-        levelSlider(state.level, (next) => {
+        effortSlider(state.level, (next) => {
           state.level = next;
         }),
       );

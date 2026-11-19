@@ -89,7 +89,7 @@ export function initSpeechSettings(status: HTMLElement) {
     languageRow.hidden = settings.source === "off";
     const improves = settings.polishReady
       ? saved
-        ? ` Text improvement is told the words are ${languageName(saved)}.`
+        ? ` The effort pass is told the words are ${languageName(saved)}.`
         : ""
       : "";
     if (settings.source === "server") {
@@ -276,7 +276,7 @@ export function initSpeechSettings(status: HTMLElement) {
     polish.value = String(settings.polishReady ? settings.polishLevel : 1);
     polish.disabled = settings.source === "off" || !settings.polishReady;
     polishHint.textContent = settings.polishReady
-      ? "Where to start the slider under the listening mark. Basic keeps the words as heard; the others let the chat model fix them, from punctuation only up to proof-reading with the memo around the words. A longer pause starts a new paragraph, which then gets the full pass."
+      ? "Where the effort slider beside the listening mark starts. Low keeps the words as heard. Medium fixes punctuation, capitals and clear mistakes. High also proof-reads spelling and grammar. Max also uses the memo around the words for names and terms. A longer pause starts a new paragraph, which then gets the full pass."
       : "Needs the chat model: turn on model prompts and pick a model in the Models tab.";
     for (const choice of sourceEl.querySelectorAll<HTMLButtonElement>("button")) {
       choice.setAttribute("aria-pressed", String(choice.dataset.source === settings.source));
