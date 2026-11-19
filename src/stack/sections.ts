@@ -20,9 +20,6 @@ import { resizeAllBlockTextareas } from "../editor/textarea";
 import { revealPressedChoice } from "../look/audience-ui";
 import { paintLanguageMenu, pickedLanguage, toggleLanguageList } from "../look/language-menu";
 import { namedTheme } from "../look/look";
-import { mountDictation } from "../ai/dictation";
-import { mountLlmBubble } from "../ai/llm-edit";
-import { mountRecordingTools } from "../ai/recording-tools";
 import { markdownToolbarHtml, readHueSlider, stackHeaderHtml, writeHueSlider } from "../look/memo-chrome";
 import { hueSwatches, saveHueSwatches } from "../look/swatches";
 import { filesFromTransfer } from "../media/files";
@@ -32,8 +29,89 @@ import { exactStamp, relativeTime } from "../time";
 import type { Note } from "../types";
 import { NOTE_BAR, type StackCtx } from "./context";
 import { invoke } from "@tauri-apps/api/core";
+import { mountAiWhenEnabled } from "../ai/gate";
 
 export function mountSections(ctx: StackCtx) {
+  /** Removes the AI tools of each section, so a rebuilt stack does not keep the old ones listening. */
+  const aiTeardown = new Map<string, () => void>();
+  const dropSectionAi = () => {
+    for (const destroy of aiTeardown.values()) {
+      destroy();
+    }
+    aiTeardown.clear();
+  };
+
+  function mountSectionAi(section: HTMLElement, id: string): () => void {
+    const rootsOf = (...selectors: string[]) =>
+      selectors.flatMap((selector) => {
+        const root = section.querySelector<HTMLElement>(selector);
+        return root ? [root] : [];
+      });
+    const text = () => ctx.notes.get(id)?.content ?? "";
+    const replace = (next: string, quiet = false) => {
+      const held = ctx.notes.get(id);
+      if (!held) {
+        return;
+      }
+      if (!quiet) {
+        ctx.api.pushSectionUndo(held, true);
+      }
+      held.blocks = parseBlocks(next);
+      held.content = serializeBlocks(held.blocks);
+      ctx.api.renderSectionBlocks(section, held);
+      ctx.api.scheduleSectionSave(section, held);
+    };
+    const onAvailability = () => ctx.api.syncHeaderCompact();
+    return mountAiWhenEnabled((ai) =>
+      ai.mountMemoAi({
+        aiAnchor: section.querySelector<HTMLElement>(".ai-anchor"),
+        recAnchor: section.querySelector<HTMLElement>(".rec-anchor"),
+        llm: {
+          host: section,
+          noteId: () => id,
+          ensureNoteId: () => Promise.resolve(id),
+          title: () => noteTitle(text()),
+          text,
+          replace,
+          visibility: () => ctx.notes.get(id)?.visibility || null,
+          selectionRoots: () => rootsOf(".stack-blocks", ".stack-preview"),
+          onAvailability,
+        },
+        tools: { noteId: () => id, roots: () => rootsOf(".stack-blocks"), text, replace },
+        dictation: {
+          host: section,
+          noteId: () => id,
+          text,
+          replace,
+          insertAtCursor(inserted) {
+            const held = ctx.notes.get(id);
+            const area = held ? ctx.api.sectionTargetArea(section, held) : null;
+            if (!held || !area) {
+              return;
+            }
+            const { start, end } = ctx.api.sectionAreaSelection(area, held);
+            const value = `${area.value.slice(0, start)}${inserted}${area.value.slice(end)}`;
+            const cursor = start + inserted.length;
+            ctx.api.applySectionEdit(section, held, area, { value, start: cursor, end: cursor });
+          },
+          placeCaret(offset) {
+            const held = ctx.notes.get(id);
+            const container = section.querySelector<HTMLElement>(".stack-blocks");
+            const found = held ? caretAt(held.blocks, offset) : null;
+            if (!held || !container || !found) {
+              return;
+            }
+            const caret = { index: found.index, start: found.at, end: found.at };
+            held.caret = caret;
+            keepScroll([container], () => restoreCaret(container, caret));
+          },
+          fieldRoots: () => rootsOf(".stack-blocks", ".stack-preview"),
+          onAvailability,
+        },
+      }),
+    );
+  }
+
   function syncSection(section: HTMLElement, note: Note) {
     const state = ctx.notes.get(note.id);
     if (!state) {
@@ -635,102 +713,8 @@ export function mountSections(ctx: StackCtx) {
         console.error(error);
       });
     });
-    const aiAnchor = section.querySelector<HTMLElement>(".ai-anchor");
-    if (aiAnchor && !isPreviewWindow()) {
-      mountLlmBubble(aiAnchor, {
-        host: section,
-        noteId: () => note.id,
-        ensureNoteId: () => Promise.resolve(note.id),
-        title: () => noteTitle(ctx.notes.get(note.id)?.content ?? ""),
-        text: () => ctx.notes.get(note.id)?.content ?? "",
-        replace(next) {
-          const held = ctx.notes.get(note.id);
-          if (!held) {
-            return;
-          }
-          ctx.api.pushSectionUndo(held, true);
-          held.blocks = parseBlocks(next);
-          held.content = serializeBlocks(held.blocks);
-          ctx.api.renderSectionBlocks(section, held);
-          ctx.api.scheduleSectionSave(section, held);
-        },
-        visibility: () => ctx.notes.get(note.id)?.visibility || null,
-        selectionRoots: () =>
-          [".stack-blocks", ".stack-preview"].flatMap((selector) => {
-            const root = section.querySelector<HTMLElement>(selector);
-            return root ? [root] : [];
-          }),
-        onAvailability: () => ctx.api.syncHeaderCompact(),
-      });
-    }
     if (!isPreviewWindow()) {
-      mountRecordingTools({
-        roots: () => {
-          const root = section.querySelector<HTMLElement>(".stack-blocks");
-          return root ? [root] : [];
-        },
-        text: () => ctx.notes.get(note.id)?.content ?? "",
-        replace(next) {
-          const held = ctx.notes.get(note.id);
-          if (!held) {
-            return;
-          }
-          ctx.api.pushSectionUndo(held, true);
-          held.blocks = parseBlocks(next);
-          held.content = serializeBlocks(held.blocks);
-          ctx.api.renderSectionBlocks(section, held);
-          ctx.api.scheduleSectionSave(section, held);
-        },
-      });
-    }
-    const recAnchor = section.querySelector<HTMLElement>(".rec-anchor");
-    if (recAnchor && !isPreviewWindow()) {
-      mountDictation(recAnchor, {
-        host: section,
-        noteId: () => note.id,
-        text: () => ctx.notes.get(note.id)?.content ?? "",
-        replace(next, quiet) {
-          const held = ctx.notes.get(note.id);
-          if (!held) {
-            return;
-          }
-          if (!quiet) {
-            ctx.api.pushSectionUndo(held, true);
-          }
-          held.blocks = parseBlocks(next);
-          held.content = serializeBlocks(held.blocks);
-          ctx.api.renderSectionBlocks(section, held);
-          ctx.api.scheduleSectionSave(section, held);
-        },
-        insertAtCursor(text) {
-          const held = ctx.notes.get(note.id);
-          const area = held ? ctx.api.sectionTargetArea(section, held) : null;
-          if (!held || !area) {
-            return;
-          }
-          const { start, end } = ctx.api.sectionAreaSelection(area, held);
-          const value = `${area.value.slice(0, start)}${text}${area.value.slice(end)}`;
-          const cursor = start + text.length;
-          ctx.api.applySectionEdit(section, held, area, { value, start: cursor, end: cursor });
-        },
-        placeCaret(offset) {
-          const held = ctx.notes.get(note.id);
-          const container = section.querySelector<HTMLElement>(".stack-blocks");
-          const found = held ? caretAt(held.blocks, offset) : null;
-          if (!held || !container || !found) {
-            return;
-          }
-          const caret = { index: found.index, start: found.at, end: found.at };
-          held.caret = caret;
-          keepScroll([container], () => restoreCaret(container, caret));
-        },
-        fieldRoots: () =>
-          [".stack-blocks", ".stack-preview"].flatMap((selector) => {
-            const root = section.querySelector<HTMLElement>(selector);
-            return root ? [root] : [];
-          }),
-        onAvailability: () => ctx.api.syncHeaderCompact(),
-      });
+      aiTeardown.set(note.id, mountSectionAi(section, note.id));
     }
     section.querySelector<HTMLButtonElement>(".pin-toggle")?.addEventListener("click", () => {
       void (async () => {
@@ -758,6 +742,7 @@ export function mountSections(ctx: StackCtx) {
     }
     if (!ctx.deps.pinnedNoteId || !inTauri()) {
       ctx.notes.clear();
+      dropSectionAi();
       ctx.dom.stack.replaceChildren();
       ctx.dom.frame?.classList.remove("has-stack");
       ctx.deps.card.classList.remove("stacked-host", "is-bar");
@@ -819,6 +804,7 @@ export function mountSections(ctx: StackCtx) {
       });
     }
     if (!same) {
+      dropSectionAi();
       const sections = notes.map((note) => buildSection(note));
       ctx.dom.stack.replaceChildren(...sections);
       for (const section of sections) {

@@ -361,8 +361,39 @@ pub struct Progress {
     pub error: Option<String>,
 }
 
-/// Streams `url` into `path`, hashing as it goes. The file is removed when the hash does not match.
+/// A download that sends nothing for this long has stalled.
+const STALL: Duration = Duration::from_secs(60);
+/// Downloaded bytes are written to disk in pieces of this size, off the async threads.
+const WRITE_CHUNK: usize = 1 << 20;
+
+/// Writes `buf` at the end of `file` on the blocking pool.
+async fn write_out(file: std::fs::File, buf: Vec<u8>) -> Result<std::fs::File, AppError> {
+    tokio::task::spawn_blocking(move || {
+        let mut file = file;
+        std::io::Write::write_all(&mut file, &buf)?;
+        Ok(file)
+    })
+    .await
+    .map_err(|err| AppError::Message(format!("saving the download stopped: {err}")))?
+}
+
+/// Streams `url` into `path`, hashing as it goes. The file is removed when the download
+/// fails or the hash does not match.
 async fn fetch(
+    http: &reqwest::Client,
+    url: &str,
+    path: &Path,
+    sha256: &str,
+    on_bytes: impl FnMut(u64),
+) -> Result<(), AppError> {
+    let result = fetch_into(http, url, path, sha256, on_bytes).await;
+    if result.is_err() {
+        let _ = std::fs::remove_file(path);
+    }
+    result
+}
+
+async fn fetch_into(
     http: &reqwest::Client,
     url: &str,
     path: &Path,
@@ -380,21 +411,39 @@ async fn fetch(
             response.status().as_u16()
         )));
     }
-    let mut file = std::fs::File::create(path)?;
+    let mut file = {
+        let path = path.to_path_buf();
+        tokio::task::spawn_blocking(move || std::fs::File::create(path))
+            .await
+            .map_err(|err| AppError::Message(format!("saving the download stopped: {err}")))??
+    };
     let mut hasher = Sha256::new();
-    while let Some(chunk) = response.chunk().await? {
+    let mut buf = Vec::with_capacity(WRITE_CHUNK);
+    loop {
+        let chunk = tokio::time::timeout(STALL, response.chunk())
+            .await
+            .map_err(|_| AppError::Message("the download stalled; try again".into()))??;
+        let Some(chunk) = chunk else {
+            break;
+        };
         hasher.update(&chunk);
-        std::io::Write::write_all(&mut file, &chunk)?;
+        buf.extend_from_slice(&chunk);
         on_bytes(chunk.len() as u64);
+        if buf.len() >= WRITE_CHUNK {
+            file = write_out(
+                file,
+                std::mem::replace(&mut buf, Vec::with_capacity(WRITE_CHUNK)),
+            )
+            .await?;
+        }
     }
-    drop(file);
+    drop(write_out(file, buf).await?);
     let digest = hasher
         .finalize()
         .iter()
         .map(|byte| format!("{byte:02x}"))
         .collect::<String>();
     if digest != sha256 {
-        let _ = std::fs::remove_file(path);
         return Err(AppError::Message(
             "the download did not match its checksum and was discarded".into(),
         ));
@@ -448,7 +497,15 @@ fn unpack_runtime(archive: &Path, runtime: &Runtime, target: &Path) -> Result<()
 }
 
 /// Unpacks a model archive into `dir`. Only plain files under the model folder are written.
+/// They go to a `.part` folder that takes the model's place only when complete, so an
+/// interrupted unpack never looks like an installed model.
 fn unpack_model(archive: &Path, dir: &Path, id: ModelId) -> Result<(), AppError> {
+    let target = model_path(dir, id);
+    let part = dir.join(format!("{}.part", id.spec().dir));
+    if part.exists() {
+        std::fs::remove_dir_all(&part)?;
+    }
+    std::fs::create_dir_all(&part)?;
     let file = std::fs::File::open(archive)?;
     let mut tar = tar::Archive::new(flate2::read::GzDecoder::new(file));
     for entry in tar.entries()? {
@@ -466,11 +523,13 @@ fn unpack_model(archive: &Path, dir: &Path, id: ModelId) -> Result<(), AppError>
         if !safe_member(&path) || !path.starts_with(id.spec().dir) {
             continue;
         }
-        let target = model_path(dir, id);
-        std::fs::create_dir_all(&target)?;
-        let mut out = std::fs::File::create(target.join(name))?;
+        let mut out = std::fs::File::create(part.join(name))?;
         std::io::copy(&mut entry, &mut out)?;
     }
+    if target.exists() {
+        std::fs::remove_dir_all(&target)?;
+    }
+    std::fs::rename(&part, &target)?;
     Ok(())
 }
 

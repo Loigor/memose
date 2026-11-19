@@ -526,6 +526,8 @@ function installBrowserHarness(seed: BrowserSeed) {
           hasToken: Boolean(state.token),
           pinnedAlwaysOnTop: alwaysOnTop,
           showInSwitcher: Boolean(state.settings.showInSwitcher) || !alwaysOnTop,
+          llmEnabled: ai.llmEnabled,
+          speechEnabled: speech.enabled,
         };
       }
       case "get_ai_settings": {

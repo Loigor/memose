@@ -210,15 +210,21 @@ export function stopSpeech() {
   void invoke("speech_stop");
 }
 
+/** Memo text given to the chat model on each side of dictated words. */
+export const CONTEXT_BEFORE = 1500;
+export const CONTEXT_AFTER = 400;
+
 /** The lowest effort that also removes a first try the speaker said again. */
 export const CORRECTIONS_LEVEL = 3;
 
 /**
- * Lets the chat model tidy dictated text. `before` and `after` are the note around it.
+ * Lets the chat model tidy dictated text. `before` and `after` are the note around it, and
+ * `noteId` the memo, so an offline-only one is not sent to a remote model.
  * With `corrections`, a first try said again is removed; `later` is what was said right after,
  * and an empty reply means all of `dictated` was said again there.
  */
 export function polishSpeech(
+  noteId: string | null,
   before: string,
   after: string,
   dictated: string,
@@ -226,7 +232,7 @@ export function polishSpeech(
   corrections = false,
   later = "",
 ): Promise<string> {
-  return invoke<string>("speech_polish", { before, after, dictated, level, corrections, later });
+  return invoke<string>("speech_polish", { noteId, before, after, dictated, level, corrections, later });
 }
 
 /** Effort levels for dictated text, from as heard to proof-read with the memo as context. */
@@ -261,173 +267,6 @@ export function saveEffort(level: number): Promise<void> {
   return invoke("save_speech_settings", { polishLevel: level });
 }
 
-/** Places the tip right of `anchor`, centred on it; under it when there is no room on the right. */
-function placeTip(tip: HTMLElement, anchor: HTMLElement) {
-  const rect = anchor.getBoundingClientRect();
-  const width = tip.offsetWidth;
-  const height = tip.offsetHeight;
-  if (rect.right + 8 + width <= window.innerWidth - 8) {
-    const top = rect.top + rect.height / 2 - height / 2;
-    tip.style.left = `${rect.right + 8}px`;
-    tip.style.top = `${Math.max(4, Math.min(top, window.innerHeight - height - 4))}px`;
-    return;
-  }
-  const below = rect.bottom + 6;
-  tip.style.left = `${Math.max(8, Math.min(rect.left, window.innerWidth - width - 8))}px`;
-  tip.style.top = `${below + height <= window.innerHeight - 4 ? below : Math.max(4, rect.top - height - 6)}px`;
-}
-
-/**
- * The effort slider: "Effort (High)" and a pill with a dot per level and a knob on the current one.
- * Click a dot, drag along the pill, or use the arrow keys. Hovering shows what the level does.
- * `onChange` gets the new level. Clicks on it never reach the memo or the recording.
- */
-export function effortSlider(value: number, onChange: (level: number) => void): HTMLElement {
-  const top = topLevel();
-  let current = Math.min(Math.max(1, value), top);
-  const box = document.createElement("div");
-  box.className = "effort-slider";
-  const label = document.createElement("span");
-  label.className = "effort-label";
-  const name = document.createElement("span");
-  name.className = "effort-name";
-  label.append("Effort ", name);
-  const track = document.createElement("div");
-  track.className = "effort-track";
-  track.setAttribute("role", "slider");
-  track.setAttribute("aria-label", "Effort");
-  track.setAttribute("aria-valuemin", "1");
-  track.setAttribute("aria-valuemax", String(top));
-  track.tabIndex = -1;
-  const steps: HTMLElement[] = [];
-  for (const item of effortLevels.filter((entry) => entry.level <= top)) {
-    const dot = document.createElement("span");
-    dot.className = "effort-dot";
-    dot.dataset.level = String(item.level);
-    steps.push(dot);
-    track.append(dot);
-  }
-  const knob = document.createElement("span");
-  knob.className = "effort-knob";
-  track.append(knob);
-  const tip = document.createElement("div");
-  tip.className = "effort-tip";
-  tip.setAttribute("role", "tooltip");
-  tip.hidden = true;
-  let hovering = false;
-  let dragging = false;
-
-  const showTip = () => {
-    const shown = (hovering || dragging || document.activeElement === track) && box.isConnected;
-    if (!shown) {
-      tip.hidden = true;
-      tip.remove();
-      return;
-    }
-    if (!tip.isConnected) {
-      document.body.append(tip);
-    }
-    tip.hidden = false;
-    placeTip(tip, box);
-  };
-  const paint = () => {
-    const found = effortLevels.find((item) => item.level === current) ?? effortLevels[1];
-    name.textContent = `(${found.name})`;
-    tip.replaceChildren();
-    const strong = document.createElement("strong");
-    strong.textContent = found.name;
-    tip.append(strong, ` · ${found.hint}`);
-    track.setAttribute("aria-valuenow", String(current));
-    track.setAttribute("aria-valuetext", `${found.name}: ${found.hint}`);
-    box.style.setProperty("--effort-at", String(top > 1 ? (current - 1) / (top - 1) : 0));
-    if (!tip.hidden) {
-      placeTip(tip, box);
-    }
-  };
-  const set = (next: number) => {
-    const level = Math.min(Math.max(1, next), top);
-    if (level === current) {
-      return;
-    }
-    current = level;
-    paint();
-    onChange(level);
-  };
-  /** The level whose dot is nearest the pointer. The dots run between the track's side paddings. */
-  const atPointer = (clientX: number) => {
-    const rect = track.getBoundingClientRect();
-    const style = getComputedStyle(track);
-    const dot = steps[0]?.offsetWidth ?? 0;
-    const first = rect.left + (parseFloat(style.paddingLeft) || 0) + dot / 2;
-    const last = rect.right - (parseFloat(style.paddingRight) || 0) - dot / 2;
-    const share = last > first ? (clientX - first) / (last - first) : 0;
-    return 1 + Math.round(Math.min(Math.max(share, 0), 1) * (top - 1));
-  };
-
-  track.addEventListener("pointerdown", (event) => {
-    event.preventDefault();
-    track.setPointerCapture?.(event.pointerId);
-    dragging = true;
-    box.classList.add("is-dragging");
-    set(atPointer(event.clientX));
-    showTip();
-  });
-  track.addEventListener("pointermove", (event) => {
-    if (track.hasPointerCapture?.(event.pointerId)) {
-      set(atPointer(event.clientX));
-    }
-  });
-  const endDrag = (event: PointerEvent) => {
-    track.releasePointerCapture?.(event.pointerId);
-    if (!dragging) {
-      return;
-    }
-    dragging = false;
-    box.classList.remove("is-dragging");
-    showTip();
-    box.dispatchEvent(new Event("change", { bubbles: true }));
-  };
-  track.addEventListener("pointerup", endDrag);
-  track.addEventListener("pointercancel", endDrag);
-  box.addEventListener("pointerenter", () => {
-    hovering = true;
-    showTip();
-  });
-  box.addEventListener("pointerleave", () => {
-    hovering = false;
-    showTip();
-  });
-  track.addEventListener("focus", showTip);
-  track.addEventListener("blur", showTip);
-  track.addEventListener("keydown", (event) => {
-    if (event.key === "ArrowLeft" || event.key === "ArrowDown") {
-      event.preventDefault();
-      set(current - 1);
-    } else if (event.key === "ArrowRight" || event.key === "ArrowUp") {
-      event.preventDefault();
-      set(current + 1);
-    }
-  });
-  for (const type of ["mousedown", "pointerdown", "click", "dragstart"] as const) {
-    box.addEventListener(type, (event) => {
-      event.stopPropagation();
-    });
-  }
-  // The tip lives on <body> so scrolling boxes cannot clip it; it leaves with the slider.
-  let attached = false;
-  new MutationObserver((_, observer) => {
-    attached ||= box.isConnected;
-    if (attached && !box.isConnected) {
-      tip.remove();
-      observer.disconnect();
-    }
-  }).observe(document.body, { childList: true, subtree: true });
-  box.append(label, track);
-  paint();
-  box.hidden = top === 1;
-  return box;
-}
-
 export function reloadSpeech(): Promise<void> {
   ensureListening();
   flight = load();
@@ -454,6 +293,6 @@ export function saveRecordingText(name: string, text: string): Promise<void> {
 }
 
 /** Turns the whole saved recording into text again. */
-export function transcribeRecording(name: string): Promise<string> {
-  return invoke<string>("recording_transcribe", { name });
+export function transcribeRecording(name: string, noteId: string | null): Promise<string> {
+  return invoke<string>("recording_transcribe", { name, noteId });
 }

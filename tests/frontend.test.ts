@@ -1131,7 +1131,7 @@ test("release versions and Tauri IPC command contracts stay in sync without dang
 
   const libRs = fs.readFileSync(path.join(root, "src-tauri/src/lib.rs"), "utf8");
   const handlerBlock = libRs.match(/generate_handler!\[([\s\S]*?)\]/)?.[1] ?? "";
-  const registered = [...handlerBlock.matchAll(/commands::([a-z0-9_]+)/g)].map((m) => m[1]).sort();
+  const registered = [...handlerBlock.matchAll(/commands::(?:[a-z_]+::)?([a-z0-9_]+)/g)].map((m) => m[1]).sort();
 
   const tsFiles = walkTs(path.join(root, "src"));
   const invokedSet = new Set<string>();

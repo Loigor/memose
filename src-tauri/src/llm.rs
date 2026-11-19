@@ -1,7 +1,4 @@
-//! Chat model edits through an OpenAI-compatible server.
-//!
-//! The base URL carries the version prefix, such as `https://api.openai.com/v1`
-//! or `http://localhost:11434/v1`. Paths are joined after it.
+//! Chat model prompts on a memo, through an OpenAI-compatible server (see `openai`).
 
 use std::time::Duration;
 
@@ -10,6 +7,10 @@ use serde_json::{json, Value};
 
 use crate::error::AppError;
 use crate::notes::Db;
+use crate::openai;
+
+mod chats;
+pub use chats::Chats;
 
 pub const LLM_ENABLED: &str = "llm_enabled";
 pub const LLM_BASE_URL: &str = "llm_base_url";
@@ -137,8 +138,6 @@ pub struct ChatEntry {
 }
 
 pub const RUNNING: &str = "running";
-/// Finished prompts kept per memo.
-pub const CHAT_KEEP: usize = 30;
 
 pub fn default_presets() -> Vec<Preset> {
     let preset = |name: &str, mode: Mode, instruction: &str| Preset {
@@ -188,131 +187,79 @@ pub fn store_presets(db: &Db, presets: &[Preset]) -> Result<(), AppError> {
     db.set_meta(LLM_PRESETS, &raw)
 }
 
-/// Trims the URL and checks the scheme. Empty stays empty.
-pub fn clean_base(url: &str) -> Result<String, AppError> {
-    let trimmed = url.trim().trim_end_matches('/');
-    if trimmed.is_empty() {
-        return Ok(String::new());
-    }
-    if !trimmed.starts_with("http://") && !trimmed.starts_with("https://") {
-        return Err(AppError::Message(
-            "model server URL must start with http:// or https://".into(),
-        ));
-    }
-    Ok(trimmed.to_string())
-}
-
-/// Joins a path such as `/chat/completions` after the versioned base URL.
-pub fn api_url(base: &str, path: &str) -> String {
-    format!(
-        "{}/{}",
-        base.trim().trim_end_matches('/'),
-        path.trim_start_matches('/')
-    )
-}
-
 /// Ollama's own API sits beside its `/v1` compatibility prefix.
 pub fn ollama_root(base: &str) -> String {
     let trimmed = base.trim().trim_end_matches('/');
     trimmed.strip_suffix("/v1").unwrap_or(trimmed).to_string()
 }
 
-/// Host part of the base URL, without port, user info, or brackets.
-pub fn host_of(base: &str) -> String {
-    let rest = base
-        .trim()
-        .split_once("://")
-        .map_or(base.trim(), |(_, rest)| rest);
-    let authority = rest.split(['/', '?', '#']).next().unwrap_or_default();
-    let host_port = authority.rsplit('@').next().unwrap_or_default();
-    let host = if let Some(inner) = host_port.strip_prefix('[') {
-        inner.split(']').next().unwrap_or_default()
-    } else {
-        host_port.split(':').next().unwrap_or_default()
-    };
-    host.to_ascii_lowercase()
+const SERVER: &str = "model server";
+
+/// The chat model server as saved in settings.
+pub struct Server {
+    pub base: String,
+    pub key: Option<String>,
+    pub model: String,
 }
 
-/// True when the server runs on this computer, so text does not leave it.
-pub fn is_local(base: &str) -> bool {
-    let host = host_of(base);
-    if host == "localhost" {
-        return true;
+/// The saved server address and key, for calls that need no model.
+pub fn base_and_key(db: &Db) -> Result<(String, Option<String>), AppError> {
+    let base = db
+        .get_meta(LLM_BASE_URL)?
+        .filter(|url| !url.is_empty())
+        .ok_or_else(|| AppError::Message("model server URL is not set".into()))?;
+    Ok((base, db.get_meta(LLM_API_KEY)?))
+}
+
+impl Server {
+    /// The saved server, or an error when prompts are off or it is not set up.
+    pub fn load(db: &Db) -> Result<Self, AppError> {
+        if db.get_meta(LLM_ENABLED)?.as_deref() != Some("1") {
+            return Err(AppError::Message("model prompts are turned off".into()));
+        }
+        let (base, key) = base_and_key(db)?;
+        let model = db
+            .get_meta(LLM_MODEL)?
+            .filter(|model| !model.is_empty())
+            .ok_or_else(|| AppError::Message("model is not set".into()))?;
+        Ok(Self { base, key, model })
     }
-    // Only a real loopback address counts. A name such as `127.example.com` is a remote host.
-    host.parse::<std::net::IpAddr>()
-        .is_ok_and(|ip| ip.is_loopback() || ip.is_unspecified())
-}
 
-fn with_key(request: reqwest::RequestBuilder, key: Option<&str>) -> reqwest::RequestBuilder {
-    match key.map(str::trim).filter(|key| !key.is_empty()) {
-        Some(key) => request.bearer_auth(key),
-        None => request,
-    }
-}
-
-/// Error text from a failed call. The body is cut short and never holds the key.
-async fn failure(response: reqwest::Response) -> AppError {
-    let status = response.status().as_u16();
-    let body = response.text().await.unwrap_or_default();
-    let detail = serde_json::from_str::<Value>(&body)
-        .ok()
-        .and_then(|value| {
-            let error = value.get("error")?;
-            error
-                .get("message")
-                .and_then(Value::as_str)
-                .or_else(|| error.as_str())
-                .map(str::to_string)
-        })
-        .unwrap_or(body);
-    let detail: String = detail.trim().chars().take(300).collect();
-    if detail.is_empty() {
-        AppError::Message(format!("model server returned {status}"))
-    } else {
-        AppError::Message(format!("model server returned {status}: {detail}"))
+    /// The server for work on the memo `note_id`, or on a memo not saved yet. Also refuses
+    /// when the memo is offline-only and its text would go to a host the user did not allow.
+    pub fn for_note(db: &Db, note_id: Option<&str>) -> Result<Self, AppError> {
+        let server = Self::load(db)?;
+        if !openai::is_local(&server.base) && db.offline_only(note_id)? {
+            let allowed = db.get_meta(LLM_PRIVATE_OK_HOST)?.unwrap_or_default();
+            if allowed.is_empty() || allowed != openai::host_of(&server.base) {
+                return Err(AppError::Message(
+                    "this memo is kept on this computer only; allow the model server first".into(),
+                ));
+            }
+        }
+        Ok(server)
     }
 }
 
-fn unreachable(err: &reqwest::Error) -> AppError {
-    if err.is_timeout() {
-        AppError::Message("the model server took too long to answer".into())
-    } else if err.is_connect() {
-        AppError::Message("could not reach the model server".into())
-    } else {
-        AppError::Message("the request to the model server failed".into())
-    }
-}
-
-/// One system message and one user message, for helpers outside the memo chat.
-/// Returns the model's text as it came.
-pub async fn complete(
+/// One `/chat/completions` call. Returns the model's text as it came.
+async fn chat(
     http: &reqwest::Client,
-    base: &str,
-    key: Option<&str>,
-    model: &str,
-    system: &str,
-    user: &str,
+    server: &Server,
+    messages: Vec<Value>,
     timeout: Duration,
 ) -> Result<String, AppError> {
-    let body = json!({
-        "model": model,
-        "stream": false,
-        "messages": [
-            { "role": "system", "content": system },
-            { "role": "user", "content": user },
-        ],
-    });
+    let body = json!({ "model": server.model, "stream": false, "messages": messages });
+    let key = server.key.as_deref();
     let request = http
-        .post(api_url(base, "chat/completions"))
+        .post(openai::api_url(&server.base, "chat/completions"))
         .timeout(timeout)
         .json(&body);
-    let response = with_key(request, key)
+    let response = openai::with_key(request, key)
         .send()
         .await
-        .map_err(|err| unreachable(&err))?;
+        .map_err(|err| openai::unreachable(&err, SERVER))?;
     if !response.status().is_success() {
-        return Err(failure(response).await);
+        return Err(openai::failure(response, SERVER, key).await);
     }
     let payload: Value = response
         .json()
@@ -325,15 +272,28 @@ pub async fn complete(
         .to_string())
 }
 
+/// One system message and one user message, for helpers outside the memo chat.
+pub async fn complete(
+    http: &reqwest::Client,
+    server: &Server,
+    system: &str,
+    user: &str,
+    timeout: Duration,
+) -> Result<String, AppError> {
+    let messages = vec![
+        json!({ "role": "system", "content": system }),
+        json!({ "role": "user", "content": user }),
+    ];
+    chat(http, server, messages, timeout).await
+}
+
 /// Asks the model whether a request wants the note changed. One short call without the note.
 /// It sets no token limit or temperature: reasoning models need room to think before the word,
 /// and some hosted models reject those fields.
 /// Any failure or unclear reply counts as no, so an `Auto` prompt never replaces the memo by accident.
 async fn wants_edit(
     http: &reqwest::Client,
-    base: &str,
-    key: Option<&str>,
-    model: &str,
+    server: &Server,
     instruction: &str,
     empty: bool,
 ) -> bool {
@@ -348,31 +308,10 @@ async fn wants_edit(
             "Does it ask to change the note's text? YES or NO.",
         )
     };
-    let body = json!({
-        "model": model,
-        "stream": false,
-        "messages": [
-            { "role": "system", "content": rules },
-            { "role": "user", "content": format!("Request: {}\n\n{question}", instruction.trim()) },
-        ],
-    });
-    let request = http
-        .post(api_url(base, "chat/completions"))
-        .timeout(CLASSIFY_TIMEOUT)
-        .json(&body);
-    let Ok(response) = with_key(request, key).send().await else {
-        return false;
-    };
-    if !response.status().is_success() {
-        return false;
-    }
-    let Ok(payload) = response.json::<Value>().await else {
-        return false;
-    };
-    payload
-        .pointer("/choices/0/message/content")
-        .and_then(Value::as_str)
-        .is_some_and(says_yes)
+    let user = format!("Request: {}\n\n{question}", instruction.trim());
+    complete(http, server, rules, &user, CLASSIFY_TIMEOUT)
+        .await
+        .is_ok_and(|reply| says_yes(&reply))
 }
 
 fn says_yes(reply: &str) -> bool {
@@ -445,12 +384,9 @@ fn messages(
 
 /// One prompt. `Auto` first asks the model whether the request is an edit.
 /// `text` is what the request is about: the whole note, or the selected part with the whole note as `context`.
-#[allow(clippy::too_many_arguments)]
 pub async fn ask(
     http: &reqwest::Client,
-    base: &str,
-    key: Option<&str>,
-    model: &str,
+    server: &Server,
     mode: Mode,
     instruction: &str,
     text: &str,
@@ -458,47 +394,20 @@ pub async fn ask(
     history: &[Turn],
 ) -> Result<Reply, AppError> {
     let mode = match mode {
-        Mode::Auto
-            if wants_edit(
-                http,
-                base,
-                key,
-                model,
-                instruction,
-                is_empty_note(text, context),
-            )
-            .await =>
-        {
+        Mode::Auto if wants_edit(http, server, instruction, is_empty_note(text, context)).await => {
             Mode::Edit
         }
         Mode::Auto => Mode::Ask,
         fixed => fixed,
     };
-    let body = json!({
-        "model": model,
-        "stream": false,
-        "messages": messages(mode, instruction, text, context, history),
-    });
-    let request = http
-        .post(api_url(base, "chat/completions"))
-        .timeout(CHAT_TIMEOUT)
-        .json(&body);
-    let response = with_key(request, key)
-        .send()
-        .await
-        .map_err(|err| unreachable(&err))?;
-    if !response.status().is_success() {
-        return Err(failure(response).await);
-    }
-    let payload: Value = response
-        .json()
-        .await
-        .map_err(|_| AppError::Message("the model server sent an unreadable answer".into()))?;
-    let raw = payload
-        .pointer("/choices/0/message/content")
-        .and_then(Value::as_str)
-        .unwrap_or_default();
-    let reply = read_reply(mode, raw, text);
+    let raw = chat(
+        http,
+        server,
+        messages(mode, instruction, text, context, history),
+        CHAT_TIMEOUT,
+    )
+    .await?;
+    let reply = read_reply(mode, &raw, text);
     if reply.text.is_empty() {
         return Err(AppError::Message("the model returned no text".into()));
     }
@@ -564,13 +473,15 @@ pub async fn list_models(
     base: &str,
     key: Option<&str>,
 ) -> Result<ModelList, AppError> {
-    let request = http.get(api_url(base, "models")).timeout(MODELS_TIMEOUT);
-    let response = with_key(request, key)
+    let request = http
+        .get(openai::api_url(base, "models"))
+        .timeout(MODELS_TIMEOUT);
+    let response = openai::with_key(request, key)
         .send()
         .await
-        .map_err(|err| unreachable(&err))?;
+        .map_err(|err| openai::unreachable(&err, SERVER))?;
     if !response.status().is_success() {
-        return Err(failure(response).await);
+        return Err(openai::failure(response, SERVER, key).await);
     }
     let payload: Value = response
         .json()
@@ -615,54 +526,12 @@ mod tests {
     use super::*;
 
     #[test]
-    fn paths_join_after_the_versioned_base() {
-        assert_eq!(
-            api_url("https://api.openai.com/v1", "/chat/completions"),
-            "https://api.openai.com/v1/chat/completions"
-        );
-        assert_eq!(
-            api_url("https://api.groq.com/openai/v1/", "models"),
-            "https://api.groq.com/openai/v1/models"
-        );
-        assert_eq!(
-            api_url("http://localhost:11434/v1", "chat/completions"),
-            "http://localhost:11434/v1/chat/completions"
-        );
-    }
-
-    #[test]
     fn ollama_root_drops_the_compatibility_prefix() {
         assert_eq!(
             ollama_root("http://localhost:11434/v1/"),
             "http://localhost:11434"
         );
         assert_eq!(ollama_root("http://box:11434"), "http://box:11434");
-    }
-
-    #[test]
-    fn loopback_hosts_are_local() {
-        assert!(is_local("http://localhost:11434/v1"));
-        assert!(is_local("http://127.0.0.1:1234/v1"));
-        assert!(is_local("http://[::1]:8080/v1"));
-        assert!(!is_local("https://api.openai.com/v1"));
-        assert!(!is_local("https://localhost.example.com/v1"));
-        assert!(!is_local("https://127.example.com/v1"));
-        assert!(!is_local("https://127.0.0.1.nip.io/v1"));
-        assert!(is_local("http://0.0.0.0:8000/v1"));
-        assert_eq!(
-            host_of("https://user:pw@Api.Groq.com:443/openai/v1"),
-            "api.groq.com"
-        );
-    }
-
-    #[test]
-    fn base_url_needs_a_scheme() {
-        assert_eq!(clean_base("  ").unwrap(), "");
-        assert_eq!(
-            clean_base("http://localhost:11434/v1/").unwrap(),
-            "http://localhost:11434/v1"
-        );
-        assert!(clean_base("localhost:11434").is_err());
     }
 
     #[test]

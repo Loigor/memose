@@ -17,6 +17,8 @@ import {
   type DiffPart,
   type LineRange,
 } from "../editor/line-diff";
+import { button, el } from "../dom";
+import { decidedBody, diffList, modelOutput, placeOf } from "./llm-diff-view";
 import { joinDictation } from "../editor/dictation-span";
 import { fieldSourceText } from "../editor/editor-field";
 import { isOfflinePrivate } from "../look/visibility";
@@ -92,8 +94,7 @@ let listening = false;
 async function loadSettings(): Promise<AiSettings | null> {
   try {
     settings = await invoke<AiSettings>("get_ai_settings");
-    const general = await invoke<{ memoContentLimit?: number }>("get_settings");
-    contentLimit = general.memoContentLimit ?? 0;
+    await loadContentLimit();
   } catch {
     settings = null;
   }
@@ -127,22 +128,6 @@ function ensureListening() {
     }
   });
   settingsFlight = loadSettings();
-}
-
-function el<K extends keyof HTMLElementTagNameMap>(tag: K, className: string, text?: string): HTMLElementTagNameMap[K] {
-  const node = document.createElement(tag);
-  node.className = className;
-  if (text !== undefined) {
-    node.textContent = text;
-  }
-  return node;
-}
-
-function button(className: string, text: string, onClick: () => void): HTMLButtonElement {
-  const node = el("button", className, text);
-  node.type = "button";
-  node.addEventListener("click", onClick);
-  return node;
 }
 
 function seconds(from: number, to: number): string {
@@ -180,10 +165,10 @@ type Decisions = {
  * Wires the AI button inside `anchor` and the bubble it opens.
  * The button stays hidden until model prompts are turned on in settings.
  */
-export function mountLlmBubble(anchor: HTMLElement, target: LlmTarget): { close(): void } {
+export function mountLlmBubble(anchor: HTMLElement, target: LlmTarget): { close(): void; destroy(): void } {
   const toggle = anchor.querySelector<HTMLButtonElement>(".ai-toggle");
   if (!toggle) {
-    return { close() {} };
+    return { close() {}, destroy() {} };
   }
   const toggleEl = toggle;
 
@@ -244,14 +229,17 @@ export function mountLlmBubble(anchor: HTMLElement, target: LlmTarget): { close(
     }
   };
 
+  /** Newest refresh. An older reply that arrives later must not put back an older chat. */
+  let refreshGen = 0;
   async function refresh(scroll = false) {
     const key = noteKey();
+    const gen = ++refreshGen;
     try {
       const [chat, running] = await Promise.all([
         invoke<ChatEntry[]>("llm_chat", { noteId: key }),
         invoke<ChatEntry[]>("llm_jobs"),
       ]);
-      if (key !== noteKey()) {
+      if (gen !== refreshGen || key !== noteKey()) {
         return;
       }
       entries = chat;
@@ -308,87 +296,6 @@ export function mountLlmBubble(anchor: HTMLElement, target: LlmTarget): { close(
   };
 
   const sourceNow = () => splitProtected(target.text(), isProtectedLine);
-
-  /** A folded section in the chat. */
-  function fold(label: string, content: HTMLElement, open = false): HTMLElement {
-    const details = el("details", "ai-fold");
-    details.open = open;
-    details.append(el("summary", "", label), content);
-    return details;
-  }
-
-  /** The model's reply as it came, for an edit. */
-  function modelOutput(entry: ChatEntry, open = false): HTMLElement {
-    return fold("Model output", el("div", "ai-answer ai-raw", entry.text), open);
-  }
-
-  /** A diff that shows what was decided. Changes in `accepted` are shown applied, the rest as kept. */
-  function decidedDiff(parts: DiffPart[], accepted: ReadonlySet<number>): HTMLElement {
-    const list = el("div", "ai-diff");
-    for (const part of parts) {
-      if (part.kind === "same") {
-        const lines = part.lines;
-        const shown = lines.length > 4 ? [lines[0], null, lines[lines.length - 1]] : lines;
-        for (const line of shown) {
-          list.append(
-            line === null
-              ? el("div", "ai-line ai-gap", `${lines.length - 2} unchanged lines`)
-              : el("div", "ai-line", line === "" ? " " : line),
-          );
-        }
-        continue;
-      }
-      const { hunk } = part;
-      const item = el("div", "ai-hunk");
-      item.dataset.decided = accepted.has(hunk.id) ? "accepted" : "rejected";
-      if (accepted.has(hunk.id)) {
-        // Both sides stay visible here, so the record shows what was replaced.
-        item.dataset.shown = "both";
-      }
-      for (const line of hunk.removed) {
-        item.append(el("div", "ai-line ai-removed", line === "" ? " " : line));
-      }
-      for (const line of hunk.added) {
-        item.append(el("div", "ai-line ai-added", line === "" ? " " : line));
-      }
-      list.append(item);
-    }
-    return list;
-  }
-
-  /** A proposed edit after it was applied or dismissed: a line, then the changes folded. */
-  function decidedBody(entry: ChatEntry): HTMLElement {
-    const box = el("div", "ai-diff-box");
-    const parts = diffLines(splitLines(entry.source), splitLines(entry.text));
-    const all = hunksOf(parts);
-    const taken = new Set(entry.status === "applied" ? (entry.accepted ?? all.map((hunk) => hunk.id)) : []);
-    const count = all.filter((hunk) => taken.has(hunk.id)).length;
-    const summary =
-      entry.status === "applied"
-        ? count === all.length
-          ? `Applied ${count} ${count === 1 ? "change" : "changes"}.`
-          : `Applied ${count} of ${all.length} changes.`
-        : "Changes dismissed.";
-    box.append(el("p", "ai-note", summary));
-    if (all.length > 0) {
-      box.append(
-        fold(entry.status === "applied" ? "Show changes" : "Show proposed changes", decidedDiff(parts, taken)),
-      );
-    }
-    box.append(modelOutput(entry));
-    return box;
-  }
-
-  /**
-   * Where the text a prompt was about sits in the memo now, or -1. New text written for an empty
-   * memo goes after whatever the memo holds now.
-   */
-  function placeOf(lines: string[], before: string[], lineStart: number | null): number {
-    if (before.length === 0) {
-      return lineStart == null ? lines.length : -1;
-    }
-    return locateBlock(lines, before, lineStart ? lineStart - 1 : 0);
-  }
 
   function diffBody(entry: ChatEntry): HTMLElement {
     const box = el("div", "ai-diff-box");
@@ -457,30 +364,9 @@ export function mountLlmBubble(anchor: HTMLElement, target: LlmTarget): { close(
       }),
       button("", accepted.size === 0 ? "Dismiss" : "Done", finish),
     );
-    const list = el("div", "ai-diff");
-    for (const part of parts) {
-      if (part.kind === "same") {
-        const lines = part.lines;
-        const shown = lines.length > 4 ? [lines[0], null, lines[lines.length - 1]] : lines;
-        for (const line of shown) {
-          list.append(
-            line === null
-              ? el("div", "ai-line ai-gap", `${lines.length - 2} unchanged lines`)
-              : el("div", "ai-line", line === "" ? " " : line),
-          );
-        }
-        continue;
-      }
-      const { hunk } = part;
-      const item = el("div", "ai-hunk");
+    const list = diffList(parts, (item, hunk) => {
       if (decided.has(hunk.id)) {
         item.dataset.decided = accepted.has(hunk.id) ? "accepted" : "rejected";
-      }
-      for (const line of hunk.removed) {
-        item.append(el("div", "ai-line ai-removed", line === "" ? " " : line));
-      }
-      for (const line of hunk.added) {
-        item.append(el("div", "ai-line ai-added", line === "" ? " " : line));
       }
       const decide = (take: boolean) => {
         decided.add(hunk.id);
@@ -501,8 +387,7 @@ export function mountLlmBubble(anchor: HTMLElement, target: LlmTarget): { close(
         button("", "Keep original", () => decide(false)),
       );
       item.append(row);
-      list.append(item);
-    }
+    });
     box.append(list);
     // The decision comes after the changes, where reading them ends.
     box.append(bar);
@@ -1342,10 +1227,6 @@ export function mountLlmBubble(anchor: HTMLElement, target: LlmTarget): { close(
 
   // Follows the composer when it shows another memo, and keeps the running times moving.
   const timer = window.setInterval(() => {
-    if (!target.host.isConnected) {
-      destroy();
-      return;
-    }
     if (anchor.hidden) {
       return;
     }
@@ -1366,6 +1247,8 @@ export function mountLlmBubble(anchor: HTMLElement, target: LlmTarget): { close(
     }
   }, 1000);
   function destroy() {
+    // Closing also ends a spoken prompt that is still being recorded.
+    close();
     window.clearInterval(timer);
     window.clearTimeout(floatTimer);
     life.abort();
@@ -1379,5 +1262,5 @@ export function mountLlmBubble(anchor: HTMLElement, target: LlmTarget): { close(
   }
   window.addEventListener("pagehide", destroy, until);
 
-  return { close };
+  return { close, destroy };
 }

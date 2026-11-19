@@ -5,6 +5,7 @@ mod llm;
 mod media;
 mod mouse_hook;
 mod notes;
+mod openai;
 mod shortcuts;
 mod speech;
 mod state;
@@ -148,28 +149,28 @@ pub fn run() {
             commands::slide_back,
             commands::begin_corner_resize,
             commands::detach_stack,
-            commands::get_ai_settings,
-            commands::save_ai_settings,
-            commands::llm_models,
-            commands::llm_ask,
-            commands::llm_cancel,
-            commands::llm_chat,
-            commands::llm_jobs,
-            commands::llm_mark,
-            commands::llm_clear_chat,
-            commands::get_speech_settings,
-            commands::save_speech_settings,
-            commands::speech_devices,
-            commands::speech_download,
-            commands::speech_remove_model,
-            commands::speech_start,
-            commands::speech_stop,
-            commands::speech_request_microphone,
-            commands::speech_open_privacy,
-            commands::recordings_info,
-            commands::recording_set_text,
-            commands::recording_transcribe,
-            commands::speech_polish
+            commands::ai::get_ai_settings,
+            commands::ai::save_ai_settings,
+            commands::ai::llm_models,
+            commands::ai::llm_ask,
+            commands::ai::llm_cancel,
+            commands::ai::llm_chat,
+            commands::ai::llm_jobs,
+            commands::ai::llm_mark,
+            commands::ai::llm_clear_chat,
+            commands::recording::get_speech_settings,
+            commands::recording::save_speech_settings,
+            commands::recording::speech_devices,
+            commands::recording::speech_download,
+            commands::recording::speech_remove_model,
+            commands::recording::speech_start,
+            commands::recording::speech_stop,
+            commands::recording::speech_request_microphone,
+            commands::recording::speech_open_privacy,
+            commands::recording::recordings_info,
+            commands::recording::recording_set_text,
+            commands::recording::recording_transcribe,
+            commands::recording::speech_polish
         ])
         .run(tauri::generate_context!())
         .expect("error while running memose");

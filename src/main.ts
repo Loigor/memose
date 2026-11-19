@@ -1,9 +1,7 @@
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 
-import { mountDictation } from "./ai/dictation";
-import { mountLlmBubble } from "./ai/llm-edit";
-import { mountRecordingTools } from "./ai/recording-tools";
+import { mountAiWhenEnabled } from "./ai/gate";
 import { createAppBackend } from "./app/backend";
 import { createAudienceController } from "./app/controllers/audience-controller";
 import { createEditorController } from "./app/controllers/editor-controller";
@@ -109,39 +107,40 @@ const editorController = createEditorController(
   },
 );
 
-const aiAnchor = document.querySelector<HTMLElement>("#ai-anchor");
-if (aiAnchor && !isPreviewWindow()) {
-  mountLlmBubble(aiAnchor, {
-    host: cardEl,
-    noteId: () => sessionController.currentNoteId(),
-    ensureNoteId: () => sessionController.ensureNoteId(),
-    title: () => noteTitle(editorController.content()),
-    text: () => editorController.content(),
-    replace: (next) => editorController.replaceContent(next),
-    visibility: () => appState.audience.visibility || null,
-    selectionRoots: () => [blocksEl, appContext.dom.preview],
-    onAvailability: () => stack.syncHeader(),
-  });
-}
 if (!isPreviewWindow()) {
-  mountRecordingTools({
-    roots: () => [blocksEl],
-    text: () => editorController.content(),
-    replace: (next) => editorController.replaceContent(next),
-  });
-}
-const recAnchor = document.querySelector<HTMLElement>("#rec-anchor");
-if (recAnchor && !isPreviewWindow()) {
-  mountDictation(recAnchor, {
-    host: cardEl,
-    noteId: () => sessionController.currentNoteId(),
-    text: () => editorController.content(),
-    replace: (next, quiet) => editorController.replaceContent(next, quiet),
-    insertAtCursor: (text) => editorController.insertPlainText(text),
-    placeCaret: (offset) => editorController.placeCaret(offset),
-    fieldRoots: () => [blocksEl, appContext.dom.preview],
-    onAvailability: () => stack.syncHeader(),
-  });
+  mountAiWhenEnabled((ai) =>
+    ai.mountMemoAi({
+      aiAnchor: document.querySelector<HTMLElement>("#ai-anchor"),
+      recAnchor: document.querySelector<HTMLElement>("#rec-anchor"),
+      llm: {
+        host: cardEl,
+        noteId: () => sessionController.currentNoteId(),
+        ensureNoteId: () => sessionController.ensureNoteId(),
+        title: () => noteTitle(editorController.content()),
+        text: () => editorController.content(),
+        replace: (next) => editorController.replaceContent(next),
+        visibility: () => appState.audience.visibility || null,
+        selectionRoots: () => [blocksEl, appContext.dom.preview],
+        onAvailability: () => stack.syncHeader(),
+      },
+      tools: {
+        noteId: () => sessionController.currentNoteId(),
+        roots: () => [blocksEl],
+        text: () => editorController.content(),
+        replace: (next) => editorController.replaceContent(next),
+      },
+      dictation: {
+        host: cardEl,
+        noteId: () => sessionController.currentNoteId(),
+        text: () => editorController.content(),
+        replace: (next, quiet) => editorController.replaceContent(next, quiet),
+        insertAtCursor: (text) => editorController.insertPlainText(text),
+        placeCaret: (offset) => editorController.placeCaret(offset),
+        fieldRoots: () => [blocksEl, appContext.dom.preview],
+        onAvailability: () => stack.syncHeader(),
+      },
+    }),
+  );
 }
 
 const audienceController = createAudienceController(

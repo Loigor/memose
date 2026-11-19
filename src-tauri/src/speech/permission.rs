@@ -47,7 +47,12 @@ mod mac {
 
     use super::Access;
 
+    /// Runs on IPC worker threads, which drain no autorelease pool of their own.
     pub fn access() -> Access {
+        objc2::rc::autoreleasepool(|_| read_access())
+    }
+
+    fn read_access() -> Access {
         // SAFETY: a read of a framework constant and a class method without side effects.
         let Some(media) = (unsafe { AVMediaTypeAudio }) else {
             return Access::NotNeeded;
@@ -62,7 +67,11 @@ mod mac {
 
     /// Shows the system prompt when it has not been answered, and waits for the answer.
     pub fn request() -> Access {
-        let current = access();
+        objc2::rc::autoreleasepool(|_| ask())
+    }
+
+    fn ask() -> Access {
+        let current = read_access();
         if current != Access::Unknown {
             return current;
         }
@@ -81,7 +90,7 @@ mod mac {
         match rx.recv_timeout(Duration::from_secs(120)) {
             Ok(true) => Access::Granted,
             Ok(false) => Access::Denied,
-            Err(_) => access(),
+            Err(_) => read_access(),
         }
     }
 }

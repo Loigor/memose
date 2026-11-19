@@ -232,6 +232,20 @@ impl Db {
         self.with(|conn| note_by_id(conn, id))
     }
 
+    /// True when the memo stays on this computer. A memo that is not saved yet, or has no
+    /// visibility of its own, follows the default, so a new offline-only memo is not sent away.
+    pub fn offline_only(&self, note_id: Option<&str>) -> Result<bool, AppError> {
+        let own = match note_id {
+            Some(id) => self.get(id)?.and_then(|note| note.visibility),
+            None => None,
+        };
+        let visibility = match own.filter(|own| !own.is_empty()) {
+            Some(own) => own,
+            None => self.get_meta(MEMO_VISIBILITY)?.unwrap_or_default(),
+        };
+        Ok(is_offline_private(&visibility))
+    }
+
     pub fn publish_note(&self, id: Option<&str>, content: &str) -> Result<Note, AppError> {
         let trimmed = content.trim();
         if trimmed.is_empty() {
@@ -1364,6 +1378,19 @@ mod tests {
         assert_eq!(kept.space.as_deref(), Some(""));
         assert!(db.set_audience(&note.id, "PRIVATE", "").unwrap());
         assert_eq!(db.get(&note.id).unwrap().unwrap().sync_state, PENDING);
+    }
+
+    #[test]
+    fn a_memo_without_its_own_visibility_follows_the_offline_default() {
+        let db = db();
+        db.set_meta(MEMO_VISIBILITY, "OFFLINE_PRIVATE").unwrap();
+        assert!(db.offline_only(None).unwrap());
+        assert!(db.offline_only(Some("not-saved-yet")).unwrap());
+        assert!(db.finalize_content("offline only").unwrap());
+        let note = db.list_recent(10).unwrap().remove(0);
+        db.set_meta(MEMO_VISIBILITY, "PRIVATE").unwrap();
+        assert!(db.offline_only(Some(&note.id)).unwrap());
+        assert!(!db.offline_only(None).unwrap());
     }
 
     #[test]

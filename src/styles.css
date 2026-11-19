@@ -5,6 +5,8 @@
 @import "./styles/highlight.css";
 @import "./styles/media.css";
 @import "./styles/preview.css";
+@import "./styles/ai.css";
+@import "./styles/recording.css";
 
 #memo-list {
   flex: none;

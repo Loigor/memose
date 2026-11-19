@@ -3,19 +3,13 @@
 import { invoke } from "@tauri-apps/api/core";
 
 import type { AiMode, AiPreset, AiSettings } from "./ai/llm-edit";
+import { required } from "./dom";
+import { statusRunner } from "./settings-status";
 
 type ModelList = {
   models: string[];
   ollama: boolean;
 };
-
-function required<T extends Element>(selector: string): T {
-  const found = document.querySelector<T>(selector);
-  if (!found) {
-    throw new Error(`settings form is incomplete: ${selector}`);
-  }
-  return found;
-}
 
 const modeChoices: { value: AiMode; label: string }[] = [
   { value: "ask", label: "Answer only" },
@@ -24,6 +18,7 @@ const modeChoices: { value: AiMode; label: string }[] = [
 ];
 
 export function initAiSettings(status: HTMLElement) {
+  const act = statusRunner(status);
   const enabled = required<HTMLInputElement>("#llm-enabled");
   const baseUrl = required<HTMLInputElement>("#llm-base-url");
   const where = required<HTMLElement>("#llm-where");
@@ -161,18 +156,6 @@ export function initAiSettings(status: HTMLElement) {
     paintModels();
     return found;
   };
-
-  function act(work: () => Promise<string>, busy = "") {
-    status.textContent = busy;
-    void work().then(
-      (done) => {
-        status.textContent = done;
-      },
-      (error: unknown) => {
-        status.textContent = String(error);
-      },
-    );
-  }
 
   model.addEventListener("input", paintModels);
 

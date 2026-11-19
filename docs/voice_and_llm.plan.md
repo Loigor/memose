@@ -229,9 +229,9 @@ Presets carry their own mode. An answer can still be added to the memo or review
 - Escape and a click on the memo close the bubble before anything else reacts.
 - One prompt box in the style of an editor chat input: the text on top, and the mode, the model (click to switch), and send along its bottom edge.
 - Presets sit on one row and shrink in a narrow memo. Those that do not fit go behind **More…**.
-- The chat lives in Rust `AppState` (`llm_chats`, keyed by memo id), so it survives closing the memo window. It is dropped when the app quits.
+- The chat lives in Rust `AppState` (`llm::Chats`, keyed by memo id), so it survives closing the memo window. It keeps 30 finished prompts per memo and the 20 memos used most recently, and is dropped when the memo is deleted, when prompts are turned off, or when the app quits.
 - Line diff from `src/editor/line-diff.ts`: red removed, green added, **Accept** and **Keep original** per change, **Accept all**, **Dismiss**. Accepted text saves through the editor as one undo step.
-- Colors come from one AI scheme, the `--ai-*` variables in [controls.css](src/styles/controls.css), derived from the memo's paper and ink shifted toward one tint.
+- Colors come from one AI scheme, the `--ai-*` variables in [ai.css](src/styles/ai.css), derived from the memo's paper and ink shifted toward one tint.
 
 Safeguards:
 

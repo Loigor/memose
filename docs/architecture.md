@@ -33,7 +33,7 @@ Vite is configured as a multi-page build (`vite.config.ts`) with two entries:
 | `index.html` | `src/main.ts` | Memo card: editor, recent list, pin window, media lightbox |
 | `settings.html` | `src/settings.ts` | Settings: visibility, shortcuts, useMemos sync |
 
-Markup for the note card, toolbar, audience popover, conflict banner, recent list, stack container, and resize handles lives in `index.html`. Settings tabs live in `settings.html`. Shared look is in `src/styles.css`. It imports `shell.css`, `header.css`, `controls.css`, `field.css`, `highlight.css`, `media.css`, and `preview.css` from `src/styles/` in that order, then the recent list. Settings use `src/settings.css`.
+Markup for the note card, toolbar, audience popover, conflict banner, recent list, stack container, and resize handles lives in `index.html`. Settings tabs live in `settings.html`. Shared look is in `src/styles.css`. It imports `shell.css`, `header.css`, `controls.css`, `field.css`, `highlight.css`, `media.css`, `preview.css`, `ai.css`, and `recording.css` from `src/styles/` in that order, then the recent list. Settings use `src/settings.css`.
 
 ### TypeScript modules (`src/`)
 
@@ -61,6 +61,7 @@ These are helpers, not a component framework:
 | `editor/` (`markdown-edit.ts`, `editor-blocks.ts`, `editor-field.ts`, `code-view.ts`, `textarea.ts`, `history.ts`, `md-highlight.ts`) | Block editor, read-only code views in preview, markdown transforms, undo |
 | `media/` (`media-dnd.ts`, `media-elements.ts`, `files.ts`) | Paste/drop, resize, lightbox, attachments |
 | `look/` (`look.ts`, `memo-chrome.ts`, `hue-pop.ts`, `audience-ui.ts`, `visibility.ts`, `sync-status.ts`) | Hue, theme, audience, sync icon |
+| `ai/` (`gate.ts`, `mount.ts`, `llm-edit.ts`, `llm-diff-view.ts`, `dictation.ts`, `recording-tools.ts`, `speech.ts`, `effort-slider.ts`) | Optional AI prompts and recording. `gate.ts` is the only part in the main bundle: it loads the rest as a separate chunk once model prompts or recording are turned on, and every mount returns a teardown |
 | `shortcuts.ts` | Shortcut matching (shared with settings) |
 | `types.ts` | `Note` / `MemoSpace` shapes matching Rust `#[serde(rename_all = "camelCase")]` |
 
@@ -97,7 +98,7 @@ invoke("save_edit", { id, content })
 listen("notes-changed", () => { ... })
 ```
 
-Every command is registered in `tauri::generate_handler![...]` in `lib.rs`. Implementations live in `src-tauri/src/commands.rs` — thin wrappers that call `notes::Db`, `window_ctl`, `media`, or the sync worker, then `app.emit(...)` so other windows refresh.
+Every command is registered in `tauri::generate_handler![...]` in `lib.rs`. Implementations live in `src-tauri/src/commands.rs`, with model prompts in `commands/ai.rs` and recording in `commands/recording.rs` — thin wrappers that call `notes::Db`, `window_ctl`, `media`, or the sync worker, then `app.emit(...)` so other windows refresh.
 
 Tests in `tests/frontend.test.ts` enforce a **1-to-1 IPC contract**: every registered command must be invoked from the frontend, and every `invoke("...")` must exist on the Rust side.
 
@@ -107,7 +108,10 @@ Engineering rules for this boundary (no blocking the async runtime, path validat
 
 | Module | Job |
 | --- | --- |
-| `commands.rs` | IPC surface |
+| `commands.rs`, `commands/` | IPC surface (`ai.rs` for model prompts, `recording.rs` for recording) |
+| `llm.rs`, `llm/chats.rs` | Model prompts on a memo, and the bounded chat of each memo |
+| `openai.rs` | Calls to OpenAI-compatible servers, shared by the model and the speech server |
+| `speech/` | Microphone capture, the built-in recognizer, speech-server slices, and dictation polish (`polish.rs`) |
 | `notes/` | SQLite + sync |
 | `window_ctl/` | Composer, pin windows, snap, stack, drag/resize |
 | `tray.rs` | Tray icon + menu |

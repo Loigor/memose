@@ -35,10 +35,8 @@ pub struct AppState {
     pub shortcuts: Mutex<ShortcutBinds>,
     /// Per-window drag settle tickets: ticket, resize gesture, last event time.
     pub settle: Mutex<HashMap<String, (u64, bool, Instant)>>,
-    /// Running model edits by request id. Sending on the channel cancels the call.
-    pub llm_requests: Mutex<HashMap<String, tokio::sync::oneshot::Sender<()>>>,
-    /// Prompts and results per memo id. Kept until the app quits.
-    pub llm_chats: Mutex<HashMap<String, Vec<crate::llm::ChatEntry>>>,
+    /// Model prompts and results per memo, and the ones still running.
+    pub chats: crate::llm::Chats,
     /// The running recording and the loaded speech model, if any.
     pub speech: crate::speech::SpeechState,
 }
@@ -71,8 +69,7 @@ impl AppState {
             preview_opened_at: Mutex::new(None),
             shortcuts: Mutex::new(ShortcutBinds::defaults()),
             settle: Mutex::new(HashMap::new()),
-            llm_requests: Mutex::new(HashMap::new()),
-            llm_chats: Mutex::new(HashMap::new()),
+            chats: Default::default(),
             speech: crate::speech::SpeechState::default(),
         })
     }

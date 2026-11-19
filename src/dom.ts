@@ -55,3 +55,35 @@ export function pointOnScrollGutter(
   }
   return false;
 }
+
+/** The element `selector` names. A missing one is a bug in the page markup. */
+export function required<T extends Element>(selector: string): T {
+  return requireEl(document.querySelector<T>(selector), selector);
+}
+
+export function el<K extends keyof HTMLElementTagNameMap>(
+  tag: K,
+  className: string,
+  text?: string,
+): HTMLElementTagNameMap[K] {
+  const node = document.createElement(tag);
+  node.className = className;
+  if (text !== undefined) {
+    node.textContent = text;
+  }
+  return node;
+}
+
+/** A plain button. A `contained` one keeps its click from reaching the memo underneath. */
+export function button(className: string, text: string, onClick: () => void, contained = false): HTMLButtonElement {
+  const node = el("button", className, text);
+  node.type = "button";
+  node.addEventListener("click", (event) => {
+    if (contained) {
+      event.preventDefault();
+      event.stopPropagation();
+    }
+    onClick();
+  });
+  return node;
+}

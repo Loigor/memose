@@ -12,7 +12,9 @@ import {
   type Span,
 } from "../editor/dictation-span";
 import {
-  effortSlider,
+  CONTEXT_AFTER,
+  CONTEXT_BEFORE,
+  DEFAULT_LEVEL,
   polishSpeech,
   saveEffort,
   speechAvailable,
@@ -24,6 +26,7 @@ import {
   type SpeechDone,
   CORRECTIONS_LEVEL,
 } from "./speech";
+import { effortSlider } from "./effort-slider";
 import { findTextRanges, keepScroll, revealRect, setHighlight } from "../editor/view-keep";
 import { rememberRecordingText } from "./recording-tools";
 
@@ -45,9 +48,6 @@ export type DictationTarget = {
   onAvailability?(): void;
 };
 
-/** Note text given to the model on each side of the dictation. */
-const CONTEXT_BEFORE = 1500;
-const CONTEXT_AFTER = 400;
 const POLISH_DELAY = 450;
 /** Silence before a piece of speech that starts a new paragraph. */
 const PARAGRAPH_PAUSE_MS = 2500;
@@ -77,10 +77,11 @@ type Take = {
 };
 
 /** Wires the record button inside `anchor`. It stays hidden until recording is turned on in settings. */
-export function mountDictation(anchor: HTMLElement, target: DictationTarget) {
+/** Wires the record button inside `anchor`. The returned function removes it and its listeners. */
+export function mountDictation(anchor: HTMLElement, target: DictationTarget): () => void {
   const toggle = anchor.querySelector<HTMLButtonElement>(".rec-toggle");
   if (!toggle) {
-    return;
+    return () => {};
   }
   const button = toggle;
   /** The recording the button, the listening mark, and the slider belong to. */
@@ -440,7 +441,7 @@ export function mountDictation(anchor: HTMLElement, target: DictationTarget) {
         // sees the start of what was said after the paragraph, which may say its end again.
         const corrections = t.level >= CORRECTIONS_LEVEL;
         const later = isFinal && corrections ? trail.slice(0, LATER_CHARS) : "";
-        const reply = await polishSpeech(before, after, tail, passLevel, corrections, later);
+        const reply = await polishSpeech(target.noteId(), before, after, tail, passLevel, corrections, later);
         const now = paragraphs(t);
         const latest = now[index];
         if (latest === undefined) {
@@ -543,7 +544,7 @@ export function mountDictation(anchor: HTMLElement, target: DictationTarget) {
       span: null,
       polishing: false,
       // The level last set on the slider carries over to the next recording.
-      level: speechSettings()?.polishLevel ?? 2,
+      level: speechSettings()?.polishLevel ?? DEFAULT_LEVEL,
       finalQueue: [],
       livePending: false,
       passed: new Map(),
@@ -644,6 +645,7 @@ export function mountDictation(anchor: HTMLElement, target: DictationTarget) {
     }
   });
 
+  const life = new AbortController();
   // Enter ends dictation instead of starting a new line.
   window.addEventListener(
     "keydown",
@@ -672,8 +674,20 @@ export function mountDictation(anchor: HTMLElement, target: DictationTarget) {
       event.stopImmediatePropagation();
       stop();
     },
-    true,
+    { capture: true, signal: life.signal },
   );
 
-  watchSpeech(paint);
+  const unwatch = watchSpeech(paint);
+  return () => {
+    // The words still on their way are written by the session handlers, so none are lost.
+    if (recordingHere()) {
+      stopSpeech();
+    }
+    life.abort();
+    unwatch();
+    window.clearTimeout(messageTimer);
+    message?.remove();
+    slider?.remove();
+    live.remove();
+  };
 }

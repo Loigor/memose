@@ -4,13 +4,15 @@
  * A new text is shown as a word diff to accept or decline.
  */
 
+import { button as plainButton, el } from "../dom";
 import { acceptWords, findWords, locateWords, wordDiff } from "../editor/recording-words";
 import { findTextRanges, keepScroll, setHighlight } from "../editor/view-keep";
 import {
+  CONTEXT_AFTER,
+  CONTEXT_BEFORE,
   CORRECTIONS_LEVEL,
   DEFAULT_LEVEL,
   effortName,
-  effortSlider,
   polishSpeech,
   recordingsInfo,
   topLevel,
@@ -19,9 +21,12 @@ import {
   watchSpeech,
   type RecordingInfo,
 } from "./speech";
+import { effortSlider } from "./effort-slider";
 
 /** The memo whose audio players get the tools. */
 export type RecordingToolsTarget = {
+  /** Id of the memo, so an offline-only one is not sent to another computer. */
+  noteId(): string | null;
   /** Boxes that hold the memo's audio players. */
   roots(): HTMLElement[];
   text(): string;
@@ -29,9 +34,6 @@ export type RecordingToolsTarget = {
   replace(next: string): void;
 };
 
-/** Memo text given to the model on each side of the words. */
-const CONTEXT_BEFORE = 1500;
-const CONTEXT_AFTER = 400;
 const SNIPPET = 90;
 
 type Proposal = {
@@ -70,33 +72,19 @@ export function rememberRecordingText(name: string, text: string) {
   void saveRecordingText(name, text);
 }
 
-function el<K extends keyof HTMLElementTagNameMap>(tag: K, className: string, text?: string): HTMLElementTagNameMap[K] {
-  const node = document.createElement(tag);
-  node.className = className;
-  if (text !== undefined) {
-    node.textContent = text;
-  }
-  return node;
-}
-
-function button(className: string, text: string, onClick: () => void): HTMLButtonElement {
-  const node = el("button", className, text);
-  node.type = "button";
-  node.addEventListener("click", (event) => {
-    event.preventDefault();
-    event.stopPropagation();
-    onClick();
-  });
-  return node;
-}
+/** Tool buttons sit on the audio player, so their clicks stay off the memo. */
+const button = (className: string, text: string, onClick: () => void) => plainButton(className, text, onClick, true);
 
 function snippet(text: string): string {
   const flat = text.replace(/\s+/g, " ").trim();
   return flat.length > SNIPPET ? `${flat.slice(0, SNIPPET).trimEnd()}…` : flat;
 }
 
-/** Adds the tools to the audio players of one memo and keeps them there as the memo is redrawn. */
-export function mountRecordingTools(target: RecordingToolsTarget) {
+/**
+ * Adds the tools to the audio players of one memo and keeps them there as the memo is redrawn.
+ * The returned function stops watching the memo.
+ */
+export function mountRecordingTools(target: RecordingToolsTarget): () => void {
   let scheduled = false;
 
   const render = (figure: HTMLElement, name: string) => {
@@ -210,7 +198,7 @@ export function mountRecordingTools(target: RecordingToolsTarget) {
       // The words as they are in the memo now, also after they were edited.
       const found = findWords(memo, state.info.text || state.info.heard, name);
       const old = found ? memo.slice(found.start, found.end) : "";
-      let next = (await transcribeRecording(name)).trim();
+      let next = (await transcribeRecording(name, target.noteId())).trim();
       if (level > 1 && next !== "") {
         const place = old ? locateWords(memo, old, name) : null;
         const token = memo.indexOf(`memose-media/${name}`);
@@ -220,7 +208,7 @@ export function mountRecordingTools(target: RecordingToolsTarget) {
         const before = memo.slice(Math.max(0, start - CONTEXT_BEFORE), start);
         const after = memo.slice(end, end + CONTEXT_AFTER);
         // At High and Max a sentence said again keeps only its last version.
-        next = (await polishSpeech(before, after, next, level, level >= CORRECTIONS_LEVEL)).trim();
+        next = (await polishSpeech(target.noteId(), before, after, next, level, level >= CORRECTIONS_LEVEL)).trim();
       }
       state.proposal = next === "" ? null : { old, next, level };
       if (next === "") {
@@ -360,8 +348,12 @@ export function mountRecordingTools(target: RecordingToolsTarget) {
   watchRoots();
   schedule();
   // The refine button depends on the chat model being set up.
-  watchSpeech(() => {
+  const unwatch = watchSpeech(() => {
     watchRoots();
     paintAll();
   });
+  return () => {
+    observer.disconnect();
+    unwatch();
+  };
 }

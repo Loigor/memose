@@ -12,6 +12,8 @@ import {
   type SpeechSettings,
   type SpeechSource,
 } from "./ai/speech";
+import { required } from "./dom";
+import { statusRunner } from "./settings-status";
 
 type Progress = {
   received: number;
@@ -20,15 +22,8 @@ type Progress = {
   error: string | null;
 };
 
-function required<T extends Element>(selector: string): T {
-  const found = document.querySelector<T>(selector);
-  if (!found) {
-    throw new Error(`settings form is incomplete: ${selector}`);
-  }
-  return found;
-}
-
 export function initSpeechSettings(status: HTMLElement) {
+  const act = statusRunner(status);
   const enabled = required<HTMLInputElement>("#speech-enabled");
   const device = required<HTMLSelectElement>("#speech-device");
   const keepAudio = required<HTMLInputElement>("#speech-keep-audio");
@@ -328,18 +323,6 @@ export function initSpeechSettings(status: HTMLElement) {
     }
     device.value = chosen;
   };
-
-  function act(work: () => Promise<string>, busy = "") {
-    status.textContent = busy;
-    void work().then(
-      (done) => {
-        status.textContent = done;
-      },
-      (error: unknown) => {
-        status.textContent = String(error);
-      },
-    );
-  }
 
   const save = (fields: Record<string, unknown>, done: string) => {
     act(async () => {

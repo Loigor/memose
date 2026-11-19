@@ -23,7 +23,7 @@ Do not add a UI framework. HTML stays the component tree.
 | Two block renderers | `renderBlocks` in `src/app/controllers/editor-controller.ts`, `renderSectionBlocks` in `src/stack/editor.ts` | Same media-row idea, different details (composer placeholder, host state vs section state). Merge only after a line-by-line diff, in its own step. |
 | One stylesheet, no sections | `src/styles.css` | Safe to split only by cutting rules into files that `styles.css` imports in today's order. |
 
-`commands.rs` (760 lines) stays the IPC surface. Splitting it does not make the app easier to follow.
+`commands.rs` stays the IPC surface. Optional features get their own file under `commands/` (`ai.rs`, `recording.rs`) instead of growing it.
 
 ## Rules for every remaining step
 
@@ -72,6 +72,8 @@ Imported in this order:
 - `src/styles/highlight.css` — `html[data-mdhl]` through the coder wrap rules
 - `src/styles/media.css` — `.media` through the media context menu
 - `src/styles/preview.css` — spelling errors, the shared textarea and preview type, the drop outline, and the lightbox
+- `src/styles/ai.css` — the AI button, the `--ai-*` scheme, the prompt bubble, the line diff, and the selection tab
+- `src/styles/recording.css` — the record button, the listening mark, the effort slider, and the tools on a recording
 
 `styles.css` continues at `#memo-list`. The selection check reads `src/styles.css` and the slices it imports, in that order.
 
