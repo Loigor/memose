@@ -379,6 +379,17 @@ export function mountLlmBubble(anchor: HTMLElement, target: LlmTarget): { close(
     return box;
   }
 
+  /**
+   * Where the text a prompt was about sits in the memo now, or -1. New text written for an empty
+   * memo goes after whatever the memo holds now.
+   */
+  function placeOf(lines: string[], before: string[], lineStart: number | null): number {
+    if (before.length === 0) {
+      return lineStart == null ? lines.length : -1;
+    }
+    return locateBlock(lines, before, lineStart ? lineStart - 1 : 0);
+  }
+
   function diffBody(entry: ChatEntry): HTMLElement {
     const box = el("div", "ai-diff-box");
     const before = splitLines(entry.source);
@@ -399,7 +410,7 @@ export function mountLlmBubble(anchor: HTMLElement, target: LlmTarget): { close(
 
     const finish = () => {
       const current = sourceNow();
-      const at = locateBlock(current.lines, before, entry.lineStart ? entry.lineStart - 1 : 0);
+      const at = placeOf(current.lines, before, entry.lineStart);
       if (at < 0) {
         notice = "The memo changed after this prompt was sent, so nothing was applied. Run the prompt again.";
         decisions.delete(entry.id);
@@ -497,7 +508,7 @@ export function mountLlmBubble(anchor: HTMLElement, target: LlmTarget): { close(
     box.append(bar);
 
     const now = sourceNow();
-    const place = Math.max(0, locateBlock(now.lines, before, entry.lineStart ? entry.lineStart - 1 : 0));
+    const place = Math.max(0, placeOf(now.lines, before, entry.lineStart));
     const everything = new Set(all.map((hunk) => hunk.id));
     const size = byteLength(applyToBlock(now.lines, place, before.length, parts, everything, now.kept));
     if (contentLimit > 0 && size > contentLimit) {
@@ -576,7 +587,7 @@ export function mountLlmBubble(anchor: HTMLElement, target: LlmTarget): { close(
         el(
           "p",
           "ai-empty",
-          "Ask about this memo or ask for a change. Answers stay here. Changes are shown for you to accept first.",
+          "Ask about this memo, ask for a change, or ask for new text. Answers stay here. Changes are shown for you to accept first.",
         ),
       );
     }
@@ -669,8 +680,9 @@ export function mountLlmBubble(anchor: HTMLElement, target: LlmTarget): { close(
       // The place of the selection is unclear, so the whole memo is the source and the selection is a hint.
       request = `${text}\n\nThe request is about this part of the note:\n${picked.text}`;
     }
-    if (source.trim() === "") {
-      notice = "This memo has no text to send.";
+    // An empty memo is fine: the prompt then asks for new text. An empty selection is not.
+    if (lineStart != null && source.trim() === "") {
+      notice = "The selected lines have no text to send.";
       paintLog(true);
       paintFoot();
       return;

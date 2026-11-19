@@ -1129,8 +1129,9 @@ pub async fn llm_ask(
     if instruction.trim().is_empty() {
         return Err(AppError::Message("write an instruction first".into()));
     }
-    if text.trim().is_empty() {
-        return Err(AppError::Message("there is no text to send".into()));
+    // An empty memo is fine: the prompt then asks for new text. An empty selection is not.
+    if context.is_some() && text.trim().is_empty() {
+        return Err(AppError::Message("the selected lines have no text to send".into()));
     }
     let (base, key) = llm_server(&state)?;
     let model = state

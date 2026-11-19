@@ -26,6 +26,7 @@ const MAX_PRESETS: usize = 12;
 
 const ROLE: &str = "You are an assistant built into a note-taking app. The user is looking at a note and sends a request. Reply in the language of the request unless it asks for another one.";
 const ASK_RULES: &str = "Answer the request directly and briefly. Use the note as context. If the note does not hold the answer, use your general knowledge. Do not repeat or rewrite the note.";
+const EMPTY_CLASSIFY_RULES: &str = "A user of a note-taking app sends a request while their note is still empty. Decide whether the request asks you to write text that belongs in the note.\nYES: write, draft, compose, or generate something, such as a poem, a story, a letter, an email, a list, a plan, or a template.\nNO: a question, an explanation, an opinion, or a short fact to read and not keep.\nReply with exactly one word: YES or NO.";
 const CLASSIFY_RULES: &str = "A user of a note-taking app sends a request about their note. Decide whether the request asks to change the text of the note itself.\nYES: rewrite, fix, correct, translate, reformat, shorten, extend, sort, reorder, or add or remove something in the note.\nNO: a question, a count, an explanation, a summary, an opinion, a list of items taken from the note, or writing something new.\nReply with exactly one word: YES or NO.";
 /// Earlier prompts of the same memo sent along as chat history.
 const HISTORY_TURNS: usize = 6;
@@ -43,10 +44,17 @@ fn subject(selected: bool) -> &'static str {
     }
 }
 
-fn system_prompt(mode: Mode, selected: bool) -> String {
+/// A note with no text yet. A request on it asks for new text or general knowledge.
+fn is_empty_note(text: &str, context: Option<&str>) -> bool {
+    context.is_none() && text.trim().is_empty()
+}
+
+fn system_prompt(mode: Mode, selected: bool, empty: bool) -> String {
     let what = subject(selected);
     let rules = match mode {
+        Mode::Ask if empty => "The note is empty. Answer the request directly from your general knowledge, or write what it asks for.".to_string(),
         Mode::Ask => ASK_RULES.to_string(),
+        Mode::Edit if empty => "The note is empty. Write the text the request asks for, to become the content of the note. Reply with that text only: no introduction, no explanation, no code fence. Use markdown where it helps.".to_string(),
         Mode::Edit => format!(
             "The request asks you to change the {what}. Reply with the complete revised {what} and nothing else: no introduction, no explanation, no code fence. Keep the markdown formatting, and keep everything the request does not ask to change."
         ),
@@ -63,6 +71,7 @@ fn user_prompt(instruction: &str, text: &str, context: Option<&str>) -> String {
         Some(note) => format!(
             "<note>\n{note}\n</note>\n\n<selected>\n{text}\n</selected>\n\nThe request is about the selected part of the note.\n\nRequest: {request}"
         ),
+        None if text.trim().is_empty() => format!("The note is empty.\n\nRequest: {request}"),
         None => format!("<note>\n{text}\n</note>\n\nRequest: {request}"),
     }
 }
@@ -326,13 +335,19 @@ async fn wants_edit(
     key: Option<&str>,
     model: &str,
     instruction: &str,
+    empty: bool,
 ) -> bool {
+    let (rules, question) = if empty {
+        (EMPTY_CLASSIFY_RULES, "Does it ask for text to put in the note? YES or NO.")
+    } else {
+        (CLASSIFY_RULES, "Does it ask to change the note's text? YES or NO.")
+    };
     let body = json!({
         "model": model,
         "stream": false,
         "messages": [
-            { "role": "system", "content": CLASSIFY_RULES },
-            { "role": "user", "content": format!("Request: {}\n\nDoes it ask to change the note's text? YES or NO.", instruction.trim()) },
+            { "role": "system", "content": rules },
+            { "role": "user", "content": format!("Request: {}\n\n{question}", instruction.trim()) },
         ],
     });
     let request = http
@@ -409,7 +424,7 @@ fn messages(
     context: Option<&str>,
     history: &[Turn],
 ) -> Vec<Value> {
-    let mut system = system_prompt(mode, context.is_some());
+    let mut system = system_prompt(mode, context.is_some(), is_empty_note(text, context));
     if !history.is_empty() {
         system = format!("{system}\n{HISTORY_RULES}");
     }
@@ -437,7 +452,11 @@ pub async fn ask(
     history: &[Turn],
 ) -> Result<Reply, AppError> {
     let mode = match mode {
-        Mode::Auto if wants_edit(http, base, key, model, instruction).await => Mode::Edit,
+        Mode::Auto
+            if wants_edit(http, base, key, model, instruction, is_empty_note(text, context)).await =>
+        {
+            Mode::Edit
+        }
         Mode::Auto => Mode::Ask,
         fixed => fixed,
     };
@@ -748,8 +767,19 @@ mod tests {
         let part = user_prompt("Fix it", "- b", Some("- a\n- b"));
         assert!(part.contains("<selected>\n- b\n</selected>"));
         assert!(part.ends_with("Request: Fix it"));
-        assert!(system_prompt(Mode::Edit, true).contains("revised selected part"));
-        assert!(system_prompt(Mode::Ask, false).contains("Do not repeat or rewrite the note"));
+        assert!(system_prompt(Mode::Edit, true, false).contains("revised selected part"));
+        assert!(system_prompt(Mode::Ask, false, false).contains("Do not repeat or rewrite the note"));
+    }
+
+    #[test]
+    fn an_empty_note_asks_for_new_text() {
+        let prompt = user_prompt("Write me a poem", "  \n", None);
+        assert_eq!(prompt, "The note is empty.\n\nRequest: Write me a poem");
+        assert!(is_empty_note("", None));
+        assert!(!is_empty_note("", Some("whole note")));
+        assert!(system_prompt(Mode::Edit, false, true).contains("Write the text the request asks for"));
+        let sent = messages(Mode::Edit, "Write me a poem", "", None, &[]);
+        assert!(sent[0]["content"].as_str().unwrap().contains("The note is empty"));
     }
 
     #[test]
