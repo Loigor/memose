@@ -9,7 +9,8 @@ import { loadHueSwatches, watchHueSwatches } from "./look/swatches.ts";
 import { inTauri } from "./platform.ts";
 import type { PinTab, PinTabHit, PinTabs } from "./types.ts";
 
-const HEIGHT = { collapsed: 12, open: 28, menu: 148 };
+/** Strip thickness. `aim` leaves room for a tab at twice its size while a memo is held over it. */
+const HEIGHT = { collapsed: 12, open: 28, aim: 52, menu: 148 };
 const SIDE_MENU = 256;
 const TWEEN = { show: 140, hide: 400 };
 const COLLAPSE_WAIT = 1000;
@@ -168,6 +169,9 @@ function goalThickness(): number {
   const menuOpen = !menuEl.hidden && !menuEl.classList.contains("is-closing");
   if (menuOpen) {
     return sideStrip() ? SIDE_MENU : HEIGHT.menu;
+  }
+  if (lastAim) {
+    return HEIGHT.aim;
   }
   if (document.documentElement.classList.contains("is-open")) {
     return HEIGHT.open;
@@ -363,8 +367,18 @@ if (inTauri()) {
     .catch(() => applyEdge("top"));
   void listen<[string, string]>("pin-tab-aim", (event) => {
     const [id, mode] = event.payload ?? [];
+    const wasAiming = lastAim !== null;
     lastAim = id && mode && mode !== "off" ? { id, mode } : null;
+    // A memo held over a tab: the strip opens and the tab grows until the memo moves there.
+    document.documentElement.classList.toggle("is-aiming", lastAim !== null);
     applyAim();
+    if (lastAim) {
+      expand();
+    } else if (wasAiming) {
+      void tweenHeight(goalThickness(), TWEEN.show);
+      scheduleCollapse();
+    }
+    reportHits();
   });
   void getCurrentWindow().listen<[number, number] | null>("window-cursor", (event) => {
     if (event.payload) {

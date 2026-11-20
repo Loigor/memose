@@ -6,11 +6,12 @@ use tauri::{
 };
 
 use super::drag::{publish_screen_edges, schedule_settle, slide_back, slide_into_view_sized};
+use super::geom::{clear_of_cards, visual_card};
 use super::pin::{hide_pinned, open_pinned_windows};
 use super::{
     clamp_position, contains, hide_pin_tabs, schedule_resign, snap_enabled, snap_screen_edges,
     tray_card_origin, CARD_HEIGHT, CARD_PAD_BOTTOM, CARD_PAD_TOP, CARD_PAD_X, CARD_WIDTH,
-    EDGE_CATCH, FOCUS_GRACE, WINDOW,
+    EDGE_CATCH, FOCUS_GRACE, ORGANIZE_GAP, WINDOW,
 };
 use crate::notes::request_sync;
 use crate::state::AppState;
@@ -24,12 +25,14 @@ pub fn attach(app: &tauri::AppHandle) {
     // The window is created at a parked spot. Keep it hidden until present()
     // has moved it to the cursor, so the first frame is not the screen center.
     let _ = window.hide();
+    super::mac_frame::allow_above_menu_bar(&window);
     let handle = app.clone();
     window.on_window_event(move |event| match event {
         WindowEvent::CloseRequested { api, .. } => {
             api.prevent_close();
             hide_and_save(&handle, true);
         }
+        WindowEvent::Focused(true) => super::stacking::raise_strips(&handle),
         WindowEvent::Focused(false) => {
             slide_back(&handle, WINDOW);
             schedule_resign(&handle);
@@ -56,6 +59,14 @@ pub fn show_composer(app: &tauri::AppHandle) {
 }
 
 pub fn show_fresh_memo(app: &tauri::AppHandle) {
+    // A new memo would replace the one being dictated into: bring that one forward instead.
+    if composer_open(app) && super::recording_in(app, WINDOW) {
+        if let Some(window) = app.get_webview_window(WINDOW) {
+            let _ = window.show();
+            let _ = window.set_focus();
+        }
+        return;
+    }
     if composer_open(app) {
         cycle_composer(app);
         return;
@@ -91,6 +102,10 @@ pub fn hide_memos(app: &tauri::AppHandle) {
 }
 
 pub(super) fn hide_and_save(app: &tauri::AppHandle, from_blur: bool) {
+    // The memo being dictated into stays open until the recording ends.
+    if super::recording_in(app, WINDOW) {
+        return;
+    }
     let state = app.state::<AppState>();
     if state.hiding.swap(true, Ordering::SeqCst) {
         return;
@@ -416,8 +431,59 @@ fn place_at_cursor(app: &tauri::AppHandle, window: &WebviewWindow) -> Option<(i3
             catch,
         );
     }
+    // Do not open on top of a pinned memo when there is room beside it.
+    let pad_bottom = (CARD_PAD_BOTTOM * scale).round() as i32;
+    let pad_x = (CARD_PAD_X * scale).round() as i32;
+    let pad_top = (CARD_PAD_TOP * scale).round() as i32;
+    let taken = visible_pin_cards(app, pad_x, pad_top, pad_bottom);
+    if !taken.is_empty() {
+        let card = visual_card(
+            x,
+            y,
+            (CARD_WIDTH * scale).round() as i32,
+            (CARD_HEIGHT * scale).round() as i32,
+            pad_x,
+            pad_top,
+            pad_bottom,
+        );
+        let area = (
+            area.position.x,
+            area.position.y,
+            area.size.width as i32,
+            area.size.height as i32,
+        );
+        let (cx, cy) = clear_of_cards(card, area, &taken, (ORGANIZE_GAP * scale).round() as i32);
+        x = cx - pad_x;
+        y = cy - pad_top;
+    }
     window.set_position(PhysicalPosition::new(x, y)).ok()?;
     Some((x, y))
+}
+
+/// The visible cards of the pinned memos on screen now.
+fn visible_pin_cards(
+    app: &tauri::AppHandle,
+    pad_x: i32,
+    pad_top: i32,
+    pad_bottom: i32,
+) -> Vec<(i32, i32, i32, i32)> {
+    app.webview_windows()
+        .into_iter()
+        .filter(|(label, window)| label.starts_with("pin-") && window.is_visible().unwrap_or(false))
+        .filter_map(|(_, window)| {
+            let position = window.outer_position().ok()?;
+            let size = window.outer_size().ok()?;
+            Some(visual_card(
+                position.x,
+                position.y,
+                size.width as i32,
+                size.height as i32,
+                pad_x,
+                pad_top,
+                pad_bottom,
+            ))
+        })
+        .collect()
 }
 
 #[derive(Clone, Copy)]

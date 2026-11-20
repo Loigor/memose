@@ -21,6 +21,7 @@ import { mountLineEditor } from "../editor/line-editor";
 import {
   type Block,
   closedFenceIn,
+  isAudio,
   completeOpenFence,
   dropCodeBlock,
   type Edit,
@@ -330,6 +331,8 @@ export function mountEditor(ctx: StackCtx) {
         const canSitOnMediaLine =
           block.kind === "text" &&
           isAfterMedia &&
+          // An audio player is a wide block of its own. Text after it goes on the next line.
+          !(prevBlock?.kind === "media" && isAudio(prevBlock.name) && !prevBlock.inline) &&
           currentRow !== null &&
           currentRowSideArea === null &&
           !block.text.includes("\n");

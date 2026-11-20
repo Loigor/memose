@@ -10,7 +10,9 @@ use crate::error::AppError;
 use crate::media;
 use crate::state::AppState;
 
-use super::db::{canonical_visibility, Db, API_FLAVOR, BASE_URL, MEMO_SPACE, MEMO_VISIBILITY};
+use super::db::{
+    canonical_visibility, now_ms, Db, API_FLAVOR, BASE_URL, MEMO_SPACE, MEMO_VISIBILITY,
+};
 use super::model::{is_offline_private, MemoSpace, Note, REMOTE};
 
 pub mod limits;
@@ -28,6 +30,8 @@ pub enum Job {
     Cycle,
     Materialize(String, tokio::sync::oneshot::Sender<Result<Note, AppError>>),
     KeepLocal(String, tokio::sync::oneshot::Sender<Result<Note, AppError>>),
+    /// One push pass started by the user, with its failure sent back.
+    Retry(tokio::sync::oneshot::Sender<Result<(), AppError>>),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -99,6 +103,18 @@ pub async fn request_materialize(app: &AppHandle, id: String) -> Result<Note, Ap
     }
 }
 
+/// Runs a push pass now and waits for it. A memo that still fails keeps its reason in `last_error`.
+pub async fn request_retry(app: &AppHandle) -> Result<(), AppError> {
+    let (tx, rx) = tokio::sync::oneshot::channel();
+    if !send(app, Job::Retry(tx)) {
+        return Err(AppError::Message("sync is not running".into()));
+    }
+    match rx.await {
+        Ok(result) => result,
+        Err(_) => Err(AppError::Message("sync stopped".into())),
+    }
+}
+
 pub async fn request_keep_local(app: &AppHandle, id: String) -> Result<Note, AppError> {
     let (tx, rx) = tokio::sync::oneshot::channel();
     send(app, Job::KeepLocal(id, tx));
@@ -154,6 +170,15 @@ async fn finish_job(app: &AppHandle, job: Job) {
             let media_dir = state.media_dir.clone();
             let _ = reply.send(push_local_choice(&db, &http, &media_dir, &id).await);
             let _ = app.emit("notes-changed", ());
+        }
+        Job::Retry(reply) => {
+            let state = app.state::<AppState>();
+            let db = state.db.clone();
+            let http = state.http.clone();
+            let media_dir = state.media_dir.clone();
+            let result = drain(db, &http, &media_dir, false).await.map(|_| ());
+            let _ = app.emit("notes-changed", ());
+            let _ = reply.send(result);
         }
     }
 }
@@ -613,13 +638,6 @@ async fn sync_context(
         None => ApiFlavor::V1,
     };
     Ok((base, token, flavor))
-}
-
-fn now_ms() -> i64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|duration| duration.as_millis() as i64)
-        .unwrap_or(0)
 }
 
 async fn detect_and_store(
@@ -1344,6 +1362,14 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(found, limits::ServerLimits::FALLBACK);
+    }
+
+    #[tokio::test]
+    async fn a_failing_server_does_not_reset_the_limits() {
+        let hits = Arc::new(Mutex::new(Vec::new()));
+        let base = spawn_server(vec![(503, "{}")], hits);
+        let found = limits::fetch(&test_client(), &base, "memos_pat_test", ApiFlavor::V1).await;
+        assert!(found.is_err());
     }
 
     #[tokio::test]

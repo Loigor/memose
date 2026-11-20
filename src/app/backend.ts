@@ -14,6 +14,8 @@ export type AudienceSettings = {
 export interface RecentBackend {
   listRecent(limit: number): Promise<Note[]>;
   setPinned(id: string, pinned: boolean, fromComposer: boolean): Promise<void>;
+  /** Pushes waiting and failed memos now and returns this memo as it is after the try. */
+  retrySync(id: string): Promise<Note>;
 }
 
 export interface AudienceBackend {
@@ -71,6 +73,9 @@ export function createAppBackend(): AppBackend {
   return {
     listRecent(limit) {
       return invoke<Note[]>("list_recent", { limit });
+    },
+    retrySync(id) {
+      return invoke<Note>("retry_sync", { id });
     },
     setPinned(id, pinned, fromComposer) {
       return invoke("set_pinned", { id, pinned, fromComposer });

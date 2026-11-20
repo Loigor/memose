@@ -78,6 +78,17 @@
           >
             Models
           </button>
+          <button
+            id="tab-recording"
+            class="settings-tab"
+            type="button"
+            role="tab"
+            aria-selected="false"
+            aria-controls="panel-recording"
+            data-tab="recording"
+          >
+            Recording
+          </button>
         </nav>
       </header>
 
@@ -349,7 +360,11 @@
               API key
               <input id="llm-key" type="password" placeholder="Leave blank to keep the saved key" autocomplete="off" />
             </label>
-            <p id="llm-key-hint" class="hint"></p>
+            <p class="hint key-line">
+              <span id="llm-key-hint"></span>
+              <button id="llm-key-remove" class="link-button" type="button" hidden>Remove key</button>
+            </p>
+            <p class="hint">The key is used for this server only. Changing the server address removes it.</p>
             <label>
               Model
               <input id="llm-model" type="text" placeholder="qwen2.5:7b" autocomplete="off" />
@@ -374,6 +389,133 @@
               <button id="llm-preset-add" type="button">Add prompt</button>
               <button id="llm-preset-reset" type="button">Restore defaults</button>
             </div>
+          </div>
+        </section>
+
+        <section
+          id="panel-recording"
+          class="settings-panel"
+          role="tabpanel"
+          aria-labelledby="tab-recording"
+          data-panel="recording"
+          hidden
+        >
+          <div class="settings-card">
+            <div class="card-header">
+              <h2>Recording</h2>
+              <p class="hint">
+                Speak into a memo or into the AI prompt. Nothing is downloaded, loaded, or recorded until you turn this
+                on and press a record button.
+              </p>
+            </div>
+            <label class="toggle-row" for="speech-enabled">
+              <span class="toggle-copy">
+                <span class="toggle-title">Enable recording</span>
+                <span class="hint">Shows a record button on memos and in the AI prompt.</span>
+              </span>
+              <input id="speech-enabled" type="checkbox" />
+            </label>
+            <label>
+              Microphone
+              <select id="speech-device"></select>
+            </label>
+            <div id="speech-permission" class="permission-row" hidden>
+              <p id="speech-permission-text" class="hint"></p>
+              <div class="actions">
+                <button id="speech-permission-ask" type="button" hidden>Allow microphone</button>
+                <button id="speech-permission-open" type="button" hidden>Open Privacy settings</button>
+              </div>
+            </div>
+            <label class="toggle-row" for="speech-keep-audio">
+              <span class="toggle-copy">
+                <span class="toggle-title">Keep the recording</span>
+                <span class="hint">
+                  Adds the sound to the memo as an audio attachment. A spoken AI prompt is never kept.
+                </span>
+              </span>
+              <input id="speech-keep-audio" type="checkbox" />
+            </label>
+          </div>
+
+          <div class="settings-card">
+            <div class="card-header">
+              <h2>Speech to text</h2>
+              <p class="hint">Where your speech is turned into text.</p>
+            </div>
+            <div id="speech-source" class="choices" role="group" aria-label="Speech to text">
+              <button type="button" data-source="local" aria-pressed="false">On this computer</button>
+              <button type="button" data-source="server" aria-pressed="false">Speech server</button>
+              <button type="button" data-source="off" aria-pressed="false">Off, sound only</button>
+            </div>
+
+            <div id="speech-local" class="source-panel">
+              <p id="speech-engine-status" class="hint"></p>
+              <div id="speech-models" class="model-list" role="radiogroup" aria-label="Speech model"></div>
+              <p class="hint">
+                Sound never leaves this computer. A model is loaded when you record or re-analyze, and its memory is
+                given back about a minute and a half later. Memory and speed were measured on an Apple M1 Pro. The
+                models run on the processor, so they use no graphics memory (VRAM). The speech runtime (about 31 MB) is
+                downloaded once with the first model.
+              </p>
+            </div>
+
+            <div id="speech-server" class="source-panel" hidden>
+              <label>
+                Server URL
+                <input
+                  id="speech-base-url"
+                  type="url"
+                  placeholder="Leave blank to use the model server"
+                  autocomplete="off"
+                />
+              </label>
+              <p id="speech-where" class="hint"></p>
+              <label>
+                API key
+                <input
+                  id="speech-key"
+                  type="password"
+                  placeholder="Leave blank to keep the saved key"
+                  autocomplete="off"
+                />
+              </label>
+              <p class="hint key-line">
+                <span id="speech-key-hint"></span>
+                <button id="speech-key-remove" class="link-button" type="button" hidden>Remove key</button>
+              </p>
+              <label>
+                Model
+                <input id="speech-model" type="text" placeholder="whisper-1" autocomplete="off" />
+              </label>
+              <p class="hint">
+                Any server with the OpenAI <code>/audio/transcriptions</code> interface. Include the version part of the
+                address, such as <code>https://api.openai.com/v1</code>.
+              </p>
+              <div class="actions">
+                <button id="speech-save" class="primary" type="button">Save</button>
+              </div>
+            </div>
+
+            <div id="speech-language-row" class="language-row">
+              <label>
+                Spoken language
+                <select id="speech-language"></select>
+              </label>
+              <p id="speech-language-hint" class="hint"></p>
+            </div>
+
+            <label class="toggle-row" for="speech-polish">
+              <span class="toggle-copy">
+                <span class="toggle-title">Dictation effort</span>
+                <span id="speech-polish-hint" class="hint"></span>
+              </span>
+              <select id="speech-polish">
+                <option value="1">Low</option>
+                <option value="2">Medium</option>
+                <option value="3">High</option>
+                <option value="4">Max</option>
+              </select>
+            </label>
           </div>
         </section>
       </div>

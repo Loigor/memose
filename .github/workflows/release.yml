@@ -125,6 +125,7 @@ jobs:
             libdbus-1-dev \
             libxdo-dev \
             libssl-dev \
+            libasound2-dev \
             libfuse2 \
             file \
             xdg-utils

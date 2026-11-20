@@ -187,7 +187,7 @@ impl Db {
         if name.is_empty() {
             return Err(AppError::Message("choose a space".into()));
         }
-        let hue = hue.filter(|value| *value <= 359);
+        let hue = hue.filter(|value| *value <= crate::notes::MAX_HUE);
         self.with(|conn| {
             let mut spaces = load_spaces(conn)?;
             if let Some(existing) = spaces.iter_mut().find(|space| space.name == name) {

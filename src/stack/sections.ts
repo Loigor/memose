@@ -1,5 +1,6 @@
 import { denseLines, detectedMemoLanguage, memoUsesCoder, refreshEditorFields } from "../editor/editor-field";
-import { BlockHistory } from "../editor/history";
+import { BlockHistory, restoreCaret } from "../editor/history";
+import { keepScroll } from "../editor/view-keep";
 import {
   applyCode,
   applyJsonFormat,
@@ -8,8 +9,10 @@ import {
   applyQuote,
   applyTask,
   applyTitle,
+  caretAt,
   noteTitle,
   parseBlocks,
+  serializeBlocks,
   toggleTask,
   wrapText,
 } from "../editor/markdown-edit";
@@ -17,7 +20,10 @@ import { resizeAllBlockTextareas } from "../editor/textarea";
 import { revealPressedChoice } from "../look/audience-ui";
 import { paintLanguageMenu, pickedLanguage, toggleLanguageList } from "../look/language-menu";
 import { namedTheme } from "../look/look";
-import { markdownToolbarHtml, stackHeaderHtml } from "../look/memo-chrome";
+import { mountDictation } from "../ai/dictation";
+import { mountLlmBubble } from "../ai/llm-edit";
+import { mountRecordingTools } from "../ai/recording-tools";
+import { markdownToolbarHtml, readHueSlider, stackHeaderHtml, writeHueSlider } from "../look/memo-chrome";
 import { hueSwatches, saveHueSwatches } from "../look/swatches";
 import { filesFromTransfer } from "../media/files";
 import { mediaPointer } from "../media/media-elements";
@@ -67,7 +73,7 @@ export function mountSections(ctx: StackCtx) {
     }
     const hue = section.querySelector<HTMLInputElement>(".hue-slider");
     if (hue && document.activeElement !== hue) {
-      hue.value = String(ctx.api.sectionHue(state) ?? 48);
+      writeHueSlider(hue, ctx.api.sectionHue(state));
     }
     ctx.api.paintSectionSlots(section, state);
     ctx.api.paintSectionColor(section, state);
@@ -220,21 +226,32 @@ export function mountSections(ctx: StackCtx) {
     if (!header) {
       return section;
     }
-    header.addEventListener("pointerdown", (event) => {
-      if (event.button !== 0) {
-        return;
-      }
-      const target = event.target;
-      if (ctx.api.dragBlocked(target)) {
-        return;
-      }
-      event.stopPropagation();
-      event.preventDefault();
+    const liftFrom = (event: PointerEvent) => {
       header.dataset.moved = "0";
       void flushSectionSaves().catch((error: unknown) => {
         console.error(error);
       });
       beginSectionLift(section, header, event);
+    };
+    header.addEventListener("pointerdown", (event) => {
+      if (event.button !== 0) {
+        return;
+      }
+      const target = event.target;
+      // A top-bar button clicks when pressed, and lifts the memo out when dragged.
+      if (ctx.api.headerControl(target)) {
+        ctx.api.armPressDrag(event, (move) => {
+          liftFrom(event);
+          moveSectionLift(section, header, move);
+        });
+        return;
+      }
+      if (ctx.api.dragBlocked(target)) {
+        return;
+      }
+      event.stopPropagation();
+      event.preventDefault();
+      liftFrom(event);
     });
     header.addEventListener("pointermove", (event) => {
       moveSectionLift(section, header, event);
@@ -321,7 +338,7 @@ export function mountSections(ctx: StackCtx) {
       if (!state || !hue) {
         return;
       }
-      ctx.api.setSectionHue(section, state, Number(hue.value));
+      ctx.api.setSectionHue(section, state, readHueSlider(hue));
     });
     section.querySelectorAll<HTMLButtonElement>(".hue-slot").forEach((slot) => {
       slot.addEventListener("click", () => {
@@ -338,9 +355,9 @@ export function mountSections(ctx: StackCtx) {
       if (!state || !hue) {
         return;
       }
-      const value = Number(hue.value);
+      const value = ctx.api.sectionHue(state) ?? readHueSlider(hue);
       const swatches = hueSwatches();
-      if (swatches.includes(value) || swatches.length >= 6) {
+      if (value == null || swatches.includes(value) || swatches.length >= 6) {
         return;
       }
       void saveHueSwatches([...swatches, value]).then(() => {
@@ -618,6 +635,103 @@ export function mountSections(ctx: StackCtx) {
         console.error(error);
       });
     });
+    const aiAnchor = section.querySelector<HTMLElement>(".ai-anchor");
+    if (aiAnchor && !isPreviewWindow()) {
+      mountLlmBubble(aiAnchor, {
+        host: section,
+        noteId: () => note.id,
+        ensureNoteId: () => Promise.resolve(note.id),
+        title: () => noteTitle(ctx.notes.get(note.id)?.content ?? ""),
+        text: () => ctx.notes.get(note.id)?.content ?? "",
+        replace(next) {
+          const held = ctx.notes.get(note.id);
+          if (!held) {
+            return;
+          }
+          ctx.api.pushSectionUndo(held, true);
+          held.blocks = parseBlocks(next);
+          held.content = serializeBlocks(held.blocks);
+          ctx.api.renderSectionBlocks(section, held);
+          ctx.api.scheduleSectionSave(section, held);
+        },
+        visibility: () => ctx.notes.get(note.id)?.visibility || null,
+        selectionRoots: () =>
+          [".stack-blocks", ".stack-preview"].flatMap((selector) => {
+            const root = section.querySelector<HTMLElement>(selector);
+            return root ? [root] : [];
+          }),
+        onAvailability: () => ctx.api.syncHeaderCompact(),
+      });
+    }
+    if (!isPreviewWindow()) {
+      mountRecordingTools({
+        roots: () => {
+          const root = section.querySelector<HTMLElement>(".stack-blocks");
+          return root ? [root] : [];
+        },
+        text: () => ctx.notes.get(note.id)?.content ?? "",
+        replace(next) {
+          const held = ctx.notes.get(note.id);
+          if (!held) {
+            return;
+          }
+          ctx.api.pushSectionUndo(held, true);
+          held.blocks = parseBlocks(next);
+          held.content = serializeBlocks(held.blocks);
+          ctx.api.renderSectionBlocks(section, held);
+          ctx.api.scheduleSectionSave(section, held);
+        },
+      });
+    }
+    const recAnchor = section.querySelector<HTMLElement>(".rec-anchor");
+    if (recAnchor && !isPreviewWindow()) {
+      mountDictation(recAnchor, {
+        host: section,
+        noteId: () => note.id,
+        text: () => ctx.notes.get(note.id)?.content ?? "",
+        replace(next, quiet) {
+          const held = ctx.notes.get(note.id);
+          if (!held) {
+            return;
+          }
+          if (!quiet) {
+            ctx.api.pushSectionUndo(held, true);
+          }
+          held.blocks = parseBlocks(next);
+          held.content = serializeBlocks(held.blocks);
+          ctx.api.renderSectionBlocks(section, held);
+          ctx.api.scheduleSectionSave(section, held);
+        },
+        insertAtCursor(text) {
+          const held = ctx.notes.get(note.id);
+          const area = held ? ctx.api.sectionTargetArea(section, held) : null;
+          if (!held || !area) {
+            return;
+          }
+          const { start, end } = ctx.api.sectionAreaSelection(area, held);
+          const value = `${area.value.slice(0, start)}${text}${area.value.slice(end)}`;
+          const cursor = start + text.length;
+          ctx.api.applySectionEdit(section, held, area, { value, start: cursor, end: cursor });
+        },
+        placeCaret(offset) {
+          const held = ctx.notes.get(note.id);
+          const container = section.querySelector<HTMLElement>(".stack-blocks");
+          const found = held ? caretAt(held.blocks, offset) : null;
+          if (!held || !container || !found) {
+            return;
+          }
+          const caret = { index: found.index, start: found.at, end: found.at };
+          held.caret = caret;
+          keepScroll([container], () => restoreCaret(container, caret));
+        },
+        fieldRoots: () =>
+          [".stack-blocks", ".stack-preview"].flatMap((selector) => {
+            const root = section.querySelector<HTMLElement>(selector);
+            return root ? [root] : [];
+          }),
+        onAvailability: () => ctx.api.syncHeaderCompact(),
+      });
+    }
     section.querySelector<HTMLButtonElement>(".pin-toggle")?.addEventListener("click", () => {
       void (async () => {
         await flushSectionSaves([note.id]);

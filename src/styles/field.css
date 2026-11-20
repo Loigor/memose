@@ -147,6 +147,7 @@
 }
 
 .md-row {
+  position: relative;
   min-height: 1.4em;
   white-space: pre-wrap;
   overflow-wrap: break-word;
@@ -159,26 +160,36 @@
 .md-row.is-h5,
 .md-row.is-h6 {
   color: var(--md-heading);
+}
+
+/* Metric changes on the caret row reset the caret to the start, so the heading
+   size waits until the caret leaves the line. */
+.md-row.is-h1:not(.is-live),
+.md-row.is-h2:not(.is-live),
+.md-row.is-h3:not(.is-live),
+.md-row.is-h4:not(.is-live),
+.md-row.is-h5:not(.is-live),
+.md-row.is-h6:not(.is-live) {
   font-weight: 600;
   line-height: 1.25;
 }
 
-.md-row.is-h1 {
+.md-row.is-h1:not(.is-live) {
   font-size: 1.6em;
 }
-.md-row.is-h2 {
+.md-row.is-h2:not(.is-live) {
   font-size: 1.35em;
 }
-.md-row.is-h3 {
+.md-row.is-h3:not(.is-live) {
   font-size: 1.2em;
 }
-.md-row.is-h4 {
+.md-row.is-h4:not(.is-live) {
   font-size: 1.1em;
 }
-.md-row.is-h5 {
+.md-row.is-h5:not(.is-live) {
   font-size: 1em;
 }
-.md-row.is-h6 {
+.md-row.is-h6:not(.is-live) {
   font-size: 0.95em;
 }
 

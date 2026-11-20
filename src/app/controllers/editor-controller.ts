@@ -24,6 +24,7 @@ import {
   writeLineMarks,
   type EditorPrefs,
 } from "../../editor/editor-field";
+import { keepScroll } from "../../editor/view-keep";
 import { cloneBlocks, readPlace, remapBlockLines, restoreCaret, restorePlace } from "../../editor/history";
 import { lineOffsetAtPoint, mountLineEditor } from "../../editor/line-editor";
 import {
@@ -34,7 +35,9 @@ import {
   applyQuote,
   applyTask,
   applyTitle,
+  caretAt,
   closedFenceIn,
+  isAudio,
   completeOpenFence,
   dropCodeBlock,
   ensureTextSlots,
@@ -114,8 +117,10 @@ export interface EditorController extends LookEditor {
   isEmpty(): boolean;
   isEmptyNewMemo(field?: { readonly value: string } | null): boolean;
   showStored(content: string): void;
-  /** Replaces the memo text as one undo step and saves it. */
-  replaceContent(content: string): void;
+  /** Replaces the memo text as one undo step and saves it. `quiet` adds no undo step. */
+  replaceContent(content: string, quiet?: boolean): void;
+  /** Puts the caret at a position in the memo text and keeps it in view. */
+  placeCaret(offset: number): void;
   renderSurface(focusName?: string): void;
   focus(): void;
   focusEditing(): void;
@@ -280,11 +285,24 @@ export function createEditorController(
     renderSurface();
   }
 
-  function replaceContent(content: string) {
-    pushUndo(true);
+  function replaceContent(content: string, quiet = false) {
+    if (!quiet) {
+      pushUndo(true);
+    }
     state.blocks = parseBlocks(content);
     publishBlocks();
     drafts.scheduleDraft();
+  }
+
+  function placeCaret(offset: number) {
+    const found = caretAt(state.blocks, offset);
+    if (!found) {
+      return;
+    }
+    state.caret = { index: found.index, start: found.at, end: found.at };
+    const caret = state.caret;
+    // Focusing the field would scroll it into view as a whole. The caller shows the exact line.
+    keepScroll([blocksEl], () => restoreCaret(blocksEl, caret));
   }
 
   function focus() {
@@ -396,6 +414,8 @@ export function createEditorController(
         const canSitOnMediaLine =
           block.kind === "text" &&
           isAfterMedia &&
+          // An audio player is a wide block of its own. Text after it goes on the next line.
+          !(prevBlock?.kind === "media" && isAudio(prevBlock.name) && !prevBlock.inline) &&
           currentRow !== null &&
           currentRowSideArea === null &&
           !block.text.includes("\n");
@@ -1310,6 +1330,7 @@ export function createEditorController(
     isEmptyNewMemo,
     showStored,
     replaceContent,
+    placeCaret,
     renderSurface,
     focus,
     focusEditing,

@@ -8,6 +8,10 @@ pub const LOCAL: &str = "local";
 pub const REMOTE: &str = "remote";
 pub const CONFLICT: &str = "conflict";
 
+/// Largest stored hue: 0–359 are colours on the sRGB hue wheel, 360–363 are greys.
+/// No hue at all is the theme's default paper. Matches MAX_HUE in look/memo-chrome.ts.
+pub const MAX_HUE: u16 = 363;
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Note {

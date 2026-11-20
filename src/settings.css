@@ -42,7 +42,7 @@ h2 {
 
 .settings-tabs {
   display: grid;
-  grid-template-columns: repeat(6, minmax(0, 1fr));
+  grid-template-columns: repeat(7, minmax(0, 1fr));
   gap: 4px;
   padding: 4px;
   border: 1px solid #e0d9cc;
@@ -335,7 +335,29 @@ button.danger {
   width: 100%;
   height: 10px;
   border-radius: 999px;
-  background: linear-gradient(90deg, #f00 0%, #ff0 17%, #0f0 33%, #0ff 50%, #00f 67%, #f0f 83%, #f00 100%);
+  /* The track shows the colour each position applies (paintHueTrack in look/memo-chrome.ts);
+     the even OKLCH wheel below is only a fallback. The ring keeps a track of dark papers
+     visible on a dark popover. */
+  background: var(
+    --track,
+    linear-gradient(
+      90deg,
+      oklch(0.74 0.14 29.2),
+      oklch(0.74 0.14 59.2),
+      oklch(0.74 0.14 89.2),
+      oklch(0.74 0.14 119.2),
+      oklch(0.74 0.14 149.2),
+      oklch(0.74 0.14 179.2),
+      oklch(0.74 0.14 209.2),
+      oklch(0.74 0.14 239.2),
+      oklch(0.74 0.14 269.2),
+      oklch(0.74 0.14 299.2),
+      oklch(0.74 0.14 329.2),
+      oklch(0.74 0.14 359.2),
+      oklch(0.74 0.14 29.2)
+    )
+  );
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--ink, #3d3420) 28%, transparent);
 }
 
 .space-hue::-webkit-slider-thumb {
@@ -524,4 +546,166 @@ button.danger {
 .hint code {
   font-size: 0.95em;
   user-select: text;
+}
+
+.key-line {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+}
+
+button.link-button {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: #8a3b2a;
+  font-size: inherit;
+  text-decoration: underline;
+}
+
+button.link-button:hover {
+  background: transparent;
+}
+
+button.link-button[hidden] {
+  display: none;
+}
+
+.source-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.source-panel[hidden] {
+  display: none;
+}
+
+progress {
+  width: 100%;
+  height: 8px;
+  accent-color: #2f281c;
+}
+
+progress[hidden] {
+  display: none;
+}
+
+.permission-row {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px 12px;
+  border-radius: 8px;
+  background: #f6efe0;
+}
+
+.permission-row[hidden] {
+  display: none;
+}
+
+.permission-row[data-access="denied"] {
+  background: #f8e1dc;
+}
+
+.permission-row[data-access="granted"] {
+  background: transparent;
+  padding: 0;
+}
+
+.permission-row .actions:not(:has(button:not([hidden]))) {
+  display: none;
+}
+
+.model-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.model-list[hidden] {
+  display: none;
+}
+
+.model-card {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px 14px;
+  border: 1px solid #e0d9cc;
+  border-radius: 10px;
+  background: #fff;
+}
+
+.model-card[data-chosen="true"] {
+  border-color: #2f281c;
+  box-shadow: 0 0 0 1px #2f281c;
+}
+
+.model-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.model-dot {
+  flex: none;
+  width: 10px;
+  height: 10px;
+  box-sizing: border-box;
+  border: 1.5px solid #8a795d;
+  border-radius: 50%;
+}
+
+.model-card[data-chosen="true"] .model-dot {
+  border: 3px solid #2f281c;
+}
+
+.model-badge {
+  margin-left: auto;
+  padding: 1px 8px;
+  border-radius: 999px;
+  background: #eae4d8;
+  color: #4d4536;
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.model-badge[hidden] {
+  display: none;
+}
+
+.model-facts {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+  margin: 0;
+}
+
+.model-facts div {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.model-facts dt {
+  color: #8a7f6c;
+  font-size: 11px;
+}
+
+.model-facts dd {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.model-progress {
+  width: 100%;
+  height: 6px;
+  accent-color: #2f281c;
+}
+
+label[hidden] {
+  display: none;
 }

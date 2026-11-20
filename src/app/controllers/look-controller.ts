@@ -1,6 +1,16 @@
 import { memoUsesCoder } from "../../editor/editor-field";
 import { darkHue, lightHue, tinted, type Look } from "../../look/look";
-import { paintSurface, paintThemeButton, palette, paperAt, type ThemeName } from "../../look/memo-chrome";
+import {
+  nextRandomHue,
+  paintSurface,
+  paintHueTrack,
+  paintThemeButton,
+  palette,
+  paperAt,
+  readHueSlider,
+  writeHueSlider,
+  type ThemeName,
+} from "../../look/memo-chrome";
 import { hueSwatches, loadHueSwatches, onHueSwatches, saveHueSwatches, watchHueSwatches } from "../../look/swatches";
 import type { AppContext } from "../context";
 import type { LookState } from "../state";
@@ -125,14 +135,17 @@ export function createLookController(
       slot.style.background = paperAt(theme, hue);
       slot.setAttribute("aria-pressed", String(hue === current));
     });
-    const hue = Number(hueSlider.value);
-    hueAdd.disabled = swatches.length >= 6 || swatches.includes(hue);
+    const hue = themeHue();
+    hueAdd.disabled = hue == null || swatches.length >= 6 || swatches.includes(hue);
   }
 
   function syncSlider() {
-    const hue = activeHue();
-    hueSlider.value = String(hue);
-    hueSlider.style.setProperty("--thumb", paperAt(currentTheme(), hue));
+    // No hue of its own: the slider sits on the default at its far end.
+    const hue = themeHue();
+    writeHueSlider(hueSlider, hue);
+    const theme = currentTheme();
+    hueSlider.style.setProperty("--thumb", paperAt(theme, hue));
+    paintHueTrack(hueSlider, (at) => paperAt(theme, at));
     paintSlots();
   }
 
@@ -220,7 +233,7 @@ export function createLookController(
     return enqueue(id);
   }
 
-  function setThemeHue(hue: number) {
+  function setThemeHue(hue: number | null) {
     if (currentTheme() === "dark") {
       state.value.hueDark = hue;
     } else {
@@ -234,8 +247,7 @@ export function createLookController(
   function randomHue() {
     const target = stack.activeHueTarget();
     const current = target?.current ?? activeHue();
-    const jitter = Math.random() * 36 - 18;
-    const hue = Math.floor((current + 222.5 + jitter + 360) % 360);
+    const hue = nextRandomHue(current);
     if (target) {
       target.apply(hue);
       return;
@@ -251,11 +263,20 @@ export function createLookController(
     applyTheme(theme === "dark" ? "dark" : "light");
   }
 
+  /** Paint the first frame from what the window was opened with, so it starts in the right theme. */
   function applyPinnedThemeHint() {
-    if (!context.mode.pinnedThemeHint) {
-      return;
+    const { pinnedThemeHint, appThemeHint, lookHint } = context.mode;
+    if (appThemeHint) {
+      state.appTheme = appThemeHint;
     }
-    state.value.theme = context.mode.pinnedThemeHint;
+    if (pinnedThemeHint) {
+      state.value.theme = pinnedThemeHint;
+    }
+    if (lookHint) {
+      state.value.hueLight = lookHint.hueLight;
+      state.value.hueDark = lookHint.hueDark;
+      state.value.opacity = lookHint.opacity;
+    }
     paint();
   }
 
@@ -318,9 +339,9 @@ export function createLookController(
   }
 
   function saveHue() {
-    const hue = Number(hueSlider.value);
+    const hue = themeHue();
     const swatches = hueSwatches();
-    if (swatches.includes(hue) || swatches.length >= 6) {
+    if (hue == null || swatches.includes(hue) || swatches.length >= 6) {
       return;
     }
     void saveHueSwatches([...swatches, hue]).then(() => {
@@ -363,7 +384,7 @@ export function createLookController(
   });
 
   hueSlider.addEventListener("input", () => {
-    setThemeHue(Number(hueSlider.value));
+    setThemeHue(readHueSlider(hueSlider));
   });
 
   for (const slot of hueSlots) {

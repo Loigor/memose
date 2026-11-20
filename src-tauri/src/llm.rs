@@ -20,16 +20,20 @@ pub const LLM_PRESETS: &str = "llm_presets";
 pub const LLM_PRIVATE_OK_HOST: &str = "llm_private_ok_host";
 
 /// Local models on a CPU can take minutes for a long memo.
-const CHAT_TIMEOUT: Duration = Duration::from_secs(180);
+const CHAT_TIMEOUT: Duration = Duration::from_secs(360);
 const MODELS_TIMEOUT: Duration = Duration::from_secs(8);
 const MAX_PRESETS: usize = 12;
 
 const ROLE: &str = "You are an assistant built into a note-taking app. The user is looking at a note and sends a request. Reply in the language of the request unless it asks for another one.";
 const ASK_RULES: &str = "Answer the request directly and briefly. Use the note as context. If the note does not hold the answer, use your general knowledge. Do not repeat or rewrite the note.";
+const EMPTY_CLASSIFY_RULES: &str = "A user of a note-taking app sends a request while their note is still empty. Decide whether the request asks you to write text that belongs in the note.\nYES: write, draft, compose, or generate something, such as a poem, a story, a letter, an email, a list, a plan, or a template.\nNO: a question, an explanation, an opinion, or a short fact to read and not keep.\nReply with exactly one word: YES or NO.";
 const CLASSIFY_RULES: &str = "A user of a note-taking app sends a request about their note. Decide whether the request asks to change the text of the note itself.\nYES: rewrite, fix, correct, translate, reformat, shorten, extend, sort, reorder, or add or remove something in the note.\nNO: a question, a count, an explanation, a summary, an opinion, a list of items taken from the note, or writing something new.\nReply with exactly one word: YES or NO.";
+/// Earlier prompts of the same memo sent along as chat history.
+const HISTORY_TURNS: usize = 6;
+/// Longest earlier reply kept in the history, in characters.
+const HISTORY_REPLY_CHARS: usize = 1500;
+const HISTORY_RULES: &str = "Earlier requests in this chat and your replies come first, for reference. The note may have changed since then. The last message holds the note as it is now and the request to answer.";
 const CLASSIFY_TIMEOUT: Duration = Duration::from_secs(30);
-const REVISED_OPEN: &str = "<revised>";
-const REVISED_CLOSE: &str = "</revised>";
 
 /// The part of the note a request can replace.
 fn subject(selected: bool) -> &'static str {
@@ -40,10 +44,17 @@ fn subject(selected: bool) -> &'static str {
     }
 }
 
-fn system_prompt(mode: Mode, selected: bool) -> String {
+/// A note with no text yet. A request on it asks for new text or general knowledge.
+fn is_empty_note(text: &str, context: Option<&str>) -> bool {
+    context.is_none() && text.trim().is_empty()
+}
+
+fn system_prompt(mode: Mode, selected: bool, empty: bool) -> String {
     let what = subject(selected);
     let rules = match mode {
+        Mode::Ask if empty => "The note is empty. Answer the request directly from your general knowledge, or write what it asks for.".to_string(),
         Mode::Ask => ASK_RULES.to_string(),
+        Mode::Edit if empty => "The note is empty. Write the text the request asks for, to become the content of the note. Reply with that text only: no introduction, no explanation, no code fence. Use markdown where it helps.".to_string(),
         Mode::Edit => format!(
             "The request asks you to change the {what}. Reply with the complete revised {what} and nothing else: no introduction, no explanation, no code fence. Keep the markdown formatting, and keep everything the request does not ask to change."
         ),
@@ -60,6 +71,7 @@ fn user_prompt(instruction: &str, text: &str, context: Option<&str>) -> String {
         Some(note) => format!(
             "<note>\n{note}\n</note>\n\n<selected>\n{text}\n</selected>\n\nThe request is about the selected part of the note.\n\nRequest: {request}"
         ),
+        None if text.trim().is_empty() => format!("The note is empty.\n\nRequest: {request}"),
         None => format!("<note>\n{text}\n</note>\n\nRequest: {request}"),
     }
 }
@@ -120,6 +132,8 @@ pub struct ChatEntry {
     pub selection: bool,
     pub started_at: i64,
     pub finished_at: Option<i64>,
+    /// Ids of the changes the user took from a proposed edit, once it is applied.
+    pub accepted: Vec<u32>,
 }
 
 pub const RUNNING: &str = "running";
@@ -222,7 +236,12 @@ pub fn host_of(base: &str) -> String {
 /// True when the server runs on this computer, so text does not leave it.
 pub fn is_local(base: &str) -> bool {
     let host = host_of(base);
-    host == "localhost" || host == "::1" || host == "0.0.0.0" || host.starts_with("127.")
+    if host == "localhost" {
+        return true;
+    }
+    // Only a real loopback address counts. A name such as `127.example.com` is a remote host.
+    host.parse::<std::net::IpAddr>()
+        .is_ok_and(|ip| ip.is_loopback() || ip.is_unspecified())
 }
 
 fn with_key(request: reqwest::RequestBuilder, key: Option<&str>) -> reqwest::RequestBuilder {
@@ -265,7 +284,50 @@ fn unreachable(err: &reqwest::Error) -> AppError {
     }
 }
 
+/// One system message and one user message, for helpers outside the memo chat.
+/// Returns the model's text as it came.
+pub async fn complete(
+    http: &reqwest::Client,
+    base: &str,
+    key: Option<&str>,
+    model: &str,
+    system: &str,
+    user: &str,
+    timeout: Duration,
+) -> Result<String, AppError> {
+    let body = json!({
+        "model": model,
+        "stream": false,
+        "messages": [
+            { "role": "system", "content": system },
+            { "role": "user", "content": user },
+        ],
+    });
+    let request = http
+        .post(api_url(base, "chat/completions"))
+        .timeout(timeout)
+        .json(&body);
+    let response = with_key(request, key)
+        .send()
+        .await
+        .map_err(|err| unreachable(&err))?;
+    if !response.status().is_success() {
+        return Err(failure(response).await);
+    }
+    let payload: Value = response
+        .json()
+        .await
+        .map_err(|_| AppError::Message("the model server sent an unreadable answer".into()))?;
+    Ok(payload
+        .pointer("/choices/0/message/content")
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+        .to_string())
+}
+
 /// Asks the model whether a request wants the note changed. One short call without the note.
+/// It sets no token limit or temperature: reasoning models need room to think before the word,
+/// and some hosted models reject those fields.
 /// Any failure or unclear reply counts as no, so an `Auto` prompt never replaces the memo by accident.
 async fn wants_edit(
     http: &reqwest::Client,
@@ -273,15 +335,25 @@ async fn wants_edit(
     key: Option<&str>,
     model: &str,
     instruction: &str,
+    empty: bool,
 ) -> bool {
+    let (rules, question) = if empty {
+        (
+            EMPTY_CLASSIFY_RULES,
+            "Does it ask for text to put in the note? YES or NO.",
+        )
+    } else {
+        (
+            CLASSIFY_RULES,
+            "Does it ask to change the note's text? YES or NO.",
+        )
+    };
     let body = json!({
         "model": model,
         "stream": false,
-        "temperature": 0,
-        "max_tokens": 3,
         "messages": [
-            { "role": "system", "content": CLASSIFY_RULES },
-            { "role": "user", "content": format!("Request: {}\n\nDoes it ask to change the note's text? YES or NO.", instruction.trim()) },
+            { "role": "system", "content": rules },
+            { "role": "user", "content": format!("Request: {}\n\n{question}", instruction.trim()) },
         ],
     });
     let request = http
@@ -312,6 +384,65 @@ fn says_yes(reply: &str) -> bool {
     word.eq_ignore_ascii_case("yes")
 }
 
+/// One earlier exchange: the request and what the model replied.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Turn {
+    pub request: String,
+    pub reply: String,
+}
+
+/// The finished prompts of a memo's chat as history: the newest few, oldest first.
+/// A proposed edit is noted in one line, because the note in the next message already shows its outcome.
+pub fn history(log: &[ChatEntry]) -> Vec<Turn> {
+    let mut turns: Vec<Turn> = log
+        .iter()
+        .rev()
+        .filter_map(|entry| {
+            let reply = match entry.status.as_str() {
+                "answer" => {
+                    let mut text: String = entry.text.chars().take(HISTORY_REPLY_CHARS).collect();
+                    if entry.text.chars().count() > HISTORY_REPLY_CHARS {
+                        text.push('…');
+                    }
+                    text
+                }
+                "applied" => "(I proposed a revised text and the user applied it.)".to_string(),
+                "edit" | "dismissed" => {
+                    "(I proposed a revised text. The user has not applied it.)".to_string()
+                }
+                _ => return None,
+            };
+            Some(Turn {
+                request: entry.instruction.clone(),
+                reply,
+            })
+        })
+        .take(HISTORY_TURNS)
+        .collect();
+    turns.reverse();
+    turns
+}
+
+fn messages(
+    mode: Mode,
+    instruction: &str,
+    text: &str,
+    context: Option<&str>,
+    history: &[Turn],
+) -> Vec<Value> {
+    let mut system = system_prompt(mode, context.is_some(), is_empty_note(text, context));
+    if !history.is_empty() {
+        system = format!("{system}\n{HISTORY_RULES}");
+    }
+    let mut out = vec![json!({ "role": "system", "content": system })];
+    for turn in history {
+        out.push(json!({ "role": "user", "content": format!("Request: {}", turn.request) }));
+        out.push(json!({ "role": "assistant", "content": turn.reply }));
+    }
+    out.push(json!({ "role": "user", "content": user_prompt(instruction, text, context) }));
+    out
+}
+
 /// One prompt. `Auto` first asks the model whether the request is an edit.
 /// `text` is what the request is about: the whole note, or the selected part with the whole note as `context`.
 #[allow(clippy::too_many_arguments)]
@@ -324,19 +455,29 @@ pub async fn ask(
     instruction: &str,
     text: &str,
     context: Option<&str>,
+    history: &[Turn],
 ) -> Result<Reply, AppError> {
     let mode = match mode {
-        Mode::Auto if wants_edit(http, base, key, model, instruction).await => Mode::Edit,
+        Mode::Auto
+            if wants_edit(
+                http,
+                base,
+                key,
+                model,
+                instruction,
+                is_empty_note(text, context),
+            )
+            .await =>
+        {
+            Mode::Edit
+        }
         Mode::Auto => Mode::Ask,
         fixed => fixed,
     };
     let body = json!({
         "model": model,
         "stream": false,
-        "messages": [
-            { "role": "system", "content": system_prompt(mode, context.is_some()) },
-            { "role": "user", "content": user_prompt(instruction, text, context) },
-        ],
+        "messages": messages(mode, instruction, text, context, history),
     });
     let request = http
         .post(api_url(base, "chat/completions"))
@@ -364,33 +505,17 @@ pub async fn ask(
     Ok(reply)
 }
 
-/// Text between the revised markers. A missing closing marker takes the rest.
-fn revised_block(text: &str) -> Option<&str> {
-    let after = text.split_once(REVISED_OPEN)?.1;
-    Some(
-        after
-            .split_once(REVISED_CLOSE)
-            .map_or(after, |(inner, _)| inner),
-    )
-}
-
-/// Sorts the model's text into an answer or an edit.
-/// An edit may come wrapped in the revised markers. `Auto` is settled before this and counts as an answer.
+/// Sorts the model's text into an answer or an edit. `Auto` is settled before this and counts as an answer.
 pub fn read_reply(mode: Mode, raw: &str, source: &str) -> Reply {
-    let cleaned = clean_answer(raw, source);
-    let block = revised_block(&cleaned);
-    let (kind, body) = match (mode, block) {
-        (Mode::Ask, _) => (ReplyKind::Answer, cleaned.as_str()),
-        (Mode::Edit, Some(inner)) | (Mode::Auto, Some(inner)) => (ReplyKind::Edit, inner),
-        (Mode::Edit, None) => (ReplyKind::Edit, cleaned.as_str()),
-        (Mode::Auto, None) => (ReplyKind::Answer, cleaned.as_str()),
-    };
-    let text = if kind == ReplyKind::Edit {
-        clean_answer(body, source)
+    let kind = if mode == Mode::Edit {
+        ReplyKind::Edit
     } else {
-        body.trim().to_string()
+        ReplyKind::Answer
     };
-    Reply { kind, text }
+    Reply {
+        kind,
+        text: clean_answer(raw, source),
+    }
 }
 
 /// Removes a leading reasoning block and a code fence the model wrapped around the whole answer.
@@ -521,6 +646,9 @@ mod tests {
         assert!(is_local("http://[::1]:8080/v1"));
         assert!(!is_local("https://api.openai.com/v1"));
         assert!(!is_local("https://localhost.example.com/v1"));
+        assert!(!is_local("https://127.example.com/v1"));
+        assert!(!is_local("https://127.0.0.1.nip.io/v1"));
+        assert!(is_local("http://0.0.0.0:8000/v1"));
         assert_eq!(
             host_of("https://user:pw@Api.Groq.com:443/openai/v1"),
             "api.groq.com"
@@ -557,6 +685,66 @@ mod tests {
         assert_eq!(clean_answer(code, "```js\nvar a = 1\n```"), code);
     }
 
+    fn entry(instruction: &str, status: &str, text: &str) -> ChatEntry {
+        ChatEntry {
+            id: instruction.into(),
+            note_id: "n".into(),
+            title: String::new(),
+            instruction: instruction.into(),
+            mode: Mode::Auto,
+            status: status.into(),
+            text: text.into(),
+            source: "note".into(),
+            line_start: None,
+            line_end: None,
+            selection: false,
+            started_at: 0,
+            finished_at: Some(1),
+            accepted: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn earlier_answers_are_sent_as_history_before_the_note() {
+        let log = vec![
+            entry("How many tasks?", "answer", "Three."),
+            entry("Broken", "error", "timeout"),
+            entry("Fix typos", "applied", "the whole note"),
+            entry("Still going", RUNNING, ""),
+        ];
+        let turns = history(&log);
+        assert_eq!(turns.len(), 2);
+        assert_eq!(turns[0].request, "How many tasks?");
+        assert_eq!(turns[0].reply, "Three.");
+        assert!(turns[1].reply.contains("applied"));
+        assert!(!turns[1].reply.contains("the whole note"));
+        let sent = messages(Mode::Ask, "And how many are done?", "- a", None, &turns);
+        assert_eq!(sent.len(), 6);
+        assert!(sent[0]["content"]
+            .as_str()
+            .unwrap()
+            .contains("Earlier requests"));
+        assert_eq!(sent[1]["content"], "Request: How many tasks?");
+        assert_eq!(sent[2]["role"], "assistant");
+        assert!(sent[5]["content"]
+            .as_str()
+            .unwrap()
+            .ends_with("Request: And how many are done?"));
+        assert_eq!(messages(Mode::Ask, "q", "n", None, &[]).len(), 2);
+    }
+
+    #[test]
+    fn history_keeps_the_newest_turns_and_cuts_long_replies() {
+        let log: Vec<ChatEntry> = (0..10)
+            .map(|i| entry(&format!("q{i}"), "answer", &"x".repeat(4000)))
+            .collect();
+        let turns = history(&log);
+        assert_eq!(turns.len(), HISTORY_TURNS);
+        assert_eq!(turns[0].request, "q4");
+        assert_eq!(turns[5].request, "q9");
+        assert_eq!(turns[0].reply.chars().count(), HISTORY_REPLY_CHARS + 1);
+    }
+
     #[test]
     fn only_a_clear_yes_makes_an_auto_prompt_an_edit() {
         assert!(says_yes("YES"));
@@ -572,11 +760,17 @@ mod tests {
     fn a_fixed_mode_decides_the_kind() {
         let asked = read_reply(Mode::Ask, "It says <revised> once.", "note");
         assert_eq!(asked.kind, ReplyKind::Answer);
+        let auto = read_reply(Mode::Auto, "There are 3 tasks.", "- a");
+        assert_eq!(auto.kind, ReplyKind::Answer);
         let edited = read_reply(Mode::Edit, "Answer the phone.", "answer teh phone");
         assert_eq!(edited.kind, ReplyKind::Edit);
         assert_eq!(edited.text, "Answer the phone.");
-        let tagged = read_reply(Mode::Edit, "<revised>\nFixed.\n</revised>", "fixd");
-        assert_eq!(tagged.text, "Fixed.");
+        let xml = read_reply(
+            Mode::Edit,
+            "intro\n<revised>\nbody",
+            "intro\n<revised>\nbdy",
+        );
+        assert_eq!(xml.text, "intro\n<revised>\nbody");
     }
 
     #[test]
@@ -587,8 +781,26 @@ mod tests {
         let part = user_prompt("Fix it", "- b", Some("- a\n- b"));
         assert!(part.contains("<selected>\n- b\n</selected>"));
         assert!(part.ends_with("Request: Fix it"));
-        assert!(system_prompt(Mode::Edit, true).contains("revised selected part"));
-        assert!(system_prompt(Mode::Ask, false).contains("Do not repeat or rewrite the note"));
+        assert!(system_prompt(Mode::Edit, true, false).contains("revised selected part"));
+        assert!(
+            system_prompt(Mode::Ask, false, false).contains("Do not repeat or rewrite the note")
+        );
+    }
+
+    #[test]
+    fn an_empty_note_asks_for_new_text() {
+        let prompt = user_prompt("Write me a poem", "  \n", None);
+        assert_eq!(prompt, "The note is empty.\n\nRequest: Write me a poem");
+        assert!(is_empty_note("", None));
+        assert!(!is_empty_note("", Some("whole note")));
+        assert!(
+            system_prompt(Mode::Edit, false, true).contains("Write the text the request asks for")
+        );
+        let sent = messages(Mode::Edit, "Write me a poem", "", None, &[]);
+        assert!(sent[0]["content"]
+            .as_str()
+            .unwrap()
+            .contains("The note is empty"));
     }
 
     #[test]

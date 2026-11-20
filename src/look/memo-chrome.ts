@@ -9,12 +9,189 @@ export type SurfaceLook = {
   coder: boolean | null;
 };
 
-export function paperAt(theme: ThemeName, hue: number): string {
-  return theme === "dark" ? `hsl(${hue} 22% 16%)` : `hsl(${hue} 100% 86%)`;
+// A memo hue is stored as an angle on the sRGB hue wheel (the HSL hue), so a saved
+// red stays red. That wheel is uneven to the eye: about a sixth of it is one green,
+// and dark tints of it are near grey. Colours are drawn in OKLCH at the matching
+// perceptual hue, and the slider and Alt+Enter move evenly through that hue.
+
+/** OKLCH hue of the pure sRGB colour at each whole HSL hue 0–360, unwrapped so it only rises. */
+const OK_HUES: number[] = (() => {
+  const linear = (c: number) => (c <= 0.04045 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4);
+  const out: number[] = [];
+  for (let h = 0; h <= 360; h += 1) {
+    const k = (n: number) => (n + h / 30) % 12;
+    const channel = (n: number) => linear(0.5 - 0.5 * Math.max(-1, Math.min(k(n) - 3, 9 - k(n), 1)));
+    const [r, g, b] = [channel(0), channel(8), channel(4)];
+    const l = Math.cbrt(0.4122214708 * r + 0.5363325363 * g + 0.0514459929 * b);
+    const m = Math.cbrt(0.2119034982 * r + 0.6806995451 * g + 0.1073969566 * b);
+    const s = Math.cbrt(0.0883024619 * r + 0.2817188376 * g + 0.6299787005 * b);
+    const a = 1.9779984951 * l - 2.428592205 * m + 0.4505937099 * s;
+    const bb = 0.0259040371 * l + 0.7827717662 * m - 0.808675766 * s;
+    let angle = (Math.atan2(bb, a) * 180) / Math.PI;
+    const previous = out[out.length - 1];
+    if (previous !== undefined) {
+      // Unwrap a full turn; near pure blue the hue dips a fraction, which stays flat.
+      while (angle < previous - 180) {
+        angle += 360;
+      }
+      angle = Math.max(angle, previous);
+    }
+    out.push(angle);
+  }
+  return out;
+})();
+
+function wrapHue(hue: number): number {
+  return ((hue % 360) + 360) % 360;
 }
 
+/** The OKLCH hue that looks like this stored hue. */
+export function okHue(hue: number): number {
+  const h = wrapHue(hue);
+  const i = Math.floor(h);
+  const from = OK_HUES[i];
+  const to = OK_HUES[i + 1];
+  return wrapHue(from + (to - from) * (h - i));
+}
+
+/** Where a stored hue sits on an even, perceptual 0–360 wheel (slider position). */
+export function huePosition(hue: number): number {
+  const h = wrapHue(hue);
+  const i = Math.floor(h);
+  const ok = OK_HUES[i] + (OK_HUES[i + 1] - OK_HUES[i]) * (h - i);
+  return wrapHue(ok - OK_HUES[0]);
+}
+
+/** The stored hue (whole degree) at a position on the perceptual wheel. */
+export function hueAtPosition(position: number): number {
+  const target = wrapHue(position) + OK_HUES[0];
+  let low = 0;
+  let high = OK_HUES.length - 1;
+  while (high - low > 1) {
+    const mid = (low + high) >> 1;
+    if (OK_HUES[mid] <= target) {
+      low = mid;
+    } else {
+      high = mid;
+    }
+  }
+  const span = OK_HUES[high] - OK_HUES[low];
+  const h = low + (span > 0 ? (target - OK_HUES[low]) / span : 0);
+  return Math.round(h) % 360;
+}
+
+// Past the colour wheel a memo can take a grey. Stored values 360–363 are greys;
+// no value (null) is the theme's default paper. On the slider they follow the wheel:
+// four grey bands that step toward the default, and the default last.
+export const GREY_BASE = 360;
+export const GREYS = 4;
+/** Largest stored hue value (the last grey). Rust keeps the same bound (notes::MAX_HUE). */
+export const MAX_HUE = GREY_BASE + GREYS - 1;
+const GREY_BAND = 14;
+/** Slider `max` for a memo (greys, then the default) and for a tab (greys only; a tab always has a colour). */
+export const HUE_SLIDER_MAX = GREY_BASE + (GREYS + 1) * GREY_BAND - 1;
+export const TAB_HUE_SLIDER_MAX = GREY_BASE + GREYS * GREY_BAND - 1;
+
+// Lighter to darker toward the dark default (#25282c), and darker to lighter in light.
+const DARK_GREYS = [0.44, 0.39, 0.35, 0.31];
+const LIGHT_GREYS = [0.8, 0.85, 0.9, 0.95];
+const DARK_TAB_GREYS = [0.56, 0.5, 0.44, 0.38];
+const LIGHT_TAB_GREYS = [0.92, 0.87, 0.82, 0.77];
+
+/** Which grey (0–3) a stored value is, or null for a colour. */
+export function greyIndex(hue: number): number | null {
+  return hue >= GREY_BASE && hue <= MAX_HUE ? hue - GREY_BASE : null;
+}
+
+/** A stored hue value: a colour 0–359 or a grey. */
+export function isStoredHue(hue: unknown): hue is number {
+  return typeof hue === "number" && Number.isInteger(hue) && hue >= 0 && hue <= MAX_HUE;
+}
+
+/** A hue slider runs on the perceptual wheel, then greys; these keep the stored value on the outside. */
+export function readHueSlider(slider: HTMLInputElement): number | null {
+  const position = Number(slider.value);
+  if (position < GREY_BASE) {
+    return hueAtPosition(position);
+  }
+  const band = Math.floor((position - GREY_BASE) / GREY_BAND);
+  return band < GREYS ? GREY_BASE + band : null;
+}
+
+export function writeHueSlider(slider: HTMLInputElement, hue: number | null) {
+  const grey = hue == null ? GREYS : greyIndex(hue);
+  if (grey == null) {
+    slider.value = String(Math.round(huePosition(hue ?? 0)) % 360);
+    return;
+  }
+  const max = Number(slider.max) || HUE_SLIDER_MAX;
+  slider.value = String(Math.min(max, GREY_BASE + grey * GREY_BAND + Math.floor(GREY_BAND / 2)));
+}
+
+/** Alt+Enter: a hue clearly unlike this one. A golden-angle step on the even wheel, a little jitter. */
+export function nextRandomHue(current: number): number {
+  if (greyIndex(current) != null) {
+    return hueAtPosition(Math.random() * 360);
+  }
+  const jitter = Math.random() * 30 - 15;
+  return hueAtPosition(huePosition(current) + 137.5 + jitter);
+}
+
+const TRACK_STEPS = 24;
+
+/**
+ * Paint the track under a hue slider with the colour each position gives, from the same
+ * function that colours the memo (or tab), so the slider shows what will be applied:
+ * the colour wheel, then flat grey bands, then the default. Stops are inset by half the
+ * thumb so each colour sits under the thumb's centre.
+ */
+export function paintHueTrack(slider: HTMLInputElement, color: (hue: number | null) => string, thumb = 14) {
+  const max = Number(slider.max) || HUE_SLIDER_MAX;
+  const half = thumb / 2;
+  const stop = (value: string, position: number) => {
+    const at = Math.min(1, Math.max(0, position / max)).toFixed(4);
+    return `${value} calc(${half}px + (100% - ${thumb}px) * ${at})`;
+  };
+  const stops: string[] = [];
+  for (let i = 0; i <= TRACK_STEPS; i += 1) {
+    const position = (i / TRACK_STEPS) * (GREY_BASE - 1);
+    stops.push(stop(color(hueAtPosition(position)), position));
+  }
+  for (let band = 0; band <= GREYS; band += 1) {
+    const from = GREY_BASE + band * GREY_BAND - 0.5;
+    if (from >= max) {
+      break;
+    }
+    const value = color(band < GREYS ? GREY_BASE + band : null);
+    stops.push(stop(value, from), stop(value, from + GREY_BAND));
+  }
+  const track = `linear-gradient(90deg, ${stops.join(", ")})`;
+  if (slider.dataset.track !== track) {
+    slider.dataset.track = track;
+    slider.style.setProperty("--track", track);
+  }
+}
+
+/** The memo paper for a stored hue; null is the theme's default paper. */
+export function paperAt(theme: ThemeName, hue: number | null): string {
+  if (hue == null) {
+    return baseColors(theme)["--paper"];
+  }
+  const grey = greyIndex(hue);
+  if (grey != null) {
+    return theme === "dark" ? `oklch(${DARK_GREYS[grey]} 0.006 255)` : `oklch(${LIGHT_GREYS[grey]} 0.004 255)`;
+  }
+  return theme === "dark" ? `oklch(0.31 0.06 ${okHue(hue).toFixed(1)})` : `hsl(${hue} 100% 86%)`;
+}
+
+/** Tab colour: deep in dark (white text), soft in light (dark text). */
 export function tabFill(theme: ThemeName, hue: number): string {
-  return theme === "dark" ? `hsl(${hue} 82% 46%)` : `hsl(${hue} 100% 64%)`;
+  const grey = greyIndex(hue);
+  if (grey != null) {
+    return theme === "dark" ? `oklch(${DARK_TAB_GREYS[grey]} 0.006 255)` : `oklch(${LIGHT_TAB_GREYS[grey]} 0.004 255)`;
+  }
+  const ok = okHue(hue).toFixed(1);
+  return theme === "dark" ? `oklch(0.46 0.11 ${ok})` : `oklch(0.84 0.09 ${ok})`;
 }
 
 export function baseColors(theme: ThemeName): Record<string, string> {
@@ -47,6 +224,9 @@ export function baseColors(theme: ThemeName): Record<string, string> {
 }
 
 export function palette(theme: ThemeName, hue: number): Record<string, string> {
+  if (greyIndex(hue) != null) {
+    return greyPalette(theme, hue);
+  }
   if (theme === "dark") {
     return {
       "--paper": paperAt(theme, hue),
@@ -75,6 +255,25 @@ export function palette(theme: ThemeName, hue: number): Record<string, string> {
   };
 }
 
+/** A grey paper takes neutral ink: the dark defaults, or a neutral take on the light ones. */
+function greyPalette(theme: ThemeName, hue: number): Record<string, string> {
+  if (theme === "dark") {
+    return { ...baseColors("dark"), "--paper": paperAt(theme, hue) };
+  }
+  return {
+    "--paper": paperAt(theme, hue),
+    "--ink": "#26282b",
+    "--muted": "#5f6368",
+    "--button": "rgba(0, 0, 0, 0.07)",
+    "--button-hover": "rgba(0, 0, 0, 0.14)",
+    "--line": "rgba(0, 0, 0, 0.11)",
+    "--rule": "rgba(0, 0, 0, 0.3)",
+    "--shadow": "rgba(0, 0, 0, 0.28)",
+    "--field": "rgba(255, 255, 255, 0.65)",
+    "--pin-on": "#1f2124",
+  };
+}
+
 export function paintSurface(el: HTMLElement, theme: ThemeName, hue: number | null, opacity: number) {
   const colors = hue == null ? baseColors(theme) : palette(theme, hue);
   for (const [name, value] of Object.entries(colors)) {
@@ -93,7 +292,7 @@ export function themeGlyph(dark: boolean): string {
 export function huePopInnerHtml(): string {
   return `
     <div class="hue-track">
-      <input class="hue-slider" type="range" min="0" max="359" value="48" aria-label="Hue" />
+      <input class="hue-slider" type="range" min="0" max="${HUE_SLIDER_MAX}" value="48" aria-label="Hue" />
     </div>
     <div class="hue-slots">
       <button type="button" class="hue-slot" aria-label="Saved color 1"></button>
@@ -124,6 +323,22 @@ function markdownButtonsHtml(): string {
     <button type="button" data-markdown="task" aria-label="Task list">Task</button>
     <button type="button" data-markdown="quote" aria-label="Quote">Quote</button>
     <button type="button" data-markdown="code" aria-label="Code block">Code block</button>`;
+}
+
+/** The record button of a memo header. Hidden until recording is turned on. */
+export function recAnchorHtml(): string {
+  return `<div class="rec-anchor" hidden>
+    <button class="rec-toggle icon-button" type="button" aria-label="Record" aria-pressed="false" title="Record">
+      <span class="rec-glyph" aria-hidden="true"></span>
+    </button>
+  </div>`;
+}
+
+/** The AI button of a memo header. Hidden until model prompts are turned on. */
+export function aiAnchorHtml(): string {
+  return `<div class="ai-anchor" hidden>
+    <button class="ai-toggle icon-button" type="button" aria-label="AI prompt" aria-expanded="false" title="AI prompt">AI</button>
+  </div>`;
 }
 
 export function formatMenuHtml(): string {
@@ -187,6 +402,8 @@ export function stackHeaderHtml(): string {
         </span>
       </div>
       <div class="header-actions">
+        ${recAnchorHtml()}
+        ${aiAnchorHtml()}
         <div class="editor-tools-anchor">
           <button class="editor-menu-toggle icon-button" type="button" aria-label="Editor options" aria-expanded="false" title="Editor options">
             <span class="menu-glyph" aria-hidden="true"></span>
@@ -210,12 +427,12 @@ export function stackHeaderHtml(): string {
             </div>
           </div>
         </div>
-        <button class="pin-toggle icon-button" type="button" aria-label="Pin" aria-pressed="true">
-          <span class="pin-glyph" aria-hidden="true"></span>
-        </button>
       </div>
       <button class="fold-toggle icon-button" type="button" aria-label="Fold memo" title="Fold memo">
         <span class="collapsed-chevron" aria-hidden="true"></span>
+      </button>
+      <button class="pin-toggle icon-button" type="button" aria-label="Pin" aria-pressed="true">
+        <span class="pin-glyph" aria-hidden="true"></span>
       </button>
     </header>
   `;

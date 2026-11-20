@@ -62,20 +62,37 @@ html.is-open #row {
   flex: none;
   width: 100px;
   min-width: 16px;
-  padding: 0 6px;
+  padding: 0 8px;
   overflow: hidden;
   border: 0;
-  border-radius: 3px;
+  border-radius: 4px;
   font: inherit;
   font-size: 0;
+  font-weight: 600;
+  letter-spacing: 0.02em;
   line-height: 1;
   white-space: nowrap;
   text-overflow: ellipsis;
   color: var(--ink);
   cursor: pointer;
+  /* A soft top light and a hairline edge give the flat fill some body. */
+  box-shadow:
+    inset 0 1px 0 rgb(255 255 255 / 16%),
+    inset 0 0 0 1px rgb(0 0 0 / 10%);
+  transform-origin: center;
   transition:
     font-size 140ms ease-out,
-    line-height 140ms ease-out;
+    line-height 140ms ease-out,
+    border-radius 140ms ease-out,
+    transform 180ms cubic-bezier(0.2, 0.8, 0.2, 1),
+    filter 180ms ease-out,
+    box-shadow 180ms ease-out,
+    opacity 180ms ease-out;
+}
+
+html.is-open #tab-add,
+html.is-open .pin-tab {
+  border-radius: 6px;
 }
 
 html.is-hiding #tab-add,
@@ -90,6 +107,10 @@ html.is-hiding .pin-tab {
   font-size: 10px;
   line-height: 12px;
   background: color-mix(in srgb, var(--paper) 55%, var(--muted));
+}
+
+html[data-theme="dark"] #tab-add {
+  background: color-mix(in srgb, var(--paper) 70%, var(--muted));
 }
 
 html.is-open #tab-add,
@@ -109,20 +130,53 @@ html.is-open .pin-tab {
   opacity: 1;
 }
 
+/* Tab fills are deep in dark (tabFill), so white reads without a heavy shadow. */
 html[data-theme="dark"] .pin-tab {
   color: #fff;
-  text-shadow:
-    0 1px 1px rgb(0 0 0 / 55%),
-    0 0 3px rgb(0 0 0 / 50%);
+  text-shadow: 0 1px 1px rgb(0 0 0 / 35%);
+}
+
+html[data-theme="light"] .pin-tab {
+  color: #2a2418;
 }
 
 .pin-tab[aria-current="true"] {
-  box-shadow: inset 0 -2px 0 currentColor;
+  box-shadow:
+    inset 0 1px 0 rgb(255 255 255 / 16%),
+    inset 0 -2px 0 currentColor;
 }
 
-#tab-add:hover,
-.pin-tab:hover {
-  filter: brightness(1.06);
+/* Hover: the tab rises a little and brightens; a press sinks it back. */
+html.is-open #tab-add:hover,
+html.is-open .pin-tab:hover {
+  transform: scale(1.05);
+  filter: brightness(1.12) saturate(1.08);
+  box-shadow:
+    inset 0 1px 0 rgb(255 255 255 / 22%),
+    0 2px 6px rgb(0 0 0 / 28%);
+}
+
+html.is-open .pin-tab[aria-current="true"]:hover {
+  box-shadow:
+    inset 0 1px 0 rgb(255 255 255 / 22%),
+    inset 0 -2px 0 currentColor,
+    0 2px 6px rgb(0 0 0 / 28%);
+}
+
+html.is-open #tab-add:active,
+html.is-open .pin-tab:active {
+  transform: scale(0.97);
+  filter: brightness(0.96);
+  transition-duration: 60ms;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html.is-open #tab-add:hover,
+  html.is-open .pin-tab:hover,
+  html.is-open #tab-add:active,
+  html.is-open .pin-tab:active {
+    transform: none;
+  }
 }
 
 .pin-tab.pin-tab-aim {
@@ -292,4 +346,54 @@ html[data-edge="left"] #tab-menu {
 html[data-edge="right"] #tab-menu {
   left: auto;
   right: 32px;
+}
+
+/* A memo held over a tab: the tab grows to twice its size over the hold time, then the
+   memo moves to it. Top and bottom strips grow it in height, side strips in width. */
+html.is-aiming #row {
+  height: 48px;
+}
+
+html.is-aiming #tabs {
+  align-items: flex-start;
+}
+
+html.is-aiming[data-edge="bottom"] #tabs {
+  align-items: flex-end;
+}
+
+html.is-aiming .pin-tab {
+  height: 20px;
+  transition:
+    height 750ms linear,
+    width 750ms linear,
+    line-height 750ms linear,
+    box-shadow 140ms ease;
+}
+
+html.is-aiming .pin-tab.pin-tab-aim {
+  height: 40px;
+  line-height: 40px;
+}
+
+html.is-aiming[data-edge="left"] #row,
+html.is-aiming[data-edge="right"] #row {
+  width: 52px;
+  height: 100%;
+}
+
+html.is-aiming[data-edge="right"] #tabs {
+  align-items: flex-end;
+}
+
+html.is-aiming[data-edge="left"] .pin-tab,
+html.is-aiming[data-edge="right"] .pin-tab {
+  width: 24px;
+  height: auto;
+  line-height: 1;
+}
+
+html.is-aiming[data-edge="left"] .pin-tab.pin-tab-aim,
+html.is-aiming[data-edge="right"] .pin-tab.pin-tab-aim {
+  width: 48px;
 }

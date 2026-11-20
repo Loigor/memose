@@ -1035,3 +1035,31 @@ test("tab in an empty new memo opens memo search", async ({ page }) => {
   await area.press("Tab");
   await expect(page.locator("#recent-search")).toBeVisible();
 });
+
+for (const pinVia of ["header", "list"] as const) {
+  test(`pinning a memo found by Tab search (${pinVia}) keeps it pinned and closes the search`, async ({ page }) => {
+    await openComposer(page, { notes: sampleNotes(5) });
+    const area = await composerTextarea(page);
+    await area.click();
+    await page.keyboard.press("Tab");
+    await expect(page.locator("#recent-search")).toBeVisible();
+    const row = page.locator("#recent li").nth(1);
+    const id = await row.getAttribute("data-id");
+    await row.locator(".label").click();
+    if (pinVia === "header") {
+      await page.locator("#pin-toggle").click();
+    } else {
+      await page.locator(`#recent li[data-id='${id}'] button.pin`).click();
+    }
+    await expect(page.locator("#recent-search")).toBeHidden();
+    // The window closes after a pin, then the new-memo shortcut opens a fresh one.
+    await emitEvent(page, "composer-flush", 2);
+    await emitEvent(page, "composer-fresh", 3);
+    await expect(page.locator("#recent-search")).toBeHidden();
+    await expect.poll(async () => (await getNotes(page)).find((note) => note.id === id)?.pinned).toBe(true);
+    const unpins = (await getInvocations(page)).filter(
+      (call) => call.cmd === "set_pinned" && (call.args as { pinned?: boolean }).pinned === false,
+    );
+    expect(unpins).toEqual([]);
+  });
+}

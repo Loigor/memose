@@ -1,4 +1,4 @@
-import { type SurfaceLook, type ThemeName } from "./memo-chrome.ts";
+import { isStoredHue, type SurfaceLook, type ThemeName } from "./memo-chrome.ts";
 import type { Note } from "../types.ts";
 
 export type Look = SurfaceLook;
@@ -35,7 +35,7 @@ export function lookFromNote(note: Note): Look {
     opacity: Math.min(100, Math.max(0, Math.round(note.opacity ?? 100))),
     hueLight: note.hueLight ?? null,
     hueDark: note.hueDark ?? null,
-    swatches: swatches.filter((hue) => hue >= 0 && hue <= 359).slice(0, 6),
+    swatches: swatches.filter((hue) => isStoredHue(hue)).slice(0, 6),
     theme: namedTheme(note.theme),
     coder: note.coder === true ? true : note.coder === false ? false : null,
   };

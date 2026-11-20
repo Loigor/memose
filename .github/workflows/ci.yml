@@ -37,7 +37,8 @@ jobs:
             patchelf \
             libdbus-1-dev \
             libxdo-dev \
-            libssl-dev
+            libssl-dev \
+            libasound2-dev
 
       - name: Setup Node.js
         uses: actions/setup-node@v6

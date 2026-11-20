@@ -1,7 +1,9 @@
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 
+import { mountDictation } from "./ai/dictation";
 import { mountLlmBubble } from "./ai/llm-edit";
+import { mountRecordingTools } from "./ai/recording-tools";
 import { createAppBackend } from "./app/backend";
 import { createAudienceController } from "./app/controllers/audience-controller";
 import { createEditorController } from "./app/controllers/editor-controller";
@@ -14,22 +16,39 @@ import {
 import { createLookController, type LookController } from "./app/controllers/look-controller";
 import { createRecentController, type RecentController } from "./app/controllers/recent-controller";
 import { createSessionController, type SessionController } from "./app/controllers/session-controller";
-import { createAppContext } from "./app/context";
+import { createAppContext, type LookHint } from "./app/context";
 import { createAppState } from "./app/state";
 import { memoUsesCoder, type EditorPrefs } from "./editor/editor-field";
 import { noteTitle } from "./editor/markdown-edit";
 import { resizeAllBlockTextareas } from "./editor/textarea";
 import { bindMediaEditor } from "./media/media-dnd";
 import { initLightbox } from "./media/media-elements";
-import type { ThemeName } from "./look/memo-chrome";
+import { isStoredHue, type ThemeName } from "./look/memo-chrome";
 import { inTauri, isPreviewWindow } from "./platform";
 import type { ShortcutBinds } from "./shortcuts";
 import { createStackController, type StackController } from "./stack/index";
 
-const pinnedFromScript = (globalThis as { __memosePin?: unknown }).__memosePin;
-const themeFromScript = (globalThis as { __memoseTheme?: unknown }).__memoseTheme;
-const pinnedThemeHint: ThemeName | null =
-  themeFromScript === "dark" || themeFromScript === "light" ? themeFromScript : null;
+const bootScript = globalThis as {
+  __memosePin?: unknown;
+  __memoseTheme?: unknown;
+  __memoseAppTheme?: unknown;
+  __memoseLook?: unknown;
+};
+const pinnedFromScript = bootScript.__memosePin;
+const themeName = (value: unknown): ThemeName | null => (value === "dark" || value === "light" ? value : null);
+const pinnedThemeHint = themeName(bootScript.__memoseTheme);
+const appThemeHint = themeName(bootScript.__memoseAppTheme);
+const lookHint = readLookHint(bootScript.__memoseLook);
+
+function readLookHint(value: unknown): LookHint | null {
+  if (!value || typeof value !== "object") {
+    return null;
+  }
+  const raw = value as { hueLight?: unknown; hueDark?: unknown; opacity?: unknown };
+  const hue = (hue: unknown) => (isStoredHue(hue) ? hue : null);
+  const opacity = typeof raw.opacity === "number" ? Math.min(100, Math.max(0, Math.round(raw.opacity))) : 100;
+  return { hueLight: hue(raw.hueLight), hueDark: hue(raw.hueDark), opacity };
+}
 const pinnedNoteId =
   (typeof pinnedFromScript === "string" ? pinnedFromScript : "") ||
   new URLSearchParams(window.location.search).get("pin") ||
@@ -37,7 +56,8 @@ const pinnedNoteId =
   "";
 if (pinnedNoteId) {
   document.documentElement.dataset.noteId = pinnedNoteId;
-  document.documentElement.classList.add("pin-window");
+  // Until the memo arrives, the card shows its theme with a loading line.
+  document.documentElement.classList.add("pin-window", "memo-loading");
 }
 const appBackend = createAppBackend();
 const appContext = createAppContext(
@@ -45,6 +65,8 @@ const appContext = createAppContext(
     kind: isPreviewWindow() ? "preview" : pinnedNoteId ? "pinned" : "composer",
     pinnedNoteId,
     pinnedThemeHint,
+    appThemeHint,
+    lookHint,
   },
   appBackend,
 );
@@ -92,11 +114,32 @@ if (aiAnchor && !isPreviewWindow()) {
   mountLlmBubble(aiAnchor, {
     host: cardEl,
     noteId: () => sessionController.currentNoteId(),
+    ensureNoteId: () => sessionController.ensureNoteId(),
     title: () => noteTitle(editorController.content()),
     text: () => editorController.content(),
     replace: (next) => editorController.replaceContent(next),
     visibility: () => appState.audience.visibility || null,
     selectionRoots: () => [blocksEl, appContext.dom.preview],
+    onAvailability: () => stack.syncHeader(),
+  });
+}
+if (!isPreviewWindow()) {
+  mountRecordingTools({
+    roots: () => [blocksEl],
+    text: () => editorController.content(),
+    replace: (next) => editorController.replaceContent(next),
+  });
+}
+const recAnchor = document.querySelector<HTMLElement>("#rec-anchor");
+if (recAnchor && !isPreviewWindow()) {
+  mountDictation(recAnchor, {
+    host: cardEl,
+    noteId: () => sessionController.currentNoteId(),
+    text: () => editorController.content(),
+    replace: (next, quiet) => editorController.replaceContent(next, quiet),
+    insertAtCursor: (text) => editorController.insertPlainText(text),
+    placeCaret: (offset) => editorController.placeCaret(offset),
+    fieldRoots: () => [blocksEl, appContext.dom.preview],
     onAvailability: () => stack.syncHeader(),
   });
 }
@@ -291,9 +334,14 @@ if (isPreviewWindow()) {
       console.error(error);
     });
   });
-  void sessionController.loadPinned(pinnedNoteId).catch((error: unknown) => {
-    console.error(error);
-  });
+  void sessionController
+    .loadPinned(pinnedNoteId)
+    .catch((error: unknown) => {
+      console.error(error);
+    })
+    .finally(() => {
+      document.documentElement.classList.remove("memo-loading");
+    });
   void getCurrentWindow().listen<string>("show-pin", (event) => {
     if (event.payload !== pinnedNoteId) {
       return;
@@ -312,7 +360,12 @@ if (isPreviewWindow()) {
       editorController.resumePlace();
     }
   });
-  void listen("notes-changed", () => {
+  void listen<string | null>("notes-changed", (event) => {
+    // A save names its memo; a window that does not show that memo has nothing to reload.
+    const changed = event.payload;
+    if (typeof changed === "string" && changed !== pinnedNoteId && !stack.showsNote(changed)) {
+      return;
+    }
     editorController.rememberPlace();
     void sessionController
       .loadPinned(pinnedNoteId)

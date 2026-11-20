@@ -39,6 +39,8 @@ pub struct AppState {
     pub llm_requests: Mutex<HashMap<String, tokio::sync::oneshot::Sender<()>>>,
     /// Prompts and results per memo id. Kept until the app quits.
     pub llm_chats: Mutex<HashMap<String, Vec<crate::llm::ChatEntry>>>,
+    /// The running recording and the loaded speech model, if any.
+    pub speech: crate::speech::SpeechState,
 }
 
 impl AppState {
@@ -71,6 +73,7 @@ impl AppState {
             settle: Mutex::new(HashMap::new()),
             llm_requests: Mutex::new(HashMap::new()),
             llm_chats: Mutex::new(HashMap::new()),
+            speech: crate::speech::SpeechState::default(),
         })
     }
 }
