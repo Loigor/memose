@@ -8,6 +8,10 @@ use serde::Serialize;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
+#[cfg_attr(
+    not(target_os = "macos"),
+    expect(dead_code, reason = "only the macOS permission check builds these")
+)]
 pub enum Access {
     /// The system has not asked yet. The next recording asks.
     Unknown,
