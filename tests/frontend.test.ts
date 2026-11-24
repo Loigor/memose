@@ -36,6 +36,17 @@ import {
   resolveSelection,
   splitProtected,
 } from "../src/editor/line-diff.ts";
+import {
+  applyPolish,
+  insertLine,
+  joinDictation,
+  locateSpan,
+  recordingPlace,
+  afterMediaLine,
+  spanFromInsert,
+  splitTail,
+} from "../src/editor/dictation-span.ts";
+import { acceptWords, findWords, locateWords, wordDiff } from "../src/editor/recording-words.ts";
 import { highlightMarkdown } from "../src/editor/md-highlight.ts";
 import { tagAtOffset } from "../src/editor/md-tags.ts";
 import { uniqueFiles } from "../src/media/files.ts";
@@ -79,10 +90,21 @@ import {
   baseColors,
   huePopHtml,
   palette,
+  GREY_BASE,
+  GREYS,
+  HUE_SLIDER_MAX,
+  hueAtPosition,
+  huePosition,
+  MAX_HUE,
+  nextRandomHue,
+  okHue,
   paperAt,
+  readHueSlider,
   stackHeaderHtml,
+  TAB_HUE_SLIDER_MAX,
   tabFill,
   themeGlyph,
+  writeHueSlider,
 } from "../src/look/memo-chrome.ts";
 import { clampHueSwatches } from "../src/look/swatches.ts";
 import { pointIn, pointOnScrollGutter, requireEl } from "../src/dom.ts";
@@ -446,6 +468,7 @@ test("settings window separates visibility, window, editor, shortcuts, and sync"
     { id: "shortcuts", label: "Shortcuts" },
     { id: "sync", label: "Sync" },
     { id: "models", label: "Models" },
+    { id: "recording", label: "Recording" },
   ]);
   assert.match(html, /id="tab-visibility"[\s\S]*?aria-selected="true"/);
   assert.match(html, /Default memo visibility/);
@@ -1017,19 +1040,45 @@ test("formatDocument indents javascript when json parse fails", () => {
 
 test("memo-chrome computes palettes and renders stack header template", () => {
   assert.match(paperAt("light", 48), /^hsl\(48 /);
-  assert.match(paperAt("dark", 200), /^hsl\(200 /);
-  assert.equal(tabFill("light", 48), "hsl(48 100% 64%)");
-  assert.equal(tabFill("dark", 210), "hsl(210 82% 46%)");
+  assert.match(paperAt("dark", 200), /^oklch\(0\.31 0\.06 /);
+  // Tabs: deep in dark under white text, soft in light under dark text.
+  assert.match(tabFill("dark", 210), /^oklch\(0\.46 /);
+  assert.match(tabFill("light", 48), /^oklch\(0\.84 /);
   assert.equal(baseColors("light")["--paper"], "#fff4b8");
   assert.equal(baseColors("dark")["--paper"], "#25282c");
   const tinted = palette("dark", 180);
-  assert.ok(tinted["--paper"].includes("180"));
+  assert.equal(tinted["--paper"], paperAt("dark", 180));
+  assert.ok(tinted["--ink"].includes("180"));
   assert.ok(themeGlyph(true).includes("circle"));
   assert.ok(themeGlyph(false).includes("path"));
   assert.ok(stackHeaderHtml().includes('class="brand-name"'));
   assert.ok(huePopHtml().includes("hue-slider"));
   assert.ok(huePopHtml().includes("hue-slot"));
   assert.deepEqual(clampHueSwatches([48, 400, 48, 210, 12]), [48, 210, 12]);
+});
+
+test("hues keep their colour name and move evenly to the eye", () => {
+  // A stored hue is an sRGB hue angle: red, green, and blue land on their OKLCH hues.
+  assert.ok(Math.abs(okHue(0) - 29.2) < 0.5);
+  assert.ok(Math.abs(okHue(120) - 142.5) < 0.5);
+  assert.ok(Math.abs(okHue(240) - 264.1) < 0.5);
+  // Slider positions cover the wheel and map back to the same look.
+  for (let hue = 0; hue < 360; hue += 1) {
+    const back = hueAtPosition(huePosition(hue));
+    assert.ok(Math.abs(okHue(back) - okHue(hue)) < 3, `hue ${hue} came back as ${back}`);
+  }
+  assert.equal(hueAtPosition(0), 0);
+  assert.equal(hueAtPosition(360), 0);
+  // The sRGB greens 90–150 are one colour to the eye; they take a small part of the slider.
+  assert.ok(huePosition(150) - huePosition(90) < 25);
+  // Alt+Enter always lands far from the hue it leaves.
+  let hue = 48;
+  for (let i = 0; i < 500; i += 1) {
+    const next = nextRandomHue(hue);
+    const step = Math.abs(huePosition(next) - huePosition(hue));
+    assert.ok(Math.min(step, 360 - step) > 100, `step ${hue} -> ${next}`);
+    hue = next;
+  }
 });
 
 test("release versions and Tauri IPC command contracts stay in sync without dangling handlers", () => {
@@ -1230,4 +1279,149 @@ test("an edit of selected lines replaces only those lines", () => {
   );
   assert.equal(locateBlock(["a", "b", "a", "b"], ["a", "b"], 3), 2);
   assert.equal(locateBlock(lines, ["gone"]), -1);
+});
+
+test("dictated text is found again in the memo while it grows", () => {
+  const span = spanFromInsert("Intro. Outro.", "Intro. hello there Outro.");
+  assert.deepEqual(span && { start: span.start, end: span.end }, { start: 7, end: 19 });
+  assert.equal(spanFromInsert("same", "same"), null);
+  assert.equal(spanFromInsert("longer text", "short"), null);
+  assert.ok(span);
+  assert.deepEqual(locateSpan(span, "Intro. hello there Outro."), { start: 7, end: 19 });
+  assert.deepEqual(locateSpan(span, "New first line.\nIntro. hello there Outro."), { start: 23, end: 35 });
+  assert.equal(locateSpan(span, "Intro. Outro."), null);
+  const twice = { content: "ab ab", start: 3, end: 5 };
+  assert.deepEqual(locateSpan(twice, "x ab ab"), { start: 2, end: 4 }, "the match nearest to the old place wins");
+  assert.deepEqual(locateSpan(twice, "ab ab ab ab"), { start: 3, end: 5 });
+});
+
+test("new pieces of speech are joined with one space", () => {
+  assert.equal(joinDictation("", " hello "), "hello");
+  assert.equal(joinDictation("hello", "there"), "hello there");
+  assert.equal(joinDictation("hello\n", "there"), "hello\nthere");
+  assert.equal(joinDictation("hello", "   "), "hello");
+});
+
+test("only the tail of long dictation is reworded, from a sentence start", () => {
+  assert.deepEqual(splitTail("short text"), { head: "", tail: "short text" });
+  const long = `${"First sentence here. ".repeat(40)}Last one.`;
+  const { head, tail } = splitTail(long, 100);
+  assert.equal(head + tail, long);
+  assert.ok(tail.length <= 100);
+  assert.ok(tail.startsWith("First sentence") || tail.startsWith("Last one"));
+  assert.ok(head.endsWith(". "));
+});
+
+test("a reworded tail keeps speech that arrived while the model worked", () => {
+  assert.equal(applyPolish("teh cat sat", "", "teh cat sat", "The cat sat."), "The cat sat.");
+  assert.equal(applyPolish("teh cat sat and purred", "", "teh cat sat", "The cat sat."), "The cat sat. and purred");
+  assert.equal(applyPolish("Done. teh cat", "Done. ", "teh cat", "The cat."), "Done. The cat.");
+  assert.equal(applyPolish("user rewrote it", "", "teh cat sat", "The cat sat."), null);
+});
+
+test("a recording goes under the text block its words went into, after earlier recordings", () => {
+  const v1 = "![v1.wav](memose-media/a-v1.wav)";
+  const memo = `Para one line\nsecond line\n\nOther para`;
+  const start = "Para one line".length;
+  const words = " and more";
+  const withWords = `${memo.slice(0, start)}${words}${memo.slice(start)}`;
+  const at = recordingPlace(withWords, start, start + words.length);
+  assert.equal(at, withWords.indexOf("\n\nOther"));
+  const once = insertLine(withWords, at, v1);
+  assert.equal(once.text, `Para one line and more\nsecond line\n${v1}\n\nOther para`);
+  const again = recordingPlace(once.text, 0, 4);
+  assert.equal(again, once.end, "a second recording of the same block goes after the first");
+  const own = "Intro\nspoken words\nOutro";
+  assert.equal(recordingPlace(own, 6, 18), 18, "dictation on its own line takes its recording right under it");
+  assert.equal(recordingPlace("one\n```js\ncode\n```", 0, 3), 3, "a fence ends the block");
+  assert.equal(recordingPlace("last words", 5, 10), 10);
+});
+
+test("re-analysis replaces the recording's own words and shows a word diff", () => {
+  const memo = "Same words here\n![r.wav](memose-media/r.wav)\nSame words here";
+  const place = locateWords(memo, "Same words here", "r.wav");
+  assert.deepEqual(place, { start: 0, end: 15 }, "the copy before the recording is the one it made");
+  assert.equal(
+    acceptWords(memo, "r.wav", "Same words here", "The same words."),
+    "The same words.\n![r.wav](memose-media/r.wav)\nSame words here",
+  );
+  assert.equal(
+    acceptWords("Text\n![r.wav](memose-media/r.wav)", "r.wav", "", "New words."),
+    "Text\nNew words.\n![r.wav](memose-media/r.wav)",
+    "words that are gone go right above the recording",
+  );
+  const rec = "![r.wav](memose-media/r.wav)";
+  const edited = `Shopping list for the whole weekend.\n${rec}\nEnd`;
+  const found = findWords(edited, "for the weekend", "r.wav");
+  assert.equal(
+    found && edited.slice(found.start, found.end),
+    "for the whole weekend.",
+    "edited words are found by the words they still share",
+  );
+  assert.equal(
+    acceptWords(edited, "r.wav", "for the weekend", "for Saturday."),
+    `Shopping list for Saturday.\n${rec}\nEnd`,
+    "accepting replaces the edited words, not adds a copy",
+  );
+  const grouped = `Intro\n\nfirst words here\n![q.wav](memose-media/q.wav)\nsecond worde here\n${rec}`;
+  const second = findWords(grouped, "second words here", "r.wav");
+  assert.equal(second && grouped.slice(second.start, second.end), "second worde here");
+  assert.equal(
+    findWords(`Something else entirely\n${rec}`, "we ship friday", "r.wav"),
+    null,
+    "other text is left alone",
+  );
+  assert.equal(
+    findWords(`we ship friday\n\nTitle\n${rec}`, "we ship friday", "r.wav")?.start,
+    0,
+    "exact words come first",
+  );
+  assert.equal(afterMediaLine(`Notes\n${rec}`, 6 + rec.length), true);
+  assert.equal(afterMediaLine(`Notes\n${rec}\n`, 7 + rec.length), false);
+  assert.equal(afterMediaLine("Notes", 5), false);
+  const parts = wordDiff("we ship friday", "we ship on Thursday");
+  const changed = parts.filter((part) => part.kind === "hunk");
+  assert.equal(changed.length, 1);
+  assert.equal(parts.map((part) => (part.kind === "same" ? part.lines.join("") : "")).join(""), "we ship ");
+});
+
+test("the hue slider ends in greys and then the default paper", () => {
+  const slider = { value: "0", max: String(HUE_SLIDER_MAX) } as HTMLInputElement;
+  const at = (position: number) => {
+    slider.value = String(position);
+    return readHueSlider(slider);
+  };
+  // The wheel, then one band per grey, then the default (no hue) at the far end.
+  assert.equal(at(0), 0);
+  assert.equal(at(GREY_BASE), GREY_BASE);
+  assert.equal(at(HUE_SLIDER_MAX), null);
+  const greys = new Set<number | null>();
+  for (let position = GREY_BASE; position <= HUE_SLIDER_MAX; position += 1) {
+    greys.add(at(position));
+  }
+  assert.deepEqual([...greys], [...Array.from({ length: GREYS }, (_, i) => GREY_BASE + i), null]);
+  assert.equal(MAX_HUE, GREY_BASE + GREYS - 1);
+  // Writing a value puts the thumb back where it reads the same: greys and the default
+  // exactly, colours to the same look (a few sRGB greens are one colour to the eye).
+  for (const value of [GREY_BASE, MAX_HUE, null]) {
+    writeHueSlider(slider, value);
+    assert.equal(readHueSlider(slider), value);
+  }
+  for (const value of [0, 120, 200, 359]) {
+    writeHueSlider(slider, value);
+    const back = readHueSlider(slider);
+    assert.ok(back != null && Math.abs(huePosition(back) - huePosition(value)) % 359 < 2, `${value} -> ${back}`);
+  }
+  // A tab always has a colour: its slider stops after the greys.
+  const tab = { value: "0", max: String(TAB_HUE_SLIDER_MAX) } as HTMLInputElement;
+  tab.value = String(TAB_HUE_SLIDER_MAX);
+  assert.equal(readHueSlider(tab), MAX_HUE);
+  // Greys and the default are neutral; the default is the theme's own paper.
+  assert.equal(paperAt("dark", null), "#25282c");
+  assert.match(paperAt("dark", GREY_BASE), /^oklch\([0-9.]+ 0\.006 /);
+  assert.equal(palette("dark", MAX_HUE)["--ink"], baseColors("dark")["--ink"]);
+  // The slider markup uses the same bounds.
+  const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+  assert.ok(fs.readFileSync(path.join(root, "index.html"), "utf8").includes(`max="${HUE_SLIDER_MAX}"`));
+  assert.ok(fs.readFileSync(path.join(root, "pin-tabs.html"), "utf8").includes(`max="${TAB_HUE_SLIDER_MAX}"`));
 });

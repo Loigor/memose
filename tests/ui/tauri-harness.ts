@@ -78,12 +78,39 @@ export type HarnessSeed = {
   pinTabs?: PinTabsSeed;
   hueSwatches?: number[];
   ai?: AiSeed;
+  speech?: SpeechSeed;
+};
+
+export type SpeechSeed = {
+  enabled?: boolean;
+  source?: "local" | "server" | "off";
+  installed?: boolean;
+  supported?: boolean;
+  keepAudio?: boolean;
+  polishLevel?: number;
+  polishReady?: boolean;
+  /** What the mocked chat model makes of dictated text. Missing leaves it as heard. */
+  polishReply?: string;
+  /** Replies by the exact text sent, for tests with several passes. */
+  /** Reply per dictated text; a "dictated|later" key answers a pass that saw the words said after it. */
+  polishReplies?: Record<string, string>;
+  /** How long the mocked chat model takes per pass, in ms. */
+  polishDelayMs?: number;
+  /** Markdown line a kept recording ends with. */
+  audio?: string;
+  microphone?: "unknown" | "granted" | "denied" | "notNeeded";
+  localModel?: "parakeet" | "canary";
+  /** Recordings made in the app, by media name: what was heard and the text in the memo. */
+  recordings?: Record<string, { heard?: string; text?: string }>;
+  /** What re-analyzing any recording gives. */
+  transcribe?: string;
 };
 
 export type AiSeed = {
   llmEnabled?: boolean;
   llmBaseUrl?: string;
   llmModel?: string;
+  hasLlmKey?: boolean;
   /** Text the mocked model returns for every prompt. */
   llmReply?: string;
   /** What the mocked model decides for an "auto" prompt. */
@@ -180,7 +207,7 @@ function installBrowserHarness(seed: BrowserSeed) {
     llmEnabled: Boolean(seed.ai?.llmEnabled),
     llmBaseUrl: seed.ai?.llmBaseUrl ?? "",
     llmModel: seed.ai?.llmModel ?? "",
-    hasLlmKey: false,
+    hasLlmKey: Boolean(seed.ai?.hasLlmKey),
     privateOkHost: "",
     presets: [
       { name: "Summarize", instruction: "Summarize the text.", mode: "ask" },
@@ -201,6 +228,30 @@ function installBrowserHarness(seed: BrowserSeed) {
     selection: boolean;
     startedAt: number;
     finishedAt: number | null;
+  };
+  const speech = {
+    enabled: Boolean(seed.speech?.enabled),
+    source: seed.speech?.source ?? "local",
+    baseUrl: "",
+    hasKey: false,
+    model: "",
+    language: "",
+    device: "",
+    keepAudio: Boolean(seed.speech?.keepAudio),
+    polishLevel: seed.speech?.polishLevel ?? 2,
+    installed: Boolean(seed.speech?.installed),
+    localModel: seed.speech?.localModel ?? "parakeet",
+    /** Downloaded models. `installed` stands for the one in use. */
+    downloaded: new Set<string>(seed.speech?.installed ? [seed.speech?.localModel ?? "parakeet"] : []),
+    microphone: seed.speech?.microphone ?? "granted",
+    recordings: new Map(
+      Object.entries(seed.speech?.recordings ?? {}).map(([name, info]) => [
+        name,
+        { heard: info.heard ?? "", text: info.text ?? info.heard ?? "" },
+      ]),
+    ),
+    session: null as { sessionId: string; noteId: string | null; purpose: string } | null,
+    count: 0,
   };
   const chats = new Map<string, ChatSeedEntry[]>();
   const held = new Map<string, () => void>();
@@ -489,6 +540,7 @@ function installBrowserHarness(seed: BrowserSeed) {
           llmLocal: host === "localhost" || host.startsWith("127."),
           privateOkHost: ai.privateOkHost,
           presets: ai.presets,
+          defaultPresets: [{ name: "Summarize", instruction: "Summarize the text.", mode: "ask" }],
         };
       }
       case "save_ai_settings": {
@@ -572,6 +624,7 @@ function installBrowserHarness(seed: BrowserSeed) {
         const entry = (chats.get(String(a.noteId ?? "")) ?? []).find((item) => item.id === a.requestId);
         if (entry && entry.status === "edit") {
           entry.status = String(a.status);
+          (entry as { accepted?: number[] }).accepted = Array.isArray(a.accepted) ? a.accepted : [];
         }
         emit("llm-changed", String(a.noteId ?? ""));
         return null;
@@ -584,6 +637,173 @@ function installBrowserHarness(seed: BrowserSeed) {
         );
         emit("llm-changed", noteId);
         return null;
+      }
+      case "get_speech_settings": {
+        const host = speech.baseUrl.replace(/^[a-z]+:\/\//, "").split(/[/:]/)[0] ?? "";
+        return {
+          enabled: speech.enabled,
+          source: speech.source,
+          baseUrl: speech.baseUrl,
+          serverUrl: speech.baseUrl,
+          serverHost: host,
+          serverLocal: host === "localhost" || host.startsWith("127."),
+          hasKey: speech.hasKey,
+          model: speech.model,
+          language: speech.language,
+          device: speech.device,
+          keepAudio: speech.keepAudio,
+          polishLevel: speech.polishLevel,
+          polishReady: Boolean(seed.speech?.polishReady),
+          engine: (() => {
+            const catalog = [
+              {
+                id: "parakeet",
+                name: "Parakeet v3",
+                summary: "Fast. Finds the language by itself.",
+                bytes: 510_000_000,
+                diskBytes: 670_000_000,
+                memoryMb: 1270,
+                speed: 23,
+                loadSecs: 1.2,
+                needsLanguage: false,
+              },
+              {
+                id: "canary",
+                name: "Canary 1B v2",
+                summary: "More accurate, about half as fast.",
+                bytes: 1_030_000_000,
+                diskBytes: 1_030_000_000,
+                memoryMb: 1770,
+                speed: 12,
+                loadSecs: 5.6,
+                needsLanguage: true,
+              },
+            ];
+            const models = catalog.map(({ bytes, ...item }) => ({
+              ...item,
+              installed: speech.downloaded.has(item.id),
+              downloadBytes: speech.downloaded.has(item.id) ? 0 : bytes,
+            }));
+            const chosen = models.find((item) => item.id === speech.localModel) ?? models[0];
+            return {
+              supported: seed.speech?.supported !== false,
+              installed: chosen.installed,
+              model: chosen.id,
+              downloadBytes: chosen.downloadBytes,
+              diskBytes: models.filter((item) => item.installed).reduce((sum, item) => sum + item.diskBytes, 0),
+              models,
+            };
+          })(),
+          microphone: { access: speech.microphone, borrowed: false },
+          recording: speech.session ? { recording: true, ...speech.session } : null,
+        };
+      }
+      case "save_speech_settings": {
+        if (typeof a.polishLevel === "number") {
+          speech.polishLevel = a.polishLevel;
+        }
+        for (const name of ["enabled", "keepAudio"] as const) {
+          if (typeof a[name] === "boolean") {
+            speech[name] = a[name];
+          }
+        }
+        if (typeof a.localModel === "string") {
+          speech.localModel = a.localModel;
+        }
+        for (const name of ["source", "baseUrl", "model", "language", "device"] as const) {
+          if (typeof a[name] === "string") {
+            speech[name] = a[name];
+          }
+        }
+        if (typeof a.key === "string") {
+          speech.hasKey = a.key !== "";
+        }
+        emit("speech-settings-changed");
+        return null;
+      }
+      case "speech_devices":
+        return ["Desk Microphone", "Headset"];
+      case "speech_download": {
+        const model = String(a.model ?? speech.localModel);
+        emit("speech-download", { received: 255_000_000, total: 510_000_000, stage: "model", error: null });
+        speech.downloaded.add(model);
+        emit("speech-settings-changed");
+        return null;
+      }
+      case "speech_remove_model": {
+        speech.downloaded.delete(String(a.model ?? speech.localModel));
+        emit("speech-settings-changed");
+        return null;
+      }
+      case "speech_start": {
+        if (speech.session) {
+          throw new Error("a recording is already running");
+        }
+        speech.count += 1;
+        speech.session = {
+          sessionId: `speech-${speech.count}`,
+          noteId: typeof a.noteId === "string" ? a.noteId : null,
+          purpose: String(a.purpose ?? "memo"),
+        };
+        emit("speech-state", { recording: true, ...speech.session });
+        return speech.session.sessionId;
+      }
+      case "speech_stop": {
+        const ending = speech.session;
+        if (ending) {
+          speech.session = null;
+          emit("speech-state", { recording: false, ...ending });
+          const audio =
+            ending.purpose === "memo" && speech.keepAudio
+              ? ((seed.speech?.audio ?? null)?.replaceAll("{n}", ending.sessionId.replace("speech-", "")) ?? null)
+              : null;
+          const name = audio ? /\(memose-media\/([^)#]+)/.exec(audio)?.[1] : undefined;
+          if (name) {
+            speech.recordings.set(name, { heard: "heard words", text: "heard words" });
+          }
+          emit("speech-done", { ...ending, audio, error: null });
+        }
+        return null;
+      }
+      case "speech_request_microphone": {
+        if (speech.microphone === "unknown") {
+          speech.microphone = "granted";
+        }
+        emit("speech-settings-changed");
+        return { access: speech.microphone, borrowed: false };
+      }
+      case "speech_open_privacy":
+        return null;
+      case "recordings_info": {
+        const names = Array.isArray(a.names) ? (a.names as string[]) : [];
+        return names.flatMap((name) => {
+          const info = speech.recordings.get(name);
+          return info ? [{ name, ...info }] : [];
+        });
+      }
+      case "recording_set_text": {
+        const name = String(a.name ?? "");
+        const info = speech.recordings.get(name) ?? { heard: "", text: "" };
+        speech.recordings.set(name, { ...info, text: String(a.text ?? "") });
+        return null;
+      }
+      case "recording_transcribe":
+        return seed.speech?.transcribe ?? "";
+      case "speech_polish": {
+        if (seed.speech?.polishDelayMs) {
+          await new Promise((resolve) => setTimeout(resolve, seed.speech?.polishDelayMs));
+        }
+        if (Number(a.level) <= 1) {
+          return String(a.dictated ?? "");
+        }
+        const replies = seed.speech?.polishReplies;
+        if (replies) {
+          // "dictated|later" answers a pass that also saw what was said after the text.
+          const later = String(a.later ?? "");
+          const withLater = later ? replies[`${String(a.dictated ?? "")}|${later}`] : undefined;
+          return withLater ?? replies[String(a.dictated ?? "")] ?? String(a.dictated ?? "");
+        }
+        return seed.speech?.polishReply ?? String(a.dictated ?? "");
       }
       case "save_settings": {
         if (typeof a.baseUrl === "string") {

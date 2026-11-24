@@ -87,7 +87,7 @@ pub(super) async fn current(
     }
 }
 
-/// Reads the limits from the server. Errors only when the server cannot be reached.
+/// Reads the limits from the server. Errors when the server cannot be reached or answers with a failure.
 pub async fn fetch(
     http: &reqwest::Client,
     base: &str,
@@ -125,16 +125,34 @@ pub async fn fetch(
     Ok(ServerLimits::FALLBACK)
 }
 
+/// `None` means the server does not have this endpoint or does not show it to this user. Any other failure is an error,
+/// so a server that is restarting or refusing the token does not look like one without limits.
 async fn get_json(
     http: &reqwest::Client,
     url: &str,
     token: &str,
 ) -> Result<Option<Value>, AppError> {
     let response = http.get(url).bearer_auth(token).send().await?;
-    if response.status() != StatusCode::OK {
+    let status = response.status();
+    if status == StatusCode::OK {
+        return Ok(response.json::<Value>().await.ok());
+    }
+    if matches!(
+        status,
+        StatusCode::NOT_FOUND
+            | StatusCode::GONE
+            | StatusCode::METHOD_NOT_ALLOWED
+            | StatusCode::NOT_IMPLEMENTED
+            | StatusCode::BAD_REQUEST
+            | StatusCode::UNAUTHORIZED
+            | StatusCode::FORBIDDEN
+    ) {
         return Ok(None);
     }
-    Ok(response.json::<Value>().await.ok())
+    Err(AppError::Memos {
+        status: status.as_u16(),
+        body: "limit probe failed".into(),
+    })
 }
 
 fn user_name(me: &Value) -> Option<&str> {

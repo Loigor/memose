@@ -9,6 +9,43 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 
 type ResizeDir = "w" | "e" | "n" | "s" | "nw" | "ne" | "sw" | "se";
 
+// The card sits inside a transparent shadow gutter: body padding in shell.css,
+// CARD_PAD_* in window_ctl. Resize bands hug the card edge instead of filling
+// the gutter, so they stay off the top bar and off memos snapped next to this one.
+const CARD_INSET_X = 24;
+const CARD_INSET_TOP = 24;
+const CARD_INSET_BOTTOM = 32;
+const EDGE_OUT = 10;
+const EDGE_IN = 3;
+const CORNER = 16;
+
+// A press on a top-bar button, or anywhere on a memo that is not selected,
+// becomes a memo drag once it travels this far; otherwise it is a click.
+const PRESS_SLOP = 4;
+// A press this soon after the window took focus is the press that selected it.
+const SELECT_PRESS_MS = 250;
+const HEADER = "#card > header, .stack-note > header";
+const HEADER_POPOVERS =
+  "#audience-pop, #color-pop, #format-pop, .audience-pop, .color-pop, .format-pop, header.compact-tools .editor-tools";
+// Left alone on an unselected memo: these act on press or own their own drag.
+const PRESS_KEEP =
+  "input, select, audio, video, .media, .media-audio, .file-attachment, #media-context-menu, .resize-handle, #md-toolbar, .md-toolbar, #color-pop, #audience-pop, #format-pop, .color-pop, .audience-pop, .format-pop";
+const PRESS_CONTROL = "button, a, textarea, summary, label, [role='button'], .md-tag";
+const PRESS_TEXT = ".md-lines, #preview, .stack-preview";
+
+type Press = {
+  pointerId: number;
+  x: number;
+  y: number;
+  start: (event: PointerEvent) => void;
+  caretHost: HTMLElement | null;
+};
+
+type CaretDocument = Document & {
+  caretPositionFromPoint?(x: number, y: number): { offsetNode: Node; offset: number } | null;
+  caretRangeFromPoint?(x: number, y: number): Range | null;
+};
+
 type ScreenEdgeCue = {
   left: number | null;
   right: number | null;
@@ -103,34 +140,45 @@ export function mountChrome(ctx: StackCtx) {
         return dir;
       }
     }
-    const w = window.innerWidth;
-    const h = window.innerHeight;
-    const x = event.clientX;
-    const y = event.clientY;
-    const nearTop = y <= 24;
-    const nearBottom = h - y <= 48;
-    if (nearTop && w - x <= 44) {
-      return "ne";
+    return resizeZoneAt(event.clientX, event.clientY, window.innerWidth, window.innerHeight);
+  }
+
+  function resizeZoneAt(x: number, y: number, w: number, h: number): ResizeDir | null {
+    const left = CARD_INSET_X;
+    const right = w - CARD_INSET_X;
+    const top = CARD_INSET_TOP;
+    const bottom = h - CARD_INSET_BOTTOM;
+    const outside = x < left - EDGE_OUT || x > right + EDGE_OUT || y < top - EDGE_OUT || y > bottom + EDGE_OUT;
+    if (outside) {
+      return null;
     }
-    if (nearTop && x <= 44) {
+    const cornerLeft = x <= left - EDGE_OUT + CORNER;
+    const cornerRight = x >= right + EDGE_OUT - CORNER;
+    const cornerTop = y <= top - EDGE_OUT + CORNER;
+    const cornerBottom = y >= bottom + EDGE_OUT - CORNER;
+    if (cornerTop && cornerLeft) {
       return "nw";
     }
-    if (y <= 24 && x > 44 && w - x > 44) {
-      return "n";
+    if (cornerTop && cornerRight) {
+      return "ne";
     }
-    if (nearBottom && w - x <= 44) {
-      return "se";
-    }
-    if (nearBottom && x <= 44) {
+    if (cornerBottom && cornerLeft) {
       return "sw";
     }
-    if (h - y <= 40 && x > 44 && w - x > 44) {
+    if (cornerBottom && cornerRight) {
+      return "se";
+    }
+    // The top band stops at the card border: the header just below it drags the memo.
+    if (y <= top + 1) {
+      return "n";
+    }
+    if (y >= bottom - EDGE_IN) {
       return "s";
     }
-    if (y >= 24 && x <= 30) {
+    if (x <= left + EDGE_IN) {
       return "w";
     }
-    if (y >= 24 && w - x <= 30) {
+    if (x >= right - EDGE_IN) {
       return "e";
     }
     return null;
@@ -187,7 +235,197 @@ export function mountChrome(ctx: StackCtx) {
       return;
     }
     event.preventDefault();
+    beginWindowDrag();
+  }
+
+  function beginWindowDrag() {
+    if (!inTauri() || isPreviewWindow() || ctx.pointer.sectionLift !== null) {
+      return;
+    }
     void invoke("begin_memo_drag", { label: getCurrentWindow().label });
+  }
+
+  let press: Press | null = null;
+  let swallowClick = false;
+  let holdMouseDown = false;
+  let focusedAt = 0;
+
+  /** A top-bar button (not one inside a popover) that also drags the memo. */
+  function headerControl(target: EventTarget | null): HTMLElement | null {
+    if (!(target instanceof Element) || target.closest(HEADER_POPOVERS) || !target.closest(HEADER)) {
+      return null;
+    }
+    return target.closest<HTMLElement>("button");
+  }
+
+  /** Start `start` once this press travels past the slop; a shorter press stays a click. */
+  function armPressDrag(
+    event: PointerEvent,
+    start: (event: PointerEvent) => void,
+    caretHost: HTMLElement | null = null,
+  ) {
+    press = { pointerId: event.pointerId, x: event.clientX, y: event.clientY, start, caretHost };
+  }
+
+  /** In pinned mode, a memo that is not the active window. */
+  function memoUnselected(): boolean {
+    if (!ctx.deps.pinnedNoteId) {
+      return false;
+    }
+    return !document.hasFocus() || performance.now() - focusedAt < SELECT_PRESS_MS;
+  }
+
+  function collapseSelection() {
+    const active = document.activeElement;
+    if (active instanceof HTMLTextAreaElement || active instanceof HTMLInputElement) {
+      const at = active.selectionStart ?? 0;
+      active.setSelectionRange(at, at);
+      return;
+    }
+    const selection = window.getSelection();
+    if (selection && !selection.isCollapsed) {
+      selection.collapseToStart();
+    }
+  }
+
+  /** The click that the held press did not make: focus the text and put the caret under the pointer. */
+  function placeCaretAt(host: HTMLElement, x: number, y: number) {
+    host.focus({ preventScroll: true });
+    const doc = document as CaretDocument;
+    let range: Range | null = null;
+    if (doc.caretPositionFromPoint) {
+      const position = doc.caretPositionFromPoint(x, y);
+      if (position) {
+        range = document.createRange();
+        range.setStart(position.offsetNode, position.offset);
+        range.collapse(true);
+      }
+    } else if (doc.caretRangeFromPoint) {
+      range = doc.caretRangeFromPoint(x, y);
+    }
+    if (!range || !host.contains(range.startContainer)) {
+      return;
+    }
+    const selection = window.getSelection();
+    selection?.removeAllRanges();
+    selection?.addRange(range);
+  }
+
+  /** An unselected pinned memo moves from anywhere; a press without travel still clicks. */
+  function armUnselectedPress(event: PointerEvent) {
+    if (event.button !== 0 || !memoUnselected() || !inTauri() || isPreviewWindow()) {
+      return;
+    }
+    const target = event.target;
+    if (!(target instanceof Element) || target.closest(HEADER) || target.closest(PRESS_KEEP)) {
+      return;
+    }
+    if (resizeZone(event) || pointerOnScrollbar(event)) {
+      return;
+    }
+    if (target.closest(PRESS_CONTROL)) {
+      armPressDrag(event, beginWindowDrag);
+      return;
+    }
+    if (target.closest(PRESS_TEXT)) {
+      const host = editingHost(target);
+      armPressDrag(
+        event,
+        beginWindowDrag,
+        host instanceof HTMLElement && !(host instanceof HTMLTextAreaElement) ? host : null,
+      );
+      // Hold the caret and selection until the press shows it is a click.
+      holdMouseDown = true;
+    }
+  }
+
+  function wirePressDrag() {
+    // The window taking focus, not an element in it.
+    window.addEventListener("focus", (event) => {
+      if (event.target === window) {
+        focusedAt = performance.now();
+      }
+    });
+    window.addEventListener(
+      "pointerdown",
+      (event) => {
+        press = null;
+        swallowClick = false;
+        holdMouseDown = false;
+        armUnselectedPress(event);
+      },
+      true,
+    );
+    // After the press that selected the memo, the next one (a double-click) is ordinary.
+    window.addEventListener(
+      "pointerup",
+      () => {
+        focusedAt = 0;
+      },
+      true,
+    );
+    window.addEventListener(
+      "mousedown",
+      (event) => {
+        if (holdMouseDown && event.button === 0) {
+          event.preventDefault();
+        }
+        holdMouseDown = false;
+      },
+      true,
+    );
+    window.addEventListener(
+      "pointermove",
+      (event) => {
+        if (!press || event.pointerId !== press.pointerId) {
+          return;
+        }
+        if ((event.buttons & 1) === 0) {
+          press = null;
+          return;
+        }
+        if (Math.hypot(event.clientX - press.x, event.clientY - press.y) < PRESS_SLOP) {
+          return;
+        }
+        const { start } = press;
+        press = null;
+        swallowClick = true;
+        collapseSelection();
+        start(event);
+      },
+      true,
+    );
+    window.addEventListener(
+      "pointerup",
+      (event) => {
+        const held = press;
+        press = null;
+        if (held?.caretHost && event.pointerId === held.pointerId && held.caretHost.isConnected) {
+          placeCaretAt(held.caretHost, event.clientX, event.clientY);
+        }
+      },
+      true,
+    );
+    window.addEventListener(
+      "pointercancel",
+      () => {
+        press = null;
+      },
+      true,
+    );
+    window.addEventListener(
+      "click",
+      (event) => {
+        if (!swallowClick) {
+          return;
+        }
+        // The press moved the memo; the button under it was not clicked.
+        swallowClick = false;
+        event.preventDefault();
+        event.stopImmediatePropagation();
+      },
+      true,
+    );
   }
 
   function typingNote(): boolean {
@@ -275,6 +513,7 @@ export function mountChrome(ctx: StackCtx) {
   }
 
   function wireChrome() {
+    wirePressDrag();
     window.addEventListener(
       "pointerdown",
       (event) => {
@@ -307,7 +546,14 @@ export function mountChrome(ctx: StackCtx) {
     );
     const hostHeader = document.querySelector<HTMLElement>("#card header");
     hostHeader?.addEventListener("pointerdown", (event) => {
-      if (event.button !== 0 || dragBlocked(event.target)) {
+      if (event.button !== 0) {
+        return;
+      }
+      if (headerControl(event.target)) {
+        armPressDrag(event, beginWindowDrag);
+        return;
+      }
+      if (dragBlocked(event.target)) {
         return;
       }
       startWindowDrag(event);
@@ -523,5 +769,5 @@ export function mountChrome(ctx: StackCtx) {
     }
   }
 
-  return { dragBlocked, startWindowDrag, wireChrome };
+  return { armPressDrag, dragBlocked, headerControl, startWindowDrag, wireChrome };
 }

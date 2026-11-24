@@ -1,5 +1,12 @@
 import { memoUsesCoder, paintFontStep } from "../editor/editor-field";
-import { paintSurface, paintThemeButton, paperAt, type ThemeName } from "../look/memo-chrome";
+import {
+  paintHueTrack,
+  paintSurface,
+  paintThemeButton,
+  paperAt,
+  readHueSlider,
+  type ThemeName,
+} from "../look/memo-chrome";
 import { toggleLanguageList } from "../look/language-menu";
 import { hueSwatches, onHueSwatches } from "../look/swatches";
 import type { SectionState, StackCtx } from "./context";
@@ -81,7 +88,7 @@ export function mountLook(ctx: StackCtx) {
     });
   }
 
-  function setSectionHue(section: HTMLElement, state: SectionState, hue: number) {
+  function setSectionHue(section: HTMLElement, state: SectionState, hue: number | null) {
     if (sectionTheme(state) === "dark") {
       state.hueDark = hue;
     } else {
@@ -115,9 +122,10 @@ export function mountLook(ctx: StackCtx) {
     const add = section.querySelector<HTMLButtonElement>(".hue-add");
     const slider = section.querySelector<HTMLInputElement>(".hue-slider");
     if (add && slider) {
-      const hue = Number(slider.value);
-      add.disabled = swatches.length >= 6 || swatches.includes(hue);
+      const hue = current ?? readHueSlider(slider);
+      add.disabled = hue == null || swatches.length >= 6 || swatches.includes(hue);
       slider.style.setProperty("--thumb", paperAt(theme, current ?? hue));
+      paintHueTrack(slider, (at) => paperAt(theme, at));
     }
   }
   onHueSwatches(() => {

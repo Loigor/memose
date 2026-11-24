@@ -569,6 +569,9 @@ pub fn begin_memo_drag(app: AppHandle, label: String) {
     if let Ok(mut parked) = parks().lock() {
         parked.remove(&label);
     }
+    if let Ok(mut sent) = strip_cursors().lock() {
+        sent.clear();
+    }
     let Some(window) = app.get_webview_window(&label) else {
         return;
     };
@@ -625,8 +628,19 @@ pub fn begin_memo_drag(app: AppHandle, label: String) {
                                 y = snapped.1;
                             }
                         }
+                        #[cfg(target_os = "macos")]
+                        if let Some(floor) = card_top_floor(
+                            &app2,
+                            &window,
+                            cursor.x.round() as i32,
+                            cursor.y.round() as i32,
+                        ) {
+                            y = y.max(floor);
+                        }
                         if (x, y) != prev_pos {
                             let _ = window.set_position(PhysicalPosition::new(x, y));
+                            // Send the cue with the move, not after the window reports it.
+                            publish_screen_edges_at(&app2, &window, x, y);
                             next_pos = (x, y);
                         }
                     }
@@ -668,6 +682,20 @@ pub fn begin_memo_drag(app: AppHandle, label: String) {
     });
 }
 
+/// macOS: the card may meet the menu bar, but not slide under it where its
+/// header could not be grabbed again.
+#[cfg(target_os = "macos")]
+fn card_top_floor(
+    app: &AppHandle,
+    window: &WebviewWindow,
+    cursor_x: i32,
+    cursor_y: i32,
+) -> Option<i32> {
+    let scale = window.scale_factor().ok()?;
+    let monitor = monitor_containing(app, cursor_x, cursor_y)?;
+    Some(monitor.work_area().position.y - (CARD_PAD_TOP * scale).round() as i32)
+}
+
 pub fn end_memo_drag(app: &AppHandle, label: &str) {
     finish_memo_drag(app, label);
 }
@@ -679,6 +707,9 @@ fn finish_memo_drag(app: &AppHandle, label: &str) {
         .unwrap_or(false);
     let note_id = label.strip_prefix("pin-");
     if let Some(guest_id) = note_id {
+        if let Ok(mut hosts) = drag_hosts().lock() {
+            hosts.remove(guest_id);
+        }
         clear_tab_aim(app, guest_id);
         if let Some(aim) = stack_aims()
             .lock()
@@ -719,8 +750,48 @@ fn clear_aim(app: &AppHandle, guest_id: &str) {
     }
 }
 
+/// Memos a dragged memo may stack onto. Looked up once per drag so the drag
+/// loop does not query the database on every tick.
+fn drag_hosts() -> &'static Mutex<HashMap<String, HashSet<String>>> {
+    static HOSTS: LazyLock<Mutex<HashMap<String, HashSet<String>>>> =
+        LazyLock::new(|| Mutex::new(HashMap::new()));
+    &HOSTS
+}
+
+fn stack_hosts_for(app: &AppHandle, guest_id: &str) -> HashSet<String> {
+    if let Some(hosts) = drag_hosts()
+        .lock()
+        .ok()
+        .and_then(|hosts| hosts.get(guest_id).cloned())
+    {
+        return hosts;
+    }
+    let db = app.state::<AppState>().db.clone();
+    let hosts: HashSet<String> = app
+        .webview_windows()
+        .into_keys()
+        .filter_map(|label| label.strip_prefix("pin-").map(str::to_string))
+        .filter(|id| id != guest_id && stack_host_allowed(&db, guest_id, id))
+        .collect();
+    if let Ok(mut cache) = drag_hosts().lock() {
+        cache.insert(guest_id.to_string(), hosts.clone());
+    }
+    hosts
+}
+
+fn stack_host_allowed(db: &crate::notes::Db, guest_id: &str, id: &str) -> bool {
+    let guest_already = db
+        .get(id)
+        .ok()
+        .flatten()
+        .and_then(|note| note.stack_host)
+        .is_some();
+    !guest_already && !chain_contains(db, guest_id, id)
+}
+
 fn arm_stack_attach(app: &AppHandle, guest_id: &str, window: &WebviewWindow) {
-    let target = stack_target(app, guest_id, window);
+    let hosts = stack_hosts_for(app, guest_id);
+    let target = stack_target(app, guest_id, window, Some(&hosts));
     let cursor = app
         .cursor_position()
         .ok()
@@ -802,7 +873,22 @@ fn pin_strips(app: &AppHandle) -> Vec<WebviewWindow> {
         .collect()
 }
 
+type StripCursor = Option<(i32, i32)>;
+
+fn strip_cursors() -> &'static Mutex<HashMap<String, StripCursor>> {
+    static SENT: LazyLock<Mutex<HashMap<String, StripCursor>>> =
+        LazyLock::new(|| Mutex::new(HashMap::new()));
+    &SENT
+}
+
+/// The drag loop runs at ~80 Hz; only tell a strip when its cursor changed.
 fn emit_strip_cursor(window: &WebviewWindow, local: Option<(i32, i32)>) {
+    if let Ok(mut sent) = strip_cursors().lock() {
+        if sent.get(window.label()) == Some(&local) {
+            return;
+        }
+        sent.insert(window.label().to_string(), local);
+    }
     let _ = window.emit_to(window.label(), "window-cursor", local);
 }
 
@@ -1006,7 +1092,7 @@ fn attach_if_covering(
     preferred_host: Option<&str>,
 ) -> bool {
     let Some(root_id) =
-        stack_target(app, guest_id, window).or_else(|| preferred_host.map(str::to_string))
+        stack_target(app, guest_id, window, None).or_else(|| preferred_host.map(str::to_string))
     else {
         return false;
     };
@@ -1071,7 +1157,12 @@ fn card_logical_height(window: &WebviewWindow) -> i32 {
     (card.max(1) as f64 / scale).round() as i32
 }
 
-fn stack_target(app: &AppHandle, guest_id: &str, _window: &WebviewWindow) -> Option<String> {
+fn stack_target(
+    app: &AppHandle,
+    guest_id: &str,
+    _window: &WebviewWindow,
+    hosts: Option<&HashSet<String>>,
+) -> Option<String> {
     let db = app.state::<AppState>().db.clone();
     let cursor = app
         .cursor_position()
@@ -1085,16 +1176,11 @@ fn stack_target(app: &AppHandle, guest_id: &str, _window: &WebviewWindow) -> Opt
         if id == guest_id || !other.is_visible().unwrap_or(false) {
             continue;
         }
-        if db
-            .get(id)
-            .ok()
-            .flatten()
-            .and_then(|note| note.stack_host)
-            .is_some()
-        {
-            continue;
-        }
-        if chain_contains(&db, guest_id, id) {
+        let allowed = match hosts {
+            Some(hosts) => hosts.contains(id),
+            None => stack_host_allowed(&db, guest_id, id),
+        };
+        if !allowed {
             continue;
         }
         let Ok(other_pos) = other.outer_position() else {
@@ -2008,18 +2094,27 @@ pub fn sync_screen_edges(app: &AppHandle, label: &str) {
 
 pub(super) fn publish_screen_edges(app: &AppHandle, window: &WebviewWindow) {
     // Updating the cue on each hover-slide step makes the gradient ride with the memo.
-    if gliding()
-        .lock()
-        .ok()
-        .is_some_and(|gliding| gliding.contains_key(window.label()))
+    // While dragging, the drag loop sends it with each step; a late move report
+    // from the window would put it one step back.
+    if drag_active(window.label())
+        || gliding()
+            .lock()
+            .ok()
+            .is_some_and(|gliding| gliding.contains_key(window.label()))
     {
         return;
     }
-    let (Ok(position), Ok(size), Ok(scale)) = (
-        window.outer_position(),
-        window.outer_size(),
-        window.scale_factor(),
-    ) else {
+    let Ok(position) = window.outer_position() else {
+        return;
+    };
+    publish_screen_edges_at(app, window, position.x, position.y);
+}
+
+/// Publish the cue for the window at `x, y`, which may be a position just set
+/// and not yet reported back by the window.
+fn publish_screen_edges_at(app: &AppHandle, window: &WebviewWindow, x: i32, y: i32) {
+    let position = PhysicalPosition::new(x, y);
+    let (Ok(size), Ok(scale)) = (window.outer_size(), window.scale_factor()) else {
         return;
     };
     let cue = monitor_overlapping(

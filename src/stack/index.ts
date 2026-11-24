@@ -3,6 +3,7 @@ import type { ZoomKey } from "../editor/font-size";
 import { restoreCaret } from "../editor/history";
 import { resizeAllBlockTextareas } from "../editor/textarea";
 import { darkHue, lightHue } from "../look/look";
+import { writeHueSlider } from "../look/memo-chrome";
 import type { MediaNoteMutator } from "../media/media-dnd";
 import { mountAudience } from "./audience";
 import { mountChrome } from "./chrome";
@@ -24,6 +25,8 @@ export type StackController = {
   setHostCollapsedFlag(collapsed: boolean): void;
   load(): Promise<void>;
   focusNote(id: string): boolean;
+  /** Whether this window shows the memo, as host or stacked guest. */
+  showsNote(id: string): boolean;
   repaintAudiences(): void;
   applyEditorChrome(): void;
   rerenderEditors(): void;
@@ -73,7 +76,7 @@ export function createStackController(deps: StackDeps): StackController {
         apply(hue: number) {
           const slider = target.section.querySelector<HTMLInputElement>(".hue-slider");
           if (slider) {
-            slider.value = String(hue);
+            writeHueSlider(slider, hue);
           }
           look.setSectionHue(target.section, target.state, hue);
         },
@@ -84,6 +87,7 @@ export function createStackController(deps: StackDeps): StackController {
     paintChrome: () => layout.paintChrome(),
     setHostCollapsedFlag: (collapsed) => layout.setHostCollapsedFlag(collapsed),
     load: () => sections.loadStack(),
+    showsNote: (id) => id === ctx.deps.pinnedNoteId || ctx.notes.has(id),
     focusNote(id) {
       const section = ctx.dom.stack?.querySelector<HTMLElement>(`.stack-note[data-id="${CSS.escape(id)}"]`);
       const state = ctx.notes.get(id);

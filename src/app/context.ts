@@ -6,6 +6,15 @@ export type AppMode = {
   kind: "composer" | "pinned" | "preview";
   pinnedNoteId: string;
   pinnedThemeHint: ThemeName | null;
+  /** App theme and the memo's look, handed to a pinned window before its first frame. */
+  appThemeHint: ThemeName | null;
+  lookHint: LookHint | null;
+};
+
+export type LookHint = {
+  hueLight: number | null;
+  hueDark: number | null;
+  opacity: number;
 };
 
 export type AppDom = {

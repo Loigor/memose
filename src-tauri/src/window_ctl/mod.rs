@@ -1,7 +1,9 @@
 mod composer;
 mod drag;
 mod geom;
+mod mac_frame;
 mod pin;
+mod stacking;
 
 pub use composer::{
     apply_composer_size, attach, dismiss_composer, hide_composer, hide_memos, show_composer,
@@ -360,6 +362,17 @@ fn schedule_resign(app: &AppHandle) {
     });
 }
 
+/// True while a recording writes into the window `label`. That window is never hidden.
+pub(super) fn recording_in(app: &AppHandle, label: &str) -> bool {
+    crate::speech::recording_window(&app.state::<AppState>()).as_deref() == Some(label)
+}
+
+/// The pinned memo a running recording writes into, when it is one.
+pub(super) fn recording_pin(app: &AppHandle) -> Option<String> {
+    crate::speech::recording_window(&app.state::<AppState>())
+        .and_then(|label| label.strip_prefix("pin-").map(str::to_string))
+}
+
 fn any_window_focused(app: &AppHandle) -> bool {
     app.webview_windows()
         .values()
@@ -539,8 +552,13 @@ fn apply_app_icon(app: &AppHandle, window: &WebviewWindow) {
 pub(super) fn style_desktop_window(app: &AppHandle, window: &WebviewWindow, pin_like: bool) {
     let skip = !show_in_switcher(app);
     let _ = window.set_skip_taskbar(skip);
+    mac_frame::allow_above_menu_bar(window);
     if pin_like {
         let _ = window.set_always_on_top(pinned_always_on_top(app));
+    }
+    if is_pin_strip(window.label()) {
+        // Setting always-on-top puts the strip back at the memos' level.
+        stacking::raise_strip(window, pinned_always_on_top(app));
     }
     apply_app_icon(app, window);
 }

@@ -17,7 +17,10 @@ import {
   type DiffPart,
   type LineRange,
 } from "../editor/line-diff";
+import { joinDictation } from "../editor/dictation-span";
+import { fieldSourceText } from "../editor/editor-field";
 import { isOfflinePrivate } from "../look/visibility";
+import { speechAvailable, startSpeech, stopSpeech, watchSpeech } from "./speech";
 
 export type AiMode = "auto" | "ask" | "edit";
 
@@ -36,6 +39,7 @@ export type AiSettings = {
   llmLocal: boolean;
   privateOkHost: string;
   presets: AiPreset[];
+  defaultPresets: AiPreset[];
 };
 
 export type ChatEntry = {
@@ -52,6 +56,8 @@ export type ChatEntry = {
   selection: boolean;
   startedAt: number;
   finishedAt: number | null;
+  /** Ids of the changes taken from a proposed edit, once it is applied. */
+  accepted?: number[];
 };
 
 /** The memo a bubble belongs to. */
@@ -60,6 +66,8 @@ export type LlmTarget = {
   host: HTMLElement;
   /** Id of the memo shown now. Empty for a memo that is not saved yet. */
   noteId(): string | null;
+  /** Saves a new memo if needed and returns its id, so its chat is not shared with other new memos. */
+  ensureNoteId(): Promise<string | null>;
   title(): string;
   text(): string;
   /** Replaces the memo text as one undo step. */
@@ -93,6 +101,16 @@ async function loadSettings(): Promise<AiSettings | null> {
     paint();
   }
   return settings;
+}
+
+/** The server limit can change while the app runs, so it is read again when a bubble opens. */
+async function loadContentLimit() {
+  try {
+    const general = await invoke<{ memoContentLimit?: number }>("get_settings");
+    contentLimit = general.memoContentLimit ?? 0;
+  } catch {
+    // The last known limit stays.
+  }
 }
 
 function ensureListening() {
@@ -134,6 +152,8 @@ function seconds(from: number, to: number): string {
 
 type Picked = {
   text: string;
+  /** The source is one code block, picked with the tab on the block. */
+  code?: boolean;
   /** Memo lines of the selection, or null when its place in the memo is not clear. */
   range: LineRange | null;
 };
@@ -143,11 +163,12 @@ type ModelList = {
   ollama: boolean;
 };
 
-function scopeLabel(start: number | null, end: number | null): string {
+function scopeLabel(start: number | null, end: number | null, code = false): string {
   if (start == null || end == null) {
-    return "Selected text";
+    return code ? "Code block" : "Selected text";
   }
-  return start === end ? `Line ${start}` : `Lines ${start}–${end}`;
+  const lines = start === end ? `Line ${start}` : `Lines ${start}–${end}`;
+  return code ? `Code block, ${lines.toLowerCase()}` : lines;
 }
 
 type Decisions = {
@@ -181,6 +202,15 @@ export function mountLlmBubble(anchor: HTMLElement, target: LlmTarget): { close(
   let picked: Picked | null = null;
   let menuEl: HTMLElement | null = null;
   let presetWatch: ResizeObserver | null = null;
+  /** The log follows new content until the user scrolls up to read. */
+  let stuckToEnd = true;
+  let logWatch: ResizeObserver | null = null;
+  /** The spoken prompt being recorded, and the box it is written into. */
+  let voiceSession: string | null = null;
+  let voiceStarting = false;
+  let voiceSendAfter: AiMode | null = null;
+  let inputEl: HTMLTextAreaElement | null = null;
+  let micEl: HTMLButtonElement | null = null;
   const seen = new Set<string>();
   const asEdit = new Set<string>();
   const decisions = new Map<string, Decisions>();
@@ -279,13 +309,96 @@ export function mountLlmBubble(anchor: HTMLElement, target: LlmTarget): { close(
 
   const sourceNow = () => splitProtected(target.text(), isProtectedLine);
 
+  /** A folded section in the chat. */
+  function fold(label: string, content: HTMLElement, open = false): HTMLElement {
+    const details = el("details", "ai-fold");
+    details.open = open;
+    details.append(el("summary", "", label), content);
+    return details;
+  }
+
+  /** The model's reply as it came, for an edit. */
+  function modelOutput(entry: ChatEntry, open = false): HTMLElement {
+    return fold("Model output", el("div", "ai-answer ai-raw", entry.text), open);
+  }
+
+  /** A diff that shows what was decided. Changes in `accepted` are shown applied, the rest as kept. */
+  function decidedDiff(parts: DiffPart[], accepted: ReadonlySet<number>): HTMLElement {
+    const list = el("div", "ai-diff");
+    for (const part of parts) {
+      if (part.kind === "same") {
+        const lines = part.lines;
+        const shown = lines.length > 4 ? [lines[0], null, lines[lines.length - 1]] : lines;
+        for (const line of shown) {
+          list.append(
+            line === null
+              ? el("div", "ai-line ai-gap", `${lines.length - 2} unchanged lines`)
+              : el("div", "ai-line", line === "" ? " " : line),
+          );
+        }
+        continue;
+      }
+      const { hunk } = part;
+      const item = el("div", "ai-hunk");
+      item.dataset.decided = accepted.has(hunk.id) ? "accepted" : "rejected";
+      if (accepted.has(hunk.id)) {
+        // Both sides stay visible here, so the record shows what was replaced.
+        item.dataset.shown = "both";
+      }
+      for (const line of hunk.removed) {
+        item.append(el("div", "ai-line ai-removed", line === "" ? " " : line));
+      }
+      for (const line of hunk.added) {
+        item.append(el("div", "ai-line ai-added", line === "" ? " " : line));
+      }
+      list.append(item);
+    }
+    return list;
+  }
+
+  /** A proposed edit after it was applied or dismissed: a line, then the changes folded. */
+  function decidedBody(entry: ChatEntry): HTMLElement {
+    const box = el("div", "ai-diff-box");
+    const parts = diffLines(splitLines(entry.source), splitLines(entry.text));
+    const all = hunksOf(parts);
+    const taken = new Set(entry.status === "applied" ? (entry.accepted ?? all.map((hunk) => hunk.id)) : []);
+    const count = all.filter((hunk) => taken.has(hunk.id)).length;
+    const summary =
+      entry.status === "applied"
+        ? count === all.length
+          ? `Applied ${count} ${count === 1 ? "change" : "changes"}.`
+          : `Applied ${count} of ${all.length} changes.`
+        : "Changes dismissed.";
+    box.append(el("p", "ai-note", summary));
+    if (all.length > 0) {
+      box.append(
+        fold(entry.status === "applied" ? "Show changes" : "Show proposed changes", decidedDiff(parts, taken)),
+      );
+    }
+    box.append(modelOutput(entry));
+    return box;
+  }
+
+  /**
+   * Where the text a prompt was about sits in the memo now, or -1. New text written for an empty
+   * memo goes after whatever the memo holds now.
+   */
+  function placeOf(lines: string[], before: string[], lineStart: number | null): number {
+    if (before.length === 0) {
+      return lineStart == null ? lines.length : -1;
+    }
+    return locateBlock(lines, before, lineStart ? lineStart - 1 : 0);
+  }
+
   function diffBody(entry: ChatEntry): HTMLElement {
     const box = el("div", "ai-diff-box");
     const before = splitLines(entry.source);
     const parts: DiffPart[] = diffLines(before, splitLines(entry.text));
     const all = hunksOf(parts);
     if (all.length === 0) {
-      box.append(el("p", "ai-note", "The model suggested no changes."));
+      // The reply matched the memo, or was not a rewrite of it. Either way the words are shown.
+      box.append(el("p", "ai-note", "The model suggested no changes. Its reply:"));
+      box.append(el("div", "ai-answer", entry.text));
       return box;
     }
     let state = decisions.get(entry.id);
@@ -297,7 +410,7 @@ export function mountLlmBubble(anchor: HTMLElement, target: LlmTarget): { close(
 
     const finish = () => {
       const current = sourceNow();
-      const at = locateBlock(current.lines, before, entry.lineStart ? entry.lineStart - 1 : 0);
+      const at = placeOf(current.lines, before, entry.lineStart);
       if (at < 0) {
         notice = "The memo changed after this prompt was sent, so nothing was applied. Run the prompt again.";
         decisions.delete(entry.id);
@@ -316,7 +429,12 @@ export function mountLlmBubble(anchor: HTMLElement, target: LlmTarget): { close(
       decisions.delete(entry.id);
       asEdit.delete(entry.id);
       if (entry.status === "edit") {
-        void invoke("llm_mark", { noteId: entry.noteId, requestId: entry.id, status });
+        void invoke("llm_mark", {
+          noteId: entry.noteId,
+          requestId: entry.id,
+          status,
+          accepted: [...accepted],
+        });
       } else {
         notice = status === "applied" ? "Changes applied." : "";
         paintLog(false);
@@ -339,22 +457,6 @@ export function mountLlmBubble(anchor: HTMLElement, target: LlmTarget): { close(
       }),
       button("", accepted.size === 0 ? "Dismiss" : "Done", finish),
     );
-    box.append(bar);
-
-    const now = sourceNow();
-    const place = Math.max(0, locateBlock(now.lines, before, entry.lineStart ? entry.lineStart - 1 : 0));
-    const everything = new Set(all.map((hunk) => hunk.id));
-    const size = byteLength(applyToBlock(now.lines, place, before.length, parts, everything, now.kept));
-    if (contentLimit > 0 && size > contentLimit) {
-      box.append(
-        el(
-          "p",
-          "ai-warning",
-          `With every change the memo is ${formatKilobytes(size)}. This server accepts ${formatKilobytes(contentLimit)}, so it would stay on this computer until shortened.`,
-        ),
-      );
-    }
-
     const list = el("div", "ai-diff");
     for (const part of parts) {
       if (part.kind === "same") {
@@ -402,6 +504,23 @@ export function mountLlmBubble(anchor: HTMLElement, target: LlmTarget): { close(
       list.append(item);
     }
     box.append(list);
+    // The decision comes after the changes, where reading them ends.
+    box.append(bar);
+
+    const now = sourceNow();
+    const place = Math.max(0, placeOf(now.lines, before, entry.lineStart));
+    const everything = new Set(all.map((hunk) => hunk.id));
+    const size = byteLength(applyToBlock(now.lines, place, before.length, parts, everything, now.kept));
+    if (contentLimit > 0 && size > contentLimit) {
+      box.append(
+        el(
+          "p",
+          "ai-warning",
+          `With every change the memo is ${formatKilobytes(size)}. This server accepts ${formatKilobytes(contentLimit)}, so it would stay on this computer until shortened.`,
+        ),
+      );
+    }
+    box.append(modelOutput(entry));
     return box;
   }
 
@@ -449,13 +568,11 @@ export function mountLlmBubble(anchor: HTMLElement, target: LlmTarget): { close(
       body.append(button("", "Run again", () => send(entry.instruction, entry.mode)));
       return body;
     }
-    const text =
-      entry.status === "applied"
-        ? "Changes applied."
-        : entry.status === "dismissed"
-          ? "Changes dismissed."
-          : "Cancelled.";
-    body.append(el("p", "ai-note", text));
+    if (entry.status === "applied" || entry.status === "dismissed") {
+      body.append(decidedBody(entry));
+      return body;
+    }
+    body.append(el("p", "ai-note", "Cancelled."));
     return body;
   }
 
@@ -470,7 +587,7 @@ export function mountLlmBubble(anchor: HTMLElement, target: LlmTarget): { close(
         el(
           "p",
           "ai-empty",
-          "Ask about this memo or ask for a change. Answers stay here. Changes are shown for you to accept first.",
+          "Ask about this memo, ask for a change, or ask for new text. Answers stay here. Changes are shown for you to accept first.",
         ),
       );
     }
@@ -492,10 +609,32 @@ export function mountLlmBubble(anchor: HTMLElement, target: LlmTarget): { close(
     if (notice) {
       logEl.append(el("p", "ai-note ai-notice", notice));
     }
-    logEl.scrollTop = scroll ? logEl.scrollHeight : top;
+    if (scroll || stuckToEnd) {
+      scrollToEnd();
+    } else {
+      logEl.scrollTop = top;
+    }
   }
 
-  function send(instruction: string, mode: AiMode) {
+  /**
+   * Keeps the newest entry in view. The footer and the preset row settle a frame later and
+   * shrink the log, so the end is set again once the layout is done.
+   */
+  function scrollToEnd() {
+    stuckToEnd = true;
+    const log = logEl;
+    if (!log) {
+      return;
+    }
+    log.scrollTop = log.scrollHeight;
+    requestAnimationFrame(() => {
+      if (logEl === log && stuckToEnd) {
+        log.scrollTop = log.scrollHeight;
+      }
+    });
+  }
+
+  function send(instruction: string, mode: AiMode, consented = false) {
     const current = settings;
     const text = instruction.trim();
     if (!current || text === "") {
@@ -507,11 +646,15 @@ export function mountLlmBubble(anchor: HTMLElement, target: LlmTarget): { close(
       isOfflinePrivate(visibility) &&
       !current.llmLocal &&
       current.privateOkHost !== current.llmHost;
-    if (needsConsent && !pendingConsent) {
+    // Every path that sends text passes here. Only the Send button of the question below sets `consented`.
+    if (needsConsent && !consented) {
       pendingConsent = () => {
-        void invoke("save_ai_settings", { privateOkHost: current.llmHost }).catch(() => {});
-        current.privateOkHost = current.llmHost;
-        send(text, mode);
+        void invoke("save_ai_settings", { privateOkHost: current.llmHost })
+          .catch(() => {})
+          .then(() => {
+            current.privateOkHost = current.llmHost;
+            send(text, mode, true);
+          });
       };
       paintFoot();
       return;
@@ -537,30 +680,42 @@ export function mountLlmBubble(anchor: HTMLElement, target: LlmTarget): { close(
       // The place of the selection is unclear, so the whole memo is the source and the selection is a hint.
       request = `${text}\n\nThe request is about this part of the note:\n${picked.text}`;
     }
-    if (source.trim() === "") {
-      notice = "This memo has no text to send.";
+    // An empty memo is fine: the prompt then asks for new text. An empty selection is not.
+    if (lineStart != null && source.trim() === "") {
+      notice = "The selected lines have no text to send.";
       paintLog(true);
       paintFoot();
       return;
     }
     draftInstruction = "";
     const requestId = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
-    void invoke<ChatEntry>("llm_ask", {
-      requestId,
-      noteId: noteKey(),
-      title: target.title(),
-      instruction: request,
-      mode,
-      text: source,
-      context,
-      lineStart,
-      lineEnd,
-    }).catch((error: unknown) => {
-      notice = String(error);
-      if (isOpen()) {
-        paintLog(true);
-      }
-    });
+    const title = target.title();
+    void target
+      .ensureNoteId()
+      .then((noteId) => {
+        if (!noteId) {
+          throw new Error("Save the memo first.");
+        }
+        const sent = invoke<ChatEntry>("llm_ask", {
+          requestId,
+          noteId,
+          title,
+          instruction: request,
+          mode,
+          text: source,
+          context,
+          lineStart,
+          lineEnd,
+        });
+        void refresh(true);
+        return sent;
+      })
+      .catch((error: unknown) => {
+        notice = error instanceof Error ? error.message : String(error);
+        if (isOpen()) {
+          paintLog(true);
+        }
+      });
     paintFoot();
     void refresh(true);
   }
@@ -605,7 +760,9 @@ export function mountLlmBubble(anchor: HTMLElement, target: LlmTarget): { close(
     const form = el("form", "ai-composer");
     if (picked) {
       const scope = el("div", "ai-scope");
-      const label = picked.range ? scopeLabel(picked.range.start + 1, picked.range.end + 1) : "Selected text";
+      const label = picked.range
+        ? scopeLabel(picked.range.start + 1, picked.range.end + 1, picked.code)
+        : scopeLabel(null, null, picked.code);
       const preview = picked.text.replace(/\s+/g, " ").trim();
       scope.append(
         el("span", "ai-scope-label", label),
@@ -621,9 +778,11 @@ export function mountLlmBubble(anchor: HTMLElement, target: LlmTarget): { close(
     }
     const input = el("textarea", "ai-input");
     input.rows = 2;
-    input.placeholder = picked
-      ? "Ask about the selection, or ask for a change…"
-      : "Ask about this memo, or ask for a change…";
+    input.placeholder = picked?.code
+      ? "Ask about this code, or ask for a change…"
+      : picked
+        ? "Ask about the selection, or ask for a change…"
+        : "Ask about this memo, or ask for a change…";
     input.setAttribute("aria-label", "Prompt");
     input.value = draftInstruction;
     const fit = () => {
@@ -697,10 +856,71 @@ export function mountLlmBubble(anchor: HTMLElement, target: LlmTarget): { close(
     submit.type = "submit";
     submit.title = "Send (Enter)";
     submit.setAttribute("aria-label", "Send");
-    bar.append(mode, model, where, submit);
+    // A spoken prompt: the words land in the box, and nothing of the sound is kept.
+    const mic = button("ai-mic", "", () => {
+      if (voiceSession) {
+        stopSpeech();
+        return;
+      }
+      if (voiceStarting) {
+        return;
+      }
+      voiceStarting = true;
+      paintMic();
+      void startSpeech("prompt", null, {
+        onChunk(text) {
+          draftInstruction = joinDictation(draftInstruction, text);
+          if (inputEl) {
+            inputEl.value = draftInstruction;
+            inputEl.dispatchEvent(new Event("input"));
+          }
+        },
+        onLevel(level) {
+          micEl?.style.setProperty("--rec-level", level.toFixed(2));
+        },
+        onDone(done) {
+          voiceSession = null;
+          const sendMode = voiceSendAfter;
+          voiceSendAfter = null;
+          if (done.error) {
+            notice = done.error;
+            paintLog(true);
+          }
+          paintMic();
+          if (sendMode && draftInstruction.trim() !== "") {
+            send(draftInstruction, sendMode);
+          }
+        },
+      })
+        .then(
+          (id) => {
+            voiceSession = id;
+          },
+          (error: unknown) => {
+            notice = String(error);
+            paintLog(true);
+          },
+        )
+        .finally(() => {
+          voiceStarting = false;
+          paintMic();
+        });
+    });
+    mic.append(el("span", "rec-glyph"));
+    mic.hidden = !speechAvailable("prompt");
+    micEl = mic;
+    inputEl = input;
+    paintMic();
+    bar.append(mode, model, where, mic, submit);
     form.append(input, bar);
     form.addEventListener("submit", (event) => {
       event.preventDefault();
+      if (voiceSession) {
+        // The last words are still being turned into text. The prompt is sent when they arrive.
+        voiceSendAfter = draftMode;
+        stopSpeech();
+        return;
+      }
       send(input.value, draftMode);
     });
     form.addEventListener("mousedown", (event) => {
@@ -714,6 +934,21 @@ export function mountLlmBubble(anchor: HTMLElement, target: LlmTarget): { close(
       fit();
       input.focus();
     });
+  }
+
+  function paintMic() {
+    if (!micEl) {
+      return;
+    }
+    const on = voiceSession !== null || voiceStarting;
+    micEl.classList.toggle("rec-on", on);
+    const label = on ? "Stop recording the prompt" : "Speak the prompt";
+    micEl.title = label;
+    micEl.setAttribute("aria-label", label);
+    micEl.setAttribute("aria-pressed", String(on));
+    if (!on) {
+      micEl.style.removeProperty("--rec-level");
+    }
   }
 
   function closeMenu() {
@@ -810,7 +1045,7 @@ export function mountLlmBubble(anchor: HTMLElement, target: LlmTarget): { close(
     bubble.setAttribute("aria-label", "AI prompt");
     const header = target.host.querySelector<HTMLElement>(":scope > header");
     bubble.style.setProperty("--ai-top", `${(header?.offsetHeight ?? 36) + 2}px`);
-    for (const type of ["mousedown", "dblclick", "wheel"] as const) {
+    for (const type of ["mousedown", "pointerdown", "dblclick", "wheel"] as const) {
       bubble.addEventListener(type, (event) => {
         event.stopPropagation();
       });
@@ -831,6 +1066,19 @@ export function mountLlmBubble(anchor: HTMLElement, target: LlmTarget): { close(
     head.querySelector(".ai-close")?.setAttribute("aria-label", "Close AI prompt");
     jobsEl = el("div", "ai-jobs");
     logEl = el("div", "ai-log");
+    const log = logEl;
+    log.addEventListener("scroll", () => {
+      stuckToEnd = log.scrollHeight - log.scrollTop - log.clientHeight < 24;
+    });
+    // When the log gets smaller (the prompt box grows), the end stays in view.
+    logWatch?.disconnect();
+    logWatch = new ResizeObserver(() => {
+      if (stuckToEnd) {
+        log.scrollTop = log.scrollHeight;
+      }
+    });
+    logWatch.observe(log);
+    stuckToEnd = true;
     footEl = el("div", "ai-foot");
     bubble.append(head, jobsEl, logEl, footEl);
     target.host.append(bubble);
@@ -839,6 +1087,7 @@ export function mountLlmBubble(anchor: HTMLElement, target: LlmTarget): { close(
     paintLog(true);
     paintFoot();
     paintButton();
+    void loadContentLimit();
     void refresh(true);
   }
 
@@ -855,20 +1104,40 @@ export function mountLlmBubble(anchor: HTMLElement, target: LlmTarget): { close(
     menuEl = null;
     presetWatch?.disconnect();
     presetWatch = null;
+    logWatch?.disconnect();
+    logWatch = null;
     pendingConsent = null;
     picked = null;
+    inputEl = null;
+    micEl = null;
+    if (voiceSession) {
+      voiceSendAfter = null;
+      stopSpeech();
+    }
     paintButton();
   }
 
   // --- Selected text as the source of a prompt ---
 
+  /** The code block the pointer is over, when the tab stands for that block and not for a selection. */
+  let hoverCode: HTMLTextAreaElement | null = null;
+
   const float = button("ai-float", "AI", () => {
     const found = selectedText();
-    if (!found) {
+    if (found) {
+      picked = { text: found.text, range: resolveSelection(target.text(), found.text) };
+    } else if (hoverCode) {
+      const code = fieldSourceText(hoverCode);
+      const at = locateBlock(splitLines(target.text()), splitLines(code));
+      picked = {
+        text: code,
+        code: true,
+        range: at < 0 ? null : { start: at, end: at + splitLines(code).length - 1 },
+      };
+    } else {
       hideFloat();
       return;
     }
-    picked = { text: found.text, range: resolveSelection(target.text(), found.text) };
     hideFloat();
     if (isOpen()) {
       paintFoot();
@@ -877,18 +1146,59 @@ export function mountLlmBubble(anchor: HTMLElement, target: LlmTarget): { close(
     }
   });
   float.hidden = true;
-  float.title = "Ask the model about the selection";
-  float.setAttribute("aria-label", "Ask the model about the selection");
-  float.addEventListener("mousedown", (event) => {
-    event.preventDefault();
-    event.stopPropagation();
-  });
+  for (const type of ["mousedown", "pointerdown"] as const) {
+    float.addEventListener(type, (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+    });
+  }
   target.host.append(float);
   let pointer = { x: 0, y: 0 };
   let floatTimer: number | undefined;
 
   function hideFloat() {
     float.hidden = true;
+    hoverCode = null;
+  }
+
+  const describeFloat = (label: string) => {
+    float.title = label;
+    float.setAttribute("aria-label", label);
+  };
+
+  /** Puts the tab in the top right corner of a code block while the pointer is over it. */
+  function hoverFloat(event: MouseEvent) {
+    if (anchor.hidden || isOpen() || selectedText()) {
+      return;
+    }
+    const hit = event.target;
+    if (!(hit instanceof Element) || float.contains(hit)) {
+      return;
+    }
+    const field = hit.closest(".md-field");
+    const area = field?.querySelector<HTMLTextAreaElement>('textarea[data-kind="code"]') ?? null;
+    const inside = area !== null && target.selectionRoots().some((root) => root.contains(area));
+    if (!field || !area || !inside || area.value.trim() === "") {
+      if (hoverCode) {
+        hideFloat();
+      }
+      return;
+    }
+    if (hoverCode === area && !float.hidden) {
+      return;
+    }
+    hoverCode = area;
+    describeFloat("Ask the model about this code block");
+    const host = target.host.getBoundingClientRect();
+    const box = field.getBoundingClientRect();
+    const header = target.host.querySelector<HTMLElement>(":scope > header");
+    const top = (header?.offsetHeight ?? 36) + 2;
+    float.hidden = false;
+    // Left of the corner, where the preview keeps its copy button.
+    const x = box.right - host.left - float.offsetWidth - 34;
+    const y = box.top - host.top + 3;
+    float.style.left = `${Math.max(4, Math.min(x, host.width - float.offsetWidth - 6))}px`;
+    float.style.top = `${Math.max(top, Math.min(y, host.height - float.offsetHeight - 6))}px`;
   }
 
   function selectedText(): { text: string; rect: DOMRect | null } | null {
@@ -921,9 +1231,13 @@ export function mountLlmBubble(anchor: HTMLElement, target: LlmTarget): { close(
     }
     const found = selectedText();
     if (!found) {
-      hideFloat();
+      if (!hoverCode) {
+        hideFloat();
+      }
       return;
     }
+    hoverCode = null;
+    describeFloat("Ask the model about the selection");
     const host = target.host.getBoundingClientRect();
     const header = target.host.querySelector<HTMLElement>(":scope > header");
     const top = (header?.offsetHeight ?? 36) + 2;
@@ -939,16 +1253,28 @@ export function mountLlmBubble(anchor: HTMLElement, target: LlmTarget): { close(
     floatTimer = window.setTimeout(placeFloat, 140);
   }
 
-  document.addEventListener("selectionchange", scheduleFloat);
-  document.addEventListener("mouseup", (event) => {
-    pointer = { x: event.clientX, y: event.clientY };
-    scheduleFloat();
-  });
-  document.addEventListener("keyup", (event) => {
-    if (event.shiftKey || event.key.startsWith("Arrow")) {
+  // Listeners outside the memo end with it. Stack sections come and go while the window stays.
+  const life = new AbortController();
+  const until = { signal: life.signal };
+  document.addEventListener("selectionchange", scheduleFloat, until);
+  document.addEventListener(
+    "mouseup",
+    (event) => {
+      pointer = { x: event.clientX, y: event.clientY };
       scheduleFloat();
-    }
-  });
+    },
+    until,
+  );
+  document.addEventListener(
+    "keyup",
+    (event) => {
+      if (event.shiftKey || event.key.startsWith("Arrow")) {
+        scheduleFloat();
+      }
+    },
+    until,
+  );
+  document.addEventListener("mouseover", hoverFloat, until);
 
   // Escape closes the bubble before anything else in the memo reacts to it.
   window.addEventListener(
@@ -965,7 +1291,7 @@ export function mountLlmBubble(anchor: HTMLElement, target: LlmTarget): { close(
         close();
       }
     },
-    true,
+    { capture: true, signal: life.signal },
   );
   // A click on the memo outside the bubble closes it.
   document.addEventListener(
@@ -982,7 +1308,7 @@ export function mountLlmBubble(anchor: HTMLElement, target: LlmTarget): { close(
         close();
       }
     },
-    true,
+    { capture: true, signal: life.signal },
   );
 
   toggleEl.addEventListener("mousedown", (event) => {
@@ -996,15 +1322,30 @@ export function mountLlmBubble(anchor: HTMLElement, target: LlmTarget): { close(
     }
   });
 
-  settingsWatchers.add(paintAvailability);
-  chatWatchers.add(() => {
-    void refresh(true);
+  // The microphone button follows the recording settings while the bubble is open.
+  const unwatchSpeech = watchSpeech(() => {
+    if (micEl) {
+      micEl.hidden = !speechAvailable("prompt");
+    }
   });
+  const onChat = () => {
+    void refresh(true);
+  };
+  settingsWatchers.add(paintAvailability);
+  chatWatchers.add(onChat);
+  // A stack section is mounted after the settings were read, so it paints from what is known.
+  if (settings) {
+    paintAvailability();
+  }
   ensureListening();
   void settingsFlight?.then(() => refresh());
 
   // Follows the composer when it shows another memo, and keeps the running times moving.
   const timer = window.setInterval(() => {
+    if (!target.host.isConnected) {
+      destroy();
+      return;
+    }
     if (anchor.hidden) {
       return;
     }
@@ -1024,7 +1365,19 @@ export function mountLlmBubble(anchor: HTMLElement, target: LlmTarget): { close(
       paintJobs();
     }
   }, 1000);
-  window.addEventListener("pagehide", () => window.clearInterval(timer));
+  function destroy() {
+    window.clearInterval(timer);
+    window.clearTimeout(floatTimer);
+    life.abort();
+    settingsWatchers.delete(paintAvailability);
+    chatWatchers.delete(onChat);
+    unwatchSpeech();
+    presetWatch?.disconnect();
+    float.remove();
+    bubble?.remove();
+    bubble = null;
+  }
+  window.addEventListener("pagehide", destroy, until);
 
   return { close };
 }

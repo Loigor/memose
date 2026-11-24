@@ -63,7 +63,23 @@ pub(super) fn open_pinned_windows(app: &tauri::AppHandle) {
             return;
         }
     };
-    let active = active_pin_note_ids(app);
+    let mut active = active_pin_note_ids(app);
+    // The memo being dictated into goes along to the tab now shown, so it stays on screen.
+    if let Some(id) = super::recording_pin(app) {
+        if !active.contains(&id) && notes.iter().any(|note| note.id == id) {
+            let state = app.state::<AppState>();
+            if let Ok(tabs) = state.db.pin_tabs() {
+                if state
+                    .db
+                    .move_pinned_note_to_tab(&id, &tabs.active_id)
+                    .is_ok()
+                {
+                    active.insert(id);
+                    let _ = app.emit("pin-tabs-changed", ());
+                }
+            }
+        }
+    }
     let mut keep = HashSet::new();
     super::apply_switcher_policy(app);
     for note in notes {
@@ -270,10 +286,15 @@ pub fn close_pinned(app: &tauri::AppHandle, id: &str) {
 }
 
 pub(super) fn hide_pinned(app: &tauri::AppHandle) {
+    let recording = super::recording_pin(app);
     for (label, window) in app.webview_windows() {
         let Some(id) = label.strip_prefix("pin-") else {
             continue;
         };
+        // The memo being dictated into stays on screen, even with pinned memos turned off.
+        if recording.as_deref() == Some(id) {
+            continue;
+        }
         if window.is_visible().unwrap_or(false) {
             save_pin_frame(app, id, &window);
         }
@@ -312,22 +333,35 @@ fn open_pin_window(app: &tauri::AppHandle, id: &str) {
         return;
     }
     let id_js = serde_json::to_string(id).unwrap_or_else(|_| "\"\"".into());
-    let theme_js = match app
-        .state::<AppState>()
-        .db
-        .get(id)
-        .ok()
-        .flatten()
-        .and_then(|note| note.theme)
-        .as_deref()
-    {
+    // The page paints its first frame from these, before it can ask for the
+    // note, so a dark memo does not open as a light card.
+    let db = app.state::<AppState>().db.clone();
+    let note = db.get(id).ok().flatten();
+    let theme_js = match note.as_ref().and_then(|note| note.theme.as_deref()) {
         Some("dark") => "\"dark\"",
         Some("light") => "\"light\"",
         _ => "null",
     };
+    let app_theme_js = match db.get_meta(crate::notes::THEME).ok().flatten().as_deref() {
+        Some("dark") => "\"dark\"",
+        _ => "\"light\"",
+    };
+    let look_js = note
+        .as_ref()
+        .map(|note| {
+            serde_json::json!({
+                "hueLight": note.hue_light,
+                "hueDark": note.hue_dark,
+                "opacity": note.opacity,
+            })
+            .to_string()
+        })
+        .unwrap_or_else(|| "null".into());
     let script = format!(
         "globalThis.__memosePin={id_js};\
          globalThis.__memoseTheme={theme_js};\
+         globalThis.__memoseAppTheme={app_theme_js};\
+         globalThis.__memoseLook={look_js};\
          if(document.documentElement){{\
            document.documentElement.dataset.noteId={id_js};\
            document.documentElement.classList.add('pin-window');\
@@ -346,6 +380,9 @@ fn open_pin_window(app: &tauri::AppHandle, id: &str) {
             .resizable(true)
             .shadow(false)
             .visible(false)
+            // A press on a memo that is not the active window reaches the page,
+            // so it can be dragged or clicked without selecting it first.
+            .accept_first_mouse(true)
             .initialization_script(&script);
     #[cfg(target_os = "windows")]
     // A second DwmEnableBlurBehindWindow call aborts the process. This flag
@@ -369,6 +406,7 @@ fn open_pin_window(app: &tauri::AppHandle, id: &str) {
     let handle = app.clone();
     let accept_moves_at = Instant::now() + Duration::from_millis(250);
     window.on_window_event(move |event| match event {
+        WindowEvent::Focused(true) => super::stacking::raise_strips(&handle),
         WindowEvent::Focused(false) => {
             slide_back(&handle, &pin_label(&note_id));
             schedule_resign(&handle);

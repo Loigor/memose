@@ -54,6 +54,12 @@ impl Db {
                 remote_memo TEXT NOT NULL DEFAULT '',
                 filename TEXT NOT NULL DEFAULT ''
             );
+            CREATE TABLE IF NOT EXISTS recordings (
+                name TEXT PRIMARY KEY,
+                heard TEXT NOT NULL DEFAULT '',
+                text TEXT NOT NULL DEFAULT '',
+                created_at INTEGER NOT NULL
+            );
             ",
         )?;
         ensure_note_columns(&conn)?;
@@ -400,8 +406,8 @@ impl Db {
         coder: Option<bool>,
     ) -> Result<(), AppError> {
         let opacity = opacity.min(100);
-        let hue_light = hue_light.filter(|hue| *hue <= 359);
-        let hue_dark = hue_dark.filter(|hue| *hue <= 359);
+        let hue_light = hue_light.filter(|hue| *hue <= crate::notes::MAX_HUE);
+        let hue_dark = hue_dark.filter(|hue| *hue <= crate::notes::MAX_HUE);
         let stored = encode_swatches(swatches);
         let theme = match theme {
             Some("dark") => Some("dark"),
@@ -514,6 +520,44 @@ impl Db {
             )
             .optional()
             .map_err(AppError::from)
+        })
+    }
+
+    /// Remembers a recording made in the app. `heard` is what the recognizer gave.
+    pub fn save_recording(&self, name: &str, heard: &str) -> Result<(), AppError> {
+        self.with(|conn| {
+            conn.execute(
+                "INSERT INTO recordings (name, heard, text, created_at) VALUES (?1, ?2, ?2, ?3)
+                 ON CONFLICT(name) DO UPDATE SET heard = excluded.heard",
+                params![name, heard, now_ms()],
+            )?;
+            Ok(())
+        })
+    }
+
+    /// The text of a recording as it stands in the memo now.
+    pub fn set_recording_text(&self, name: &str, text: &str) -> Result<bool, AppError> {
+        self.with(|conn| {
+            Ok(conn.execute(
+                "UPDATE recordings SET text = ?2 WHERE name = ?1",
+                params![name, text],
+            )? > 0)
+        })
+    }
+
+    /// Known recordings among `names`: name, what was heard, and the text in the memo.
+    pub fn recordings(&self, names: &[String]) -> Result<Vec<(String, String, String)>, AppError> {
+        self.with(|conn| {
+            let mut stmt =
+                conn.prepare("SELECT name, heard, text FROM recordings WHERE name = ?1")?;
+            let mut found = Vec::new();
+            for name in names {
+                let mut rows = stmt.query(params![name])?;
+                if let Some(row) = rows.next()? {
+                    found.push((row.get(0)?, row.get(1)?, row.get(2)?));
+                }
+            }
+            Ok(found)
         })
     }
 
@@ -630,7 +674,8 @@ pub const THEME: &str = "theme";
 pub const ACCESS_TOKEN: &str = "access_token";
 pub const KEYCHAIN_IMPORTED: &str = "keychain_imported";
 
-fn now_ms() -> i64 {
+/// Milliseconds since the Unix epoch. The one clock helper of the app.
+pub(crate) fn now_ms() -> i64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map(|duration| duration.as_millis() as i64)
@@ -772,7 +817,7 @@ fn encode_swatches(swatches: &[u16]) -> Option<String> {
     let hues: Vec<u16> = swatches
         .iter()
         .copied()
-        .filter(|hue| *hue <= 359)
+        .filter(|hue| *hue <= crate::notes::MAX_HUE)
         .take(6)
         .collect();
     if hues.is_empty() {
@@ -793,7 +838,7 @@ fn parse_swatches(raw: Option<String>) -> Vec<u16> {
     };
     raw.split(',')
         .filter_map(|part| part.trim().parse::<u16>().ok())
-        .filter(|hue| *hue <= 359)
+        .filter(|hue| *hue <= crate::notes::MAX_HUE)
         .take(6)
         .collect()
 }
@@ -801,7 +846,7 @@ fn parse_swatches(raw: Option<String>) -> Vec<u16> {
 fn hue_column(value: Option<i64>) -> Option<u16> {
     value
         .and_then(|hue| u16::try_from(hue).ok())
-        .filter(|hue| *hue <= 359)
+        .filter(|hue| *hue <= crate::notes::MAX_HUE)
 }
 
 fn map_note(row: &rusqlite::Row<'_>) -> rusqlite::Result<Note> {
@@ -933,6 +978,30 @@ fn theme_column(value: Option<String>) -> Option<String> {
         Some("dark") => Some("dark".into()),
         Some("light") => Some("light".into()),
         _ => None,
+    }
+}
+
+#[cfg(test)]
+mod recording_tests {
+    use super::*;
+
+    #[test]
+    fn a_recording_keeps_what_was_heard_and_its_text() {
+        let db = Db::open_memory().unwrap();
+        db.save_recording("a.wav", "teh words").unwrap();
+        assert!(db.set_recording_text("a.wav", "The words.").unwrap());
+        assert!(!db.set_recording_text("missing.wav", "x").unwrap());
+        let found = db
+            .recordings(&["a.wav".into(), "missing.wav".into()])
+            .unwrap();
+        assert_eq!(
+            found,
+            vec![("a.wav".into(), "teh words".into(), "The words.".into())]
+        );
+        db.save_recording("a.wav", "again").unwrap();
+        let again = db.recordings(&["a.wav".into()]).unwrap();
+        assert_eq!(again[0].1, "again");
+        assert_eq!(again[0].2, "The words.");
     }
 }
 
@@ -1214,6 +1283,24 @@ mod tests {
         let notes = db.list_recent(10).unwrap();
         assert_eq!(notes[0].id, older.id);
         assert_eq!(notes[1].content, "newer");
+    }
+
+    #[test]
+    fn a_failed_or_local_sync_keeps_the_list_order() {
+        let db = db();
+        db.finalize_content("older").unwrap();
+        let older = db.list_recent(10).unwrap().remove(0);
+        std::thread::sleep(std::time::Duration::from_millis(5));
+        db.finalize_content("newer").unwrap();
+        std::thread::sleep(std::time::Duration::from_millis(5));
+        db.mark_error(&older.id, "server said no").unwrap();
+        db.mark_local(&older.id).unwrap();
+        db.mark_error(&older.id, "server said no").unwrap();
+        let notes = db.list_recent(10).unwrap();
+        assert_eq!(notes[0].content, "newer");
+        assert_eq!(notes[1].id, older.id);
+        assert_eq!(notes[1].updated_at, older.updated_at);
+        assert_eq!(notes[1].last_error.as_deref(), Some("server said no"));
     }
 
     #[test]

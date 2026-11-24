@@ -31,7 +31,7 @@ export function syncIcon(state: string, visibility?: string | null): { svg: stri
   }
   if (state === "error") {
     return {
-      svg: `<svg viewBox="0 0 16 16" width="12" height="12"><path fill="currentColor" d="M7.2 3h1.6v6.2H7.2zM7.2 11h1.6V12.6H7.2z"/></svg>`,
+      svg: `<svg viewBox="0 0 16 16" width="14" height="14"><circle cx="8" cy="8" r="7" fill="currentColor"/><path fill="#fff" d="M7.15 3.6h1.7v5.6h-1.7zM7.15 10.7h1.7v1.7h-1.7z"/></svg>`,
       label: "Sync failed",
     };
   }

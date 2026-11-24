@@ -87,12 +87,23 @@ test("unnamed tabs show Tab #N", async ({ page }) => {
   await expect(page.locator(".pin-tab").nth(1)).toHaveText("Tab #2");
 });
 
-test("dark tabs use a bright fill and white text", async ({ page }) => {
+test("dark tabs use a deep fill under white text", async ({ page }) => {
   await openPinTabs(page, { pinTabs: tabs, theme: "dark" });
   const tab = page.locator(".pin-tab").first();
   await expect(page.locator("html")).toHaveAttribute("data-theme", "dark");
   await expect(tab).toHaveCSS("color", "rgb(255, 255, 255)");
-  await expect(tab).toHaveCSS("background-color", "rgb(21, 117, 213)");
+  // Dark enough that white text passes WCAG AA (4.5:1).
+  const contrast = await tab.evaluate((el) => {
+    const canvas = document.createElement("canvas").getContext("2d")!;
+    canvas.fillStyle = getComputedStyle(el).backgroundColor;
+    canvas.fillRect(0, 0, 1, 1);
+    const [r, g, b] = [...canvas.getImageData(0, 0, 1, 1).data].map((c) => {
+      const v = c / 255;
+      return v <= 0.04045 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4;
+    });
+    return 1.05 / (0.2126 * r + 0.7152 * g + 0.0722 * b + 0.05);
+  });
+  expect(contrast).toBeGreaterThan(4.5);
 });
 
 test("hovered strip makes tab buttons opaque", async ({ page }) => {
@@ -122,9 +133,18 @@ test("pin-tab-aim marks the target tab", async ({ page }) => {
   await openPinTabs(page, { pinTabs: tabs });
   await waitForListener(page, "pin-tab-aim");
   await emitEvent(page, "pin-tab-aim", ["tab-home", "hold"]);
-  await expect(page.locator(".pin-tab", { hasText: "Home" })).toHaveClass(/pin-tab-aim/);
+  const home = page.locator(".pin-tab", { hasText: "Home" });
+  await expect(home).toHaveClass(/pin-tab-aim/);
+  // The held-over tab grows to twice the others' height before the memo moves.
+  await expect(page.locator("html")).toHaveClass(/is-aiming/);
+  await expect.poll(async () => (await home.boundingBox())?.height).toBe(40);
+  const other = page.locator(".pin-tab:not(.pin-tab-aim)").first();
+  if ((await other.count()) > 0) {
+    await expect.poll(async () => (await other.boundingBox())?.height).toBe(20);
+  }
   await emitEvent(page, "pin-tab-aim", ["tab-home", "ready"]);
   await expect(page.locator(".pin-tab", { hasText: "Home" })).toHaveClass(/pin-tab-ready/);
   await emitEvent(page, "pin-tab-aim", ["tab-home", "off"]);
   await expect(page.locator(".pin-tab", { hasText: "Home" })).not.toHaveClass(/pin-tab-aim/);
+  await expect(page.locator("html")).not.toHaveClass(/is-aiming/);
 });

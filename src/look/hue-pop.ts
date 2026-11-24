@@ -1,4 +1,4 @@
-import { paperAt, type ThemeName } from "./memo-chrome.ts";
+import { MAX_HUE, paintHueTrack, paperAt, readHueSlider, writeHueSlider, type ThemeName } from "./memo-chrome.ts";
 import { hueSwatches, onHueSwatches, saveHueSwatches } from "./swatches.ts";
 
 export type HuePopSource = {
@@ -21,8 +21,10 @@ export function bindHuePop(root: HTMLElement, source: HuePopSource): () => void 
     const theme = source.theme();
     const hue = source.hue();
     const swatches = hueSwatches();
-    slider.value = String(hue);
+    writeHueSlider(slider, hue);
     slider.style.setProperty("--thumb", chip(theme, hue));
+    // A tab slider has no default band, so `at` is always a stored value here.
+    paintHueTrack(slider, (at) => chip(theme, at ?? MAX_HUE));
     slots.forEach((slot, index) => {
       const saved = swatches[index];
       if (saved == null) {
@@ -39,11 +41,14 @@ export function bindHuePop(root: HTMLElement, source: HuePopSource): () => void 
   };
 
   slider.addEventListener("input", () => {
-    source.setHue(Number(slider.value));
+    const hue = readHueSlider(slider);
+    if (hue != null) {
+      source.setHue(hue);
+    }
     paint();
   });
   add.addEventListener("click", () => {
-    const hue = Number(slider.value);
+    const hue = source.hue();
     const swatches = hueSwatches();
     if (swatches.includes(hue) || swatches.length >= 6) {
       return;
