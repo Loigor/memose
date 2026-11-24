@@ -1054,8 +1054,10 @@ pub fn wav_samples(bytes: &[u8]) -> Result<Vec<f32>, AppError> {
                 return Err(bad());
             }
             let raw: Vec<f32> = bytes[body..end]
-                .chunks_exact(2)
-                .map(|pair| f32::from(i16::from_le_bytes([pair[0], pair[1]])) / 32768.0)
+                .as_chunks::<2>()
+                .0
+                .iter()
+                .map(|&pair| f32::from(i16::from_le_bytes(pair)) / 32768.0)
                 .collect();
             if rate == audio::RATE && channels == 1 {
                 return Ok(raw);
